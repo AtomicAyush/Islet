@@ -120,26 +120,83 @@ struct HeadsetConnectedCard: View {
     }
 }
 
-/// Left of the notch when a headset disconnects: its picture, dimmed.
+/// Left of the notch when a headset disconnects: which one, by picture and name.
+/// Where there is no room for the name, or even the insets (the opened island's
+/// header gives it 24 points), just the picture.
 struct HeadsetDisconnectedLeading: View {
-    let symbol: String
+    let headset: Headset
 
     var body: some View {
-        HeadsetGlyph(symbol: symbol, width: 26, height: 18, weight: .medium)
-            .foregroundStyle(.white.opacity(0.55))
-            .frame(maxWidth: .infinity)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: HeadsetDisconnectedLayout.glyphSpacing) {
+                glyph
+                Text(headset.shortName)
+                    .font(Font(HeadsetDisconnectedLayout.font))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: HeadsetDisconnectedLayout.maximumNameWidth, alignment: .leading)
+            }
+            .modifier(HeadsetDisconnectedLayout.LeadingInsets())
+            glyph
+                .modifier(HeadsetDisconnectedLayout.LeadingInsets())
+            glyph
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var glyph: some View {
+        HeadsetGlyph(symbol: headset.symbol, width: HeadsetDisconnectedLayout.glyphWidth, height: 18, weight: .medium)
+            .foregroundStyle(.white)
+            .frame(width: HeadsetDisconnectedLayout.glyphWidth, height: 20)
     }
 }
 
+/// Right of the notch: what happened, quieter than the name and against the
+/// wing's outer edge, mirroring the name on the left.
 struct HeadsetDisconnectedTrailing: View {
     var body: some View {
-        Text("Disconnected")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white)
+        Text(HeadsetDisconnectedLayout.status)
+            .font(Font(HeadsetDisconnectedLayout.font))
+            .foregroundStyle(.white.opacity(0.6))
             .lineLimit(1)
             .fixedSize()
+            .padding(.leading, HeadsetDisconnectedLayout.innerInset)
+            .padding(.trailing, HeadsetDisconnectedLayout.outerInset)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.trailing, 10)
+    }
+}
+
+/// The disconnection banner's measurements. Both wings are the same width, so the
+/// island stays centred on the notch.
+enum HeadsetDisconnectedLayout {
+    static let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    static let status = "Disconnected"
+    /// Wide enough for the usual names whole ("AirPods Max", "Beats Studio Pro");
+    /// anything longer truncates rather than stretch each wing past 165 points.
+    static let maximumNameWidth: CGFloat = 112
+    static let glyphWidth: CGFloat = 24
+    static let glyphSpacing: CGFloat = 7
+    /// Room between each wing's content and the island's outer edge, and the notch.
+    static let outerInset: CGFloat = 12
+    static let innerInset: CGFloat = 10
+
+    struct LeadingInsets: ViewModifier {
+        func body(content: Content) -> some View {
+            content.padding(.leading, outerInset).padding(.trailing, innerInset)
+        }
+    }
+
+    /// The width of each wing: whichever side needs more, used for both.
+    static func wingWidth(name: String) -> CGFloat {
+        let leading = glyphWidth + glyphSpacing + min(textWidth(name), maximumNameWidth)
+        return max(leading, textWidth(status)) + outerInset + innerInset
+    }
+
+    /// Two points of slack: SwiftUI sets text a hair wider than AppKit measures it,
+    /// which would otherwise truncate a name that just fits.
+    private static func textWidth(_ text: String) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
     }
 }
 

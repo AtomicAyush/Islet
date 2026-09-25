@@ -90,13 +90,13 @@ final class PrivacyFeature: Feature {
     /// Names what just started, in the colour its dot is about to be.
     private func announce(_ start: PrivacyMonitor.Start, cameraInUse: Bool) {
         let tint = cameraInUse ? privacyGreen : privacyOrange
-        let text = start.app?.name ?? start.sensor.name
+        let widths = PrivacyBannerLayout.widths(for: start)
         ActivityCenter.shared.present(IslandBanner(
             id: Self.bannerID,
-            style: .compact(leading: 44, trailing: PrivacyBannerTrailing.width(for: text)),
+            style: .compact(leading: widths.leading, trailing: widths.trailing),
             duration: 2.5,
             leading: AnyView(PrivacyBannerLeading(start: start, tint: tint)),
-            trailing: AnyView(PrivacyBannerTrailing(text: text, tint: tint))
+            trailing: AnyView(PrivacyBannerTrailing(start: start, tint: tint))
         ))
     }
 }

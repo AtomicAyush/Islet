@@ -44,9 +44,6 @@ final class NowPlayingFeature: Feature {
     @AppStorage(NowPlayingPrefs.showSongChanges) private var showSongChanges = NowPlayingPrefs.showSongChangesDefault
 
     private static let songBannerID = "nowPlaying.song"
-    /// The default compact wing beside a 32 pt notch, so the cover stays where it
-    /// was when the banner takes over.
-    private static let songBannerLeading: CGFloat = 44
     /// How long a preview holds the island before the real state returns.
     private static let previewLength: TimeInterval = 10
     /// Long enough to try the panel's lists.
@@ -252,12 +249,15 @@ final class NowPlayingFeature: Feature {
     /// The same id every time, so skipping through several songs updates the banner
     /// in place instead of stacking them.
     private func presentSongBanner() {
+        let wing = NowPlayingSongBannerLayout.wingWidth(
+            title: model.title, artist: model.subtitle, isVideo: model.isVideo
+        )
         ActivityCenter.shared.present(IslandBanner(
             id: Self.songBannerID,
-            style: .compact(leading: Self.songBannerLeading, trailing: 150),
+            style: .compact(leading: wing, trailing: wing),
             duration: 2.5,
             haptic: false,
-            leading: AnyView(NowPlayingCompactLeading(model: model)),
+            leading: AnyView(NowPlayingSongBannerLeading(model: model)),
             trailing: AnyView(NowPlayingSongBannerTrailing(model: model))
         ))
     }

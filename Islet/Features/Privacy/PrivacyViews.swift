@@ -107,46 +107,109 @@ struct PrivacyHomeTile: View {
     }
 }
 
-/// Left of the notch while announcing: the app's icon, or the sensor's symbol when
-/// the app cannot be named.
+/// Left of the notch while announcing: who started — the app's icon and name, or,
+/// when the app cannot be named, the sensor itself. Where there is no room for the
+/// name (the opened island's header gives it 24 points), just the icon.
 struct PrivacyBannerLeading: View {
     let start: PrivacyMonitor.Start
     let tint: Color
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: PrivacyBannerLayout.iconSpacing) {
+                icon
+                Text(PrivacyBannerLayout.name(of: start))
+                    .font(Font(PrivacyBannerLayout.font))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: PrivacyBannerLayout.maximumNameWidth, alignment: .leading)
+            }
+            .padding(.leading, PrivacyBannerLayout.outerInset)
+            .padding(.trailing, PrivacyBannerLayout.innerInset)
+            icon
+        }
+    }
+
+    @ViewBuilder
+    private var icon: some View {
         if let app = start.app {
             PrivacyAppIcon(app: app)
-                .frame(width: 20, height: 20)
+                .frame(width: PrivacyBannerLayout.iconWidth, height: PrivacyBannerLayout.iconWidth)
         } else {
-            Image(systemName: start.sensor.symbol)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(tint)
+            PrivacyBadge(symbol: start.sensor.symbol, tint: tint, diameter: PrivacyBannerLayout.iconWidth)
         }
     }
 }
 
-/// Right of the notch while announcing: who started, in the colour of their dot.
+/// Right of the notch while announcing: what the app started using, or — when no
+/// app can be named — that the sensor is in use, in the colour of the dot.
 struct PrivacyBannerTrailing: View {
-    let text: String
+    let start: PrivacyMonitor.Start
     let tint: Color
 
-    /// Room for `text` beside the notch: the text itself and 10 pt either side,
-    /// within what a compact banner can reasonably take.
-    static func width(for text: String) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        let measured = (text as NSString).size(withAttributes: [.font: font]).width
-        return min(max(ceil(measured) + 20, 44), 170)
-    }
-
-    /// Only as wide as the text: the opened island's header sets this beside the
+    /// Only as wide as its content: the opened island's header sets this beside the
     /// leading icon, where a view that filled its width would push the two apart.
     var body: some View {
-        Text(text)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(tint)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .padding(.horizontal, 10)
+        HStack(spacing: PrivacyBannerLayout.glyphSpacing) {
+            if start.app != nil {
+                Image(systemName: start.sensor.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: PrivacyBannerLayout.glyphWidth)
+            }
+            Text(PrivacyBannerLayout.status(of: start))
+                .font(Font(PrivacyBannerLayout.font))
+                .lineLimit(1)
+        }
+        .foregroundStyle(tint)
+        .padding(.leading, PrivacyBannerLayout.innerInset)
+        .padding(.trailing, PrivacyBannerLayout.outerInset)
+    }
+}
+
+/// The announcement's measurements. The island makes both wings as wide as the
+/// wider side needs; each side asks only for its own width, so the narrower one
+/// sits against the island's outer edge, as the other does, rather than centred in
+/// its wing. (The right side cannot fill its wing instead: the opened island's
+/// header would part it from the icon.)
+enum PrivacyBannerLayout {
+    static let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    static let iconWidth: CGFloat = 20
+    static let iconSpacing: CGFloat = 6
+    static let glyphWidth: CGFloat = 16
+    static let glyphSpacing: CGFloat = 5
+    /// Wide enough for the usual names whole ("Microsoft Teams", "QuickTime
+    /// Player"); anything longer truncates, keeping each wing within 170 points.
+    static let maximumNameWidth: CGFloat = 122
+    /// Room between each wing's content and the island's outer edge, and the notch.
+    static let outerInset: CGFloat = 12
+    static let innerInset: CGFloat = 10
+
+    /// Left of the notch: the app that started, or, with none to name, the sensor.
+    static func name(of start: PrivacyMonitor.Start) -> String {
+        start.app?.name ?? start.sensor.name
+    }
+
+    /// Right of the notch: the sensor beside the app that started it, or, with no
+    /// app to name, what the sensor on the left is doing.
+    static func status(of start: PrivacyMonitor.Start) -> String {
+        start.app == nil ? "In Use" : start.sensor.name
+    }
+
+    /// The room each side of the notch needs for `start`.
+    static func widths(for start: PrivacyMonitor.Start) -> (leading: CGFloat, trailing: CGFloat) {
+        let nameWidth = min(textWidth(name(of: start)), maximumNameWidth)
+        let statusWidth = (start.app == nil ? 0 : glyphWidth + glyphSpacing) + textWidth(status(of: start))
+        return (
+            outerInset + iconWidth + iconSpacing + nameWidth + innerInset,
+            innerInset + statusWidth + outerInset
+        )
+    }
+
+    /// Two points of slack: SwiftUI sets text a hair wider than AppKit measures it,
+    /// which would otherwise truncate a name that just fits.
+    private static func textWidth(_ text: String) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
     }
 }
 

@@ -123,10 +123,11 @@ final class BluetoothFeature: Feature {
     }
 
     private func presentDisconnection(of headset: Headset) {
+        let wing = HeadsetDisconnectedLayout.wingWidth(name: headset.shortName)
         ActivityCenter.shared.present(IslandBanner(
             id: "\(Self.bannerPrefix)disconnected.\(headset.id)",
-            style: .compact(leading: 44, trailing: 104),
-            leading: AnyView(HeadsetDisconnectedLeading(symbol: headset.symbol)),
+            style: .compact(leading: wing, trailing: wing),
+            leading: AnyView(HeadsetDisconnectedLeading(headset: headset)),
             trailing: AnyView(HeadsetDisconnectedTrailing())
         ))
     }

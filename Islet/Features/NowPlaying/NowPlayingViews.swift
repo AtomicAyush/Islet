@@ -686,24 +686,103 @@ struct NowPlayingHomeTile: View {
     }
 }
 
-/// Right of the notch while a new song is announced: its title and artist. The
-/// compact cover stays on the left.
+// MARK: - Song banner
+
+/// Left of the notch while a new song is announced: the cover and the artist (for a
+/// video, the thumbnail and the channel). Where there is no room for the artist —
+/// the opened island's header gives this side 24 points — just the cover.
+struct NowPlayingSongBannerLeading: View {
+    let model: NowPlayingModel
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: NowPlayingSongBannerLayout.spacing) {
+                cover(width: NowPlayingSongBannerLayout.coverWidth(isVideo: model.isVideo))
+                if !model.subtitle.isEmpty {
+                    Text(model.subtitle)
+                        .font(Font(NowPlayingSongBannerLayout.artistFont))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .lineLimit(1)
+                        // Asks for no width of its own, so the row fits whenever the
+                        // cover does and the artist takes what the wing has left: a
+                        // thumbnail that arrives after the banner (a browser's video)
+                        // trims the name rather than hiding it.
+                        .frame(idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.leading, NowPlayingSongBannerLayout.outerInset)
+            .padding(.trailing, NowPlayingSongBannerLayout.innerInset)
+
+            cover(width: 24)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func cover(width: CGFloat) -> some View {
+        if model.isVideo {
+            NowPlayingThumbnail(model: model, width: width, radius: 4)
+        } else {
+            NowPlayingArtworkView(model: model, size: 20, radius: 5)
+        }
+    }
+}
+
+/// Right of the notch: the title, then the waveform (for a video, the ring) where
+/// the compact activity has it. The title stays on this side in the opened island's
+/// header too, where the left side is down to the cover.
 struct NowPlayingSongBannerTrailing: View {
     let model: NowPlayingModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: NowPlayingSongBannerLayout.spacing) {
             Text(model.title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(Font(NowPlayingSongBannerLayout.titleFont))
                 .foregroundStyle(.white)
-            Text(model.subtitle)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            NowPlayingCompactTrailing(model: model)
+                .frame(width: NowPlayingSongBannerLayout.indicatorWidth)
         }
-        .lineLimit(1)
-        .padding(.leading, 4)
-        .padding(.trailing, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, NowPlayingSongBannerLayout.innerInset)
+        .padding(.trailing, NowPlayingSongBannerLayout.outerInset)
+    }
+}
+
+/// The song banner's measurements. Both wings are always the same width, whichever
+/// side needs more, so the island stays centred on the notch; each side's content
+/// keeps to its outer edge, and any difference is black beside the notch.
+enum NowPlayingSongBannerLayout {
+    static let titleFont = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+    static let artistFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+    static let spacing: CGFloat = 8
+    /// Room between each wing's content and the island's outer edge, and the notch.
+    /// Twelve points in, a song's cover and the waveform sit where the compact
+    /// activity centres them in its 44-point wings.
+    static let outerInset: CGFloat = 12
+    static let innerInset: CGFloat = 10
+    /// The waveform or ring, in a slot as wide as a song's cover.
+    static let indicatorWidth: CGFloat = 20
+    /// Wide enough for most titles and artists whole; anything longer truncates
+    /// rather than push the island over half the menu bar.
+    static let maximumWing: CGFloat = 170
+
+    /// The compact activity's cover: a square for music, a 16:9 thumbnail for video.
+    static func coverWidth(isVideo: Bool) -> CGFloat { isVideo ? 30 : 20 }
+
+    /// The width of each wing: whichever side needs more, used for both.
+    static func wingWidth(title: String, artist: String, isVideo: Bool) -> CGFloat {
+        let leading = outerInset + coverWidth(isVideo: isVideo)
+            + (artist.isEmpty ? 0 : spacing + textWidth(artist, font: artistFont)) + innerInset
+        let trailing = innerInset + textWidth(title, font: titleFont) + spacing + indicatorWidth + outerInset
+        return min(max(leading, trailing), maximumWing)
+    }
+
+    /// Two points of slack: SwiftUI sets text a hair wider than AppKit measures it,
+    /// which would otherwise truncate a name that just fits.
+    private static func textWidth(_ text: String, font: NSFont) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
     }
 }
 
