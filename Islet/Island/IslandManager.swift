@@ -51,6 +51,11 @@ final class IslandManager {
         fullScreen.start()
     }
 
+    /// Whether any island is open on the given page (an activity id, or "home").
+    func isOpen(on focus: String) -> Bool {
+        controllers.values.contains { $0.model.isExpanded && $0.model.resolvedFocus == focus }
+    }
+
     /// The island on the screen the user is most likely looking at: the one under
     /// the pointer, else the first.
     var focusedController: IslandWindowController? {

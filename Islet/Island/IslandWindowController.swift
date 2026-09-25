@@ -13,6 +13,9 @@ final class IslandWindowController {
     private var monitors: [Any] = []
     private var dragChangeCount = NSPasteboard(name: .drag).changeCount
     private var fileDragActive = false
+    /// The current press began on the island — dragging a file out of the shelf,
+    /// say — so the drag it starts is outgoing and must not open the drop page.
+    private var pressBeganInside = false
     /// Vertical travel of the current two-finger swipe over the island, in the
     /// direction the fingers moved (positive = down).
     private var swipeTravel: CGFloat = 0
@@ -80,7 +83,7 @@ final class IslandWindowController {
         }) {
             monitors.append(m)
         }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: moves.union(.leftMouseUp), handler: { [weak self] event in
+        if let m = NSEvent.addLocalMonitorForEvents(matching: moves.union([.leftMouseUp, .leftMouseDown]), handler: { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event, isLocal: true) }
             return event
         }) {
@@ -121,11 +124,16 @@ final class IslandWindowController {
 
     private func handle(_ event: NSEvent, isLocal: Bool) {
         switch event.type {
-        case .leftMouseDown, .rightMouseDown:
-            // Only global downs arrive here, so this click was not on the island.
+        case .leftMouseDown where isLocal:
             dragChangeCount = NSPasteboard(name: .drag).changeCount
+            pressBeganInside = true
+        case .leftMouseDown, .rightMouseDown:
+            // A global press: this click was not on the island.
+            dragChangeCount = NSPasteboard(name: .drag).changeCount
+            pressBeganInside = false
             model.clickOutside()
         case .leftMouseUp:
+            pressBeganInside = false
             if fileDragActive {
                 fileDragActive = false
                 model.fileDrag(began: false)
@@ -143,7 +151,7 @@ final class IslandWindowController {
     /// top of this screen, opens the island onto the drop target.
     private func trackFileDrag() {
         let pasteboard = NSPasteboard(name: .drag)
-        if !fileDragActive, pasteboard.changeCount != dragChangeCount,
+        if !fileDragActive, !pressBeganInside, pasteboard.changeCount != dragChangeCount,
            pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
             fileDragActive = true
             model.fileDrag(began: true)

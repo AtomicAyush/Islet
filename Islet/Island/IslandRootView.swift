@@ -52,7 +52,7 @@ private struct IslandSurface: View {
         .animation(.islandHeight) { $0.frame(height: layout.size.height, alignment: .top) }
         .clipShape(shape)
         .contentShape(shape)
-        .keyframeAnimator(initialValue: Squash(), trigger: model.contentKey) { view, squash in
+        .keyframeAnimator(initialValue: Squash(), trigger: model.contentKey) { [reduceMotion] view, squash in
             view.scaleEffect(x: reduceMotion ? 1 : squash.x, y: reduceMotion ? 1 : squash.y, anchor: .top)
         } keyframes: { _ in
             // A brief squash and rebound on every change of shape, like the iPhone's
@@ -330,7 +330,7 @@ private struct ExpandedHeader: View {
     private var trailing: some View {
         if let banner = model.center.banner, case .compact = banner.style {
             HStack(spacing: 6) {
-                banner.leading.frame(width: 22)
+                banner.leading.frame(width: 24)
                 banner.trailing
             }
             .frame(height: layout.notch.height)

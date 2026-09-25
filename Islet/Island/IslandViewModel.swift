@@ -36,6 +36,12 @@ final class IslandViewModel {
     /// The tab picked in the expanded island; `nil` follows the primary activity.
     var focus: String?
 
+    #if DEBUG
+    /// Keeps the island open whatever the pointer does, for screenshots
+    /// (`islet://open?pin=1`; `islet://close` releases it).
+    var isPinnedOpen = false
+    #endif
+
     let center = ActivityCenter.shared
 
     @ObservationIgnored private var expandWork: DispatchWorkItem?
@@ -116,6 +122,9 @@ final class IslandViewModel {
     /// A click somewhere other than the island.
     func clickOutside() {
         cancelExpand()
+        #if DEBUG
+        if isPinnedOpen { return }
+        #endif
         if isExpanded { collapse() }
     }
 
@@ -183,6 +192,9 @@ final class IslandViewModel {
         cancelCollapse()
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.isHovering else { return }
+            #if DEBUG
+            if self.isPinnedOpen { return }
+            #endif
             self.collapse()
         }
         collapseWork = work

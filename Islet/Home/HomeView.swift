@@ -17,18 +17,51 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 GeometryReader { geo in
-                    let totalWeight = widgets.reduce(0) { $0 + $1.weight }
-                    let spacing = CGFloat(widgets.count - 1) * 10
-                    HStack(spacing: 10) {
-                        ForEach(widgets) { widget in
-                            HomeTile { widget.view }
-                                .frame(width: (geo.size.width - spacing) * widget.weight / totalWeight)
-                        }
-                    }
+                    TileRow(widgets: widgets, width: geo.size.width)
                 }
             }
         }
         .padding(.top, 6)
+    }
+}
+
+/// The widgets side by side, each getting its weight's share of the row. When the
+/// shares would squeeze a tile below a readable width, the tiles keep that width
+/// instead and the row scrolls sideways, fading at its trailing edge.
+private struct TileRow: View {
+    let widgets: [HomeWidget]
+    let width: CGFloat
+
+    /// The narrowest a weight-1 tile gets before the row starts scrolling.
+    static let minimumUnit: CGFloat = 112
+    static let spacing: CGFloat = 10
+
+    var body: some View {
+        let totalWeight = widgets.reduce(0) { $0 + $1.weight }
+        let spacing = CGFloat(widgets.count - 1) * Self.spacing
+        let share = (width - spacing) / max(totalWeight, 1)
+        let unit = max(share, Self.minimumUnit)
+        let scrolls = unit > share + 0.5
+
+        let row = HStack(spacing: Self.spacing) {
+            ForEach(widgets) { widget in
+                HomeTile { widget.view }
+                    .frame(width: unit * widget.weight)
+            }
+        }
+
+        if scrolls {
+            ScrollView(.horizontal, showsIndicators: false) { row }
+                .mask(
+                    LinearGradient(
+                        stops: [.init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+        } else {
+            row
+        }
     }
 }
 

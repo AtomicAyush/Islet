@@ -29,12 +29,17 @@ enum URLRouter {
 
         switch host {
         case "open":
+            #if DEBUG
+            island?.isPinnedOpen = query["pin"] == "1"
+            #endif
             island?.expand(focus: query["focus"])
         case "close":
+            #if DEBUG
+            island?.isPinnedOpen = false
+            #endif
             island?.collapse()
         case "preview":
-            guard let feature = FeatureRegistry.shared.features.first(where: { $0.id == query["feature"] })
-            else { return }
+            guard let name = query["feature"], let feature = feature(named: name) else { return }
             let index = Int(query["index"] ?? "0") ?? 0
             if feature.previews.indices.contains(index) { feature.previews[index].run() }
         #if DEBUG
@@ -42,8 +47,13 @@ enum URLRouter {
             if url.path() == "/second" { DebugActivity.shared.toggle() }
         #endif
         default:
-            FeatureRegistry.shared.features.first { $0.id == host }.map { _ = $0.handle(url) }
+            _ = feature(named: host)?.handle(url)
         }
+    }
+
+    /// URL hosts are case-insensitive, and some launchers lower-case them.
+    private static func feature(named name: String) -> (any Feature)? {
+        FeatureRegistry.shared.features.first { $0.id.caseInsensitiveCompare(name) == .orderedSame }
     }
 
     private final class Handler: NSObject {
