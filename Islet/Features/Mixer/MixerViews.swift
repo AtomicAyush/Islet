@@ -170,7 +170,10 @@ struct MixerMinimal: View {
     let model: MixerModel
 
     var body: some View {
-        if let app = model.apps.last {
+        // The bubble sits beside whatever holds the island — usually the song playing —
+        // so it shows another of the apps playing, not that one again.
+        let inIsland = ActivityCenter.shared.primary?.appBundleIdentifier
+        if let app = model.apps.last(where: { $0.id != inIsland }) ?? model.apps.last {
             MixerAppIcon(model: model, app: app, size: 20)
                 .id(app.id)
                 .transition(.opacity)

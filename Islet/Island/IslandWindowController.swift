@@ -238,7 +238,7 @@ final class IslandWindowController {
             return
         }
         if pointerMoved || !inside {
-            model.pointer(inside: inside, bubble: overBubble ? model.bubbleActivity?.id : nil)
+            model.pointer(inside: overIsland, overBubble: overBubble)
         }
     }
 

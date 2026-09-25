@@ -42,6 +42,9 @@ protocol IslandActivity: AnyObject {
     func minimal() -> AnyView
     /// The opened island's body, below the notch row, at `expandedHeight`.
     func expanded() -> AnyView
+    /// The app this activity is about, when it is about one (the player Now Playing
+    /// shows), so other activities can avoid showing the same app twice.
+    var appBundleIdentifier: String? { get }
 }
 
 extension IslandActivity {
@@ -50,6 +53,7 @@ extension IslandActivity {
     var compactTrailingWidth: CGFloat? { nil }
     var expandedHeight: CGFloat { 110 }
     func minimal() -> AnyView { compactLeading() }
+    var appBundleIdentifier: String? { nil }
 }
 
 /// A transient alert that takes over the island for a moment, the way plugging in a

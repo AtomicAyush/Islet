@@ -314,6 +314,7 @@ final class NowPlayingActivity: IslandActivity {
     }
 
     var symbol: String { model.isVideo ? "play.rectangle.fill" : "music.note" }
+    var appBundleIdentifier: String? { model.track?.bundleID }
 
     var expandedHeight: CGFloat {
         NowPlayingExpanded.height(

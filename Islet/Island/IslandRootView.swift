@@ -187,7 +187,7 @@ private struct BubbleLayer: View {
     @State private var progress: CGFloat = 0
 
     var body: some View {
-        BubbleDroplet(progress: progress, layout: layout, activity: shown) { id in
+        BubbleDroplet(progress: progress, layout: layout, activity: shown, isHovered: model.isHoveringBubble) { id in
             model.expand(focus: id)
         }
         .onChange(of: model.bubbleActivity?.id, initial: true) { _, id in
@@ -209,6 +209,8 @@ private struct BubbleDroplet: View, Animatable {
     var progress: CGFloat
     let layout: IslandLayout
     let activity: (any IslandActivity)?
+    /// The pointer is on the bubble: it swells a little and lifts, to say it opens.
+    let isHovered: Bool
     let onTap: (String) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -259,7 +261,9 @@ private struct BubbleDroplet: View, Animatable {
                     .clipShape(Circle())
                     .opacity(Double(min(1, max(0, (progress - 0.35) / 0.5))))
                     .background(Circle().fill(Color.black))
-                    .scaleEffect(scale)
+                    .overlay(Circle().strokeBorder(Color.white.opacity(isHovered ? 0.22 : 0), lineWidth: 1))
+                    .scaleEffect(scale * (isHovered ? 1.14 : 1))
+                    .animation(.islandHover, value: isHovered)
                     .contentShape(Circle())
                     .onTapGesture { onTap(activity.id) }
                     .offset(x: x, y: target.height - d / 2)

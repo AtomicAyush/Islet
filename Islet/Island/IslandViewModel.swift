@@ -31,6 +31,8 @@ final class IslandViewModel {
 
     private(set) var isExpanded = false
     private(set) var isHovering = false
+    /// The pointer is over the detached bubble.
+    private(set) var isHoveringBubble = false
     /// A file drag is in progress anywhere on screen.
     private(set) var isDraggingFile = false
     /// The tab picked in the expanded island; `nil` follows the primary activity.
@@ -51,9 +53,6 @@ final class IslandViewModel {
     let center = ActivityCenter.shared
 
     @ObservationIgnored private var expandWork: DispatchWorkItem?
-    /// What resting the pointer should open: the bubble's activity, or `nil` for the
-    /// island's own.
-    @ObservationIgnored private var hoverFocus: String?
     @ObservationIgnored private var collapseWork: DispatchWorkItem?
 
     init(metrics: NotchMetrics) {
@@ -107,11 +106,17 @@ final class IslandViewModel {
 
     // MARK: Pointer
 
-    /// Called by the window controller as the pointer moves. `bubble` is the activity
-    /// in the detached bubble when the pointer is over that rather than the island,
-    /// so resting there opens the bubble's activity.
-    func pointer(inside: Bool, bubble: String? = nil) {
-        hoverFocus = inside ? bubble : nil
+    /// Called by the window controller as the pointer moves, with whether it is over
+    /// the island and whether it is over the detached bubble.
+    ///
+    /// The bubble is a target of its own: resting on it makes only the bubble react,
+    /// and it opens on a click. Were it part of the island's hover, the island would
+    /// swell and open by itself as the pointer arrived, swallowing the bubble before
+    /// it could be clicked.
+    func pointer(inside: Bool, overBubble: Bool = false) {
+        if overBubble != isHoveringBubble {
+            withAnimation(.islandHover) { isHoveringBubble = overBubble }
+        }
         guard inside != isHovering else { return }
         withAnimation(.islandHover) { isHovering = inside }
 
@@ -199,7 +204,7 @@ final class IslandViewModel {
         let work = DispatchWorkItem { [weak self] in
             // A card may have arrived while waiting.
             guard let self, self.isHovering, !self.isShowingCard else { return }
-            self.expand(focus: self.hoverFocus)
+            self.expand()
         }
         expandWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
