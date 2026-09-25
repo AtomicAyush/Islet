@@ -43,42 +43,148 @@ struct NowPlayingWaveform: View {
     var height: CGFloat = 14
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
 
-    /// Height of a settled bar, as a fraction of the full height.
-    private static let rest = 0.28
-    /// How long bars take to rise to full motion when playback resumes.
-    private static let rampUp: TimeInterval = 0.35
-    /// Per bar: two frequencies (Hz) and their phases.
-    private static let shapes: [(Double, Double, Double, Double)] = [
-        (1.1, 0.0, 2.3, 1.7), (1.7, 2.1, 0.9, 0.4), (0.8, 4.2, 2.9, 2.6), (1.4, 1.3, 2.1, 5.1), (2.0, 3.3, 1.2, 0.8),
-    ]
-
     var body: some View {
-        let playing = model.isPlaying
-        let since = model.playStateChangedAt
         let colour = tinted ? (model.artwork?.tint ?? .white) : .white
+        WaveformBars(
+            playing: model.isPlaying,
+            colour: NSColor(colour),
+            bars: bars,
+            barWidth: barWidth,
+            spacing: spacing
+        )
+        .frame(width: CGFloat(bars) * barWidth + CGFloat(bars - 1) * spacing, height: height)
+    }
+}
 
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !playing)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            // Rises out of the settled bars instead of jumping to full height.
-            let ramp = playing ? min(1, max(0, context.date.timeIntervalSince(since) / Self.rampUp)) : 0
-            HStack(spacing: spacing) {
-                ForEach(0..<bars, id: \.self) { bar in
-                    let level = Self.rest + (Self.level(bar, at: t) - Self.rest) * ramp
-                    Capsule()
-                        .fill(colour)
-                        .frame(width: barWidth, height: max(barWidth, height * level))
-                }
-            }
-            .frame(height: height)
-        }
-        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: playing)
-        .animation(.easeInOut(duration: 0.4), value: colour)
+/// The bars as Core Animation layers. Each runs a looping keyframe animation that the
+/// render server plays on its own, so a song playing for an hour costs the app nothing
+/// per frame — drawn from SwiftUI, the same motion re-rendered the island thirty times a
+/// second and kept a core a tenth busy.
+private struct WaveformBars: NSViewRepresentable {
+    let playing: Bool
+    let colour: NSColor
+    let bars: Int
+    let barWidth: CGFloat
+    let spacing: CGFloat
+
+    func makeNSView(context: Context) -> WaveformBarsView {
+        WaveformBarsView(bars: bars, barWidth: barWidth, spacing: spacing)
     }
 
-    private static func level(_ bar: Int, at t: Double) -> Double {
-        let (f1, p1, f2, p2) = shapes[bar % shapes.count]
-        let value = 0.56 + 0.26 * sin(2 * .pi * f1 * t + p1) + 0.18 * sin(2 * .pi * f2 * t + p2)
-        return min(1, max(0.18, value))
+    func updateNSView(_ view: WaveformBarsView, context: Context) {
+        view.setColour(colour)
+        view.setPlaying(playing)
+    }
+}
+
+final class WaveformBarsView: NSView {
+    /// Height of a settled bar, as a fraction of the full height.
+    private static let rest: CGFloat = 0.28
+    /// Every bar's motion repeats after this long; its frequencies are whole multiples
+    /// of it, so the loop has no seam.
+    private static let period: CFTimeInterval = 4
+    /// Per bar: two frequencies (cycles per period) and their phases.
+    private static let shapes: [(Double, Double, Double, Double)] = [
+        (4, 0.0, 9, 1.7), (7, 2.1, 4, 0.4), (3, 4.2, 11, 2.6), (6, 1.3, 8, 5.1), (8, 3.3, 5, 0.8),
+    ]
+
+    private let barLayers: [CALayer]
+    private let barWidth: CGFloat
+    private let spacing: CGFloat
+    private var isPlaying: Bool?
+
+    init(bars: Int, barWidth: CGFloat, spacing: CGFloat) {
+        self.barWidth = barWidth
+        self.spacing = spacing
+        barLayers = (0..<bars).map { _ in
+            let bar = CALayer()
+            bar.cornerRadius = barWidth / 2
+            bar.backgroundColor = NSColor.white.cgColor
+            return bar
+        }
+        super.init(frame: .zero)
+        wantsLayer = true
+        barLayers.forEach { layer?.addSublayer($0) }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, bar) in barLayers.enumerated() {
+            let x = CGFloat(index) * (barWidth + spacing)
+            bar.bounds = CGRect(x: 0, y: 0, width: barWidth, height: bounds.height)
+            bar.position = CGPoint(x: x + barWidth / 2, y: bounds.midY)
+        }
+        CATransaction.commit()
+    }
+
+    func setColour(_ colour: NSColor) {
+        let cg = colour.cgColor
+        guard barLayers.first?.backgroundColor != cg else { return }
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.4)
+        barLayers.forEach { $0.backgroundColor = cg }
+        CATransaction.commit()
+    }
+
+    func setPlaying(_ playing: Bool) {
+        guard playing != isPlaying else { return }
+        let first = isPlaying == nil
+        isPlaying = playing
+        for (index, bar) in barLayers.enumerated() {
+            let current = bar.presentation()?.value(forKeyPath: "transform.scale.y") as? CGFloat ?? Self.rest
+            bar.removeAllAnimations()
+            if playing {
+                Self.startMotion(on: bar, index: index, from: first ? Self.rest : current)
+            } else {
+                // Settle to short bars rather than freezing mid-motion.
+                bar.transform = CATransform3DMakeScale(1, Self.rest, 1)
+                let settle = CASpringAnimation(keyPath: "transform.scale.y")
+                settle.fromValue = current
+                settle.toValue = Self.rest
+                settle.damping = 14
+                settle.duration = settle.settlingDuration
+                bar.add(settle, forKey: "settle")
+            }
+        }
+    }
+
+    /// A short rise out of `start`, then the bar's loop, forever. The loop is its own
+    /// animation, begun at an absolute time: wrapped in a group of infinite duration,
+    /// Core Animation never applies it.
+    private static func startMotion(on bar: CALayer, index: Int, from start: CGFloat) {
+        let (f1, p1, f2, p2) = shapes[index % shapes.count]
+        let samples = 48
+        let values: [CGFloat] = (0...samples).map { i in
+            let t = Double(i) / Double(samples)
+            let value = 0.56 + 0.26 * sin(2 * .pi * f1 * t + p1) + 0.18 * sin(2 * .pi * f2 * t + p2)
+            return CGFloat(min(1, max(0.18, value)))
+        }
+        let riseDuration: CFTimeInterval = 0.3
+
+        let rise = CABasicAnimation(keyPath: "transform.scale.y")
+        rise.fromValue = start
+        rise.toValue = values[0]
+        rise.duration = riseDuration
+        rise.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        rise.fillMode = .forwards
+        rise.isRemovedOnCompletion = false
+
+        let loop = CAKeyframeAnimation(keyPath: "transform.scale.y")
+        loop.values = values
+        loop.calculationMode = .cubic
+        loop.duration = period
+        loop.repeatCount = .infinity
+        loop.beginTime = bar.convertTime(CACurrentMediaTime(), from: nil) + riseDuration
+
+        bar.add(rise, forKey: "rise")
+        bar.add(loop, forKey: "wave")
     }
 }
 

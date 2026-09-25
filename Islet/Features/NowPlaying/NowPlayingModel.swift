@@ -75,10 +75,6 @@ final class NowPlayingModel {
     /// Called when a playing session moves on to a different track.
     @ObservationIgnored var onTrackChange: () -> Void = {}
 
-    /// When playback last started or stopped, for easing motion in on resume.
-    /// Read alongside `isPlaying`, which is what views observe.
-    @ObservationIgnored private(set) var playStateChangedAt = Date.distantPast
-
     /// Sample data is on screen; the player's reports are kept but not shown.
     @ObservationIgnored private(set) var isPreviewing = false
 
@@ -278,10 +274,7 @@ final class NowPlayingModel {
     }
 
     private func setPlayback(playing: Bool, timing: NowPlayingTiming) {
-        if isPlaying != playing {
-            playStateChangedAt = Date()
-            isPlaying = playing
-        }
+        if isPlaying != playing { isPlaying = playing }
         if self.timing != timing { self.timing = timing }
     }
 
