@@ -18,7 +18,7 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
                 .tag("about")
         }
-        .frame(width: 620, height: 520)
+        .frame(width: 620, height: 560)
     }
 }
 
@@ -31,6 +31,7 @@ private struct GeneralSettings: View {
     @AppStorage(Prefs.Key.homeLayout) private var homeLayout = HomeLayout.scroll.rawValue
     @AppStorage(Prefs.Key.displays) private var displays = DisplayChoice.notched.rawValue
     @AppStorage(Prefs.Key.hideInFullScreen) private var hideInFullScreen = true
+    @AppStorage(Prefs.Key.openFromNotchInFullScreen) private var openFromNotch = true
     @AppStorage(Prefs.Key.idlePillOnPlainDisplays) private var idlePill = false
     @AppStorage(Prefs.Key.showMenuBarIcon) private var showMenuBarIcon = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -83,6 +84,19 @@ private struct GeneralSettings: View {
                 }
                 Toggle("Keep a resting island on displays without a notch", isOn: $idlePill)
                 Toggle("Hide while an app is full screen", isOn: $hideInFullScreen)
+                // Only means something while hiding is on, so it sits under that,
+                // greyed out when it is off. Someone who opens the island by clicking
+                // opens it from the notch that way too.
+                Toggle(isOn: $openFromNotch) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(expandOnHover ? "Open by resting the pointer on the notch" : "Open by clicking the notch")
+                        Text("On a display without a notch, the middle of the top edge stands in for it.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.leading, 16)
+                .disabled(!hideInFullScreen)
             }
         }
         .formStyle(.grouped)

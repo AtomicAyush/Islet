@@ -12,6 +12,10 @@ import AppKit
 @MainActor
 final class FullScreenWatcher {
     var onChange: () -> Void = {}
+    /// Called each time the watcher has looked again after a change of Space, whether
+    /// or not it found anything new (after `onChange`, when it did), for whatever waits
+    /// to see where the Space went.
+    var onSpaceSettled: () -> Void = {}
 
     private var observers: [NSObjectProtocol] = []
     private var fullScreenDisplays: Set<CGDirectDisplayID> = []
@@ -22,10 +26,14 @@ final class FullScreenWatcher {
             NSWorkspace.activeSpaceDidChangeNotification,
             NSWorkspace.didActivateApplicationNotification,
         ] {
+            let isSpaceChange = name == NSWorkspace.activeSpaceDidChangeNotification
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 // The space switch animation finishes after the notification.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    MainActor.assumeIsolated { self?.refresh() }
+                    MainActor.assumeIsolated {
+                        self?.refresh()
+                        if isSpaceChange { self?.onSpaceSettled() }
+                    }
                 }
             })
         }

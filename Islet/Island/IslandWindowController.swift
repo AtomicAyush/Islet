@@ -214,11 +214,13 @@ final class IslandWindowController {
             pressBeganInside = event.window === panel
             model.dragStartedOnIsland = pressBeganInside
         case .leftMouseDown, .rightMouseDown:
-            // A global press: this click was not on the island.
+            // A global press: this click was not on the island, though it may have
+            // landed on the strip standing in for a hidden one.
             dragChangeCount = NSPasteboard(name: .drag).changeCount
             pressBeganInside = false
             model.dragStartedOnIsland = false
-            model.clickOutside()
+            model.clickOutside(onEdgeStrip: event.type == .leftMouseDown && model.standsInOnEdge
+                && model.hiddenTarget.contains(NSEvent.mouseLocation))
         case .leftMouseUp:
             pressBeganInside = false
             if fileDragActive {
@@ -272,10 +274,7 @@ final class IslandWindowController {
     private func updateHitTesting(pointerMoved: Bool = true) {
         guard let layout else { return }
         let point = NSEvent.mouseLocation
-        let overFolded = foldedRect(for: layout).contains(point)
-        let overIsland = !overFolded && islandRect(for: layout).contains(point)
-        let overBubble = !overFolded && !overIsland && bubbleRect(for: layout)?.contains(point) == true
-        let overSecondary = overFolded || overBubble
+        let (overIsland, overSecondary) = Self.hitTest(point, layout: layout, model: model)
         let inside = overIsland || overSecondary
         // A press that began on the island (dragging the scrubber, say) holds it open
         // until release, wherever the pointer wanders; mouse-up clears the press and
@@ -286,32 +285,41 @@ final class IslandWindowController {
             return
         }
         if pointerMoved || !inside {
-            model.pointer(inside: overIsland, overSecondary: overSecondary)
+            model.pointer(
+                inside: overIsland, overSecondary: overSecondary,
+                at: point, buttonsDown: NSEvent.pressedMouseButtons != 0
+            )
         }
     }
 
+    /// Whether `point`, in global coordinates, is over the island or over its second
+    /// activity (the bubble, or the icon folded into the island), for `model` laid out
+    /// as `layout`. The folded icon's patch of the island counts as the second
+    /// activity's only.
+    static func hitTest(_ point: CGPoint, layout: IslandLayout, model: IslandViewModel) -> (island: Bool, secondary: Bool) {
+        let overFolded = foldedRect(for: layout, model: model).contains(point)
+        let overIsland = !overFolded && islandRect(for: layout, model: model).contains(point)
+        let overBubble = !overFolded && !overIsland && bubbleRect(for: layout, model: model)?.contains(point) == true
+        return (overIsland, overFolded || overBubble)
+    }
+
     /// The island's top-left corner on screen, which its own coordinates start from.
-    private func islandOrigin(for layout: IslandLayout) -> CGPoint {
+    private static func islandOrigin(for layout: IslandLayout, model: IslandViewModel) -> CGPoint {
         let metrics = model.metrics
         return CGPoint(x: metrics.notchMidX - layout.size.width / 2, y: metrics.screenFrame.maxY - layout.topInset)
     }
 
-    private func islandRect(for layout: IslandLayout) -> CGRect {
-        let metrics = model.metrics
-        let origin = islandOrigin(for: layout)
-        var rect = CGRect(
+    private static func islandRect(for layout: IslandLayout, model: IslandViewModel) -> CGRect {
+        // Nothing to see, so nothing of the island to hover: the notch, or the strip
+        // that stands in for it, instead (`IslandViewModel.hiddenTarget`).
+        if model.mode == .hidden { return model.hiddenTarget }
+        let origin = islandOrigin(for: layout, model: model)
+        let rect = CGRect(
             x: origin.x,
             y: origin.y - layout.size.height,
             width: layout.size.width,
             height: layout.size.height
         )
-        if model.mode == .hidden {
-            // Nothing drawn, so nothing to hover — except on a notched screen, where
-            // the notch itself stays a target. Not while an app is full screen,
-            // though: there the top edge belongs to the app's own title bar.
-            guard metrics.hasNotch, !model.isSuppressed else { return .null }
-            rect = metrics.notchRect
-        }
         // Once open, be forgiving about brushing past the edge.
         let slop: CGFloat = model.isExpanded ? 10 : 2
         return rect.insetBy(dx: -slop, dy: -slop)
@@ -321,10 +329,10 @@ final class IslandWindowController {
     /// on screen, with the island's resting slop on its outer sides only: its inner
     /// edge is where a click stops opening the second activity, so hovering stops
     /// there too.
-    private func foldedRect(for layout: IslandLayout) -> CGRect {
+    private static func foldedRect(for layout: IslandLayout, model: IslandViewModel) -> CGRect {
         let target = layout.foldedTarget
         guard !target.isNull else { return .null }
-        let origin = islandOrigin(for: layout)
+        let origin = islandOrigin(for: layout, model: model)
         let slop: CGFloat = 2
         return CGRect(
             x: origin.x + target.minX - slop,
@@ -334,7 +342,7 @@ final class IslandWindowController {
         )
     }
 
-    private func bubbleRect(for layout: IslandLayout) -> CGRect? {
+    private static func bubbleRect(for layout: IslandLayout, model: IslandViewModel) -> CGRect? {
         guard model.bubbleActivity != nil else { return nil }
         let metrics = model.metrics
         let center = CGPoint(

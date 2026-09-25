@@ -120,7 +120,8 @@ clicks; Islet never touches it.)
 **Other displays.** On a display without a notch the island floats as a pill just below the
 top edge, like the iPhone's, and hides when there is nothing to show. It can follow the
 notched display, the main display, or appear on all of them, and it steps aside while an app
-is full screen.
+is full screen. Stepped aside, it still opens when the pointer rests on the notch (on a display
+without one, on the middle of the top edge), and hides again once the pointer leaves.
 
 ## Building
 

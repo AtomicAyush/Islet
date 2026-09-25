@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import Observation
 
@@ -8,8 +9,9 @@ import Observation
 @Observable
 final class IslandViewModel {
     enum Mode: Equatable {
-        /// Nothing drawn at all (a plain display with nothing to show, or a
-        /// full-screen app on this display).
+        /// Nothing to see (a plain display with nothing to show, or a full-screen
+        /// app on this display). Usually nothing is drawn at all; see
+        /// `IslandLayout.isDrawn` for the exception.
         case hidden
         /// The resting notch.
         case idle
@@ -28,6 +30,10 @@ final class IslandViewModel {
     /// Set by the controller from preferences and the full-screen watcher.
     var showsIdlePill = false
     var isSuppressed = false
+    /// While the island is hidden for a full-screen app, the notch still opens it (on
+    /// a display without one, a strip along the middle of the top edge). Set by the
+    /// manager from preferences.
+    var opensFromNotchInFullScreen = false
     /// How far right of the notch's centre the menu bar's first status item begins:
     /// infinity when none does, and 0 when nothing can tell where the items are
     /// (macOS 27 without Accessibility), so the second activity folds. Set by the
@@ -61,6 +67,29 @@ final class IslandViewModel {
 
     @ObservationIgnored private var expandWork: DispatchWorkItem?
     @ObservationIgnored private var collapseWork: DispatchWorkItem?
+
+    /// How the pointer on the notch is getting on towards opening the island while it
+    /// is hidden for a full-screen app (see `peek(at:buttonsDown:)`).
+    private enum PeekWait: Equatable {
+        /// Not waiting: the pointer is elsewhere, or a click or a change of Space
+        /// ended the wait, and it has to come back to the notch to wait again.
+        case none
+        /// On the notch with a button held: a drag, which waits for the release.
+        case held
+        /// Resting on the notch since it came to a stop at this point.
+        case resting(at: CGPoint)
+    }
+    @ObservationIgnored private var peekWait = PeekWait.none
+
+    /// The island was open over a full-screen app when the Space changed, and whether
+    /// it closes waits on the full-screen watcher's next look (`spaceDidSettle`).
+    @ObservationIgnored private var openAcrossSpaceChange = false
+    /// The app in front when the island last opened.
+    @ObservationIgnored private var appInFrontAtOpen: pid_t?
+    /// Which app is in front. Only a test replaces it.
+    @ObservationIgnored var appInFront: () -> pid_t? = {
+        NSWorkspace.shared.frontmostApplication?.processIdentifier
+    }
 
     init(metrics: NotchMetrics) {
         self.metrics = metrics
@@ -128,6 +157,84 @@ final class IslandViewModel {
         IslandLayout.make(for: self)
     }
 
+    // MARK: Hidden for full screen
+
+    /// Hidden for a full-screen app, yet still opened from the notch.
+    var opensWhileSuppressed: Bool { isSuppressed && opensFromNotchInFullScreen }
+
+    /// The least time the pointer must rest to open the island while it is hidden for
+    /// a full-screen app. The top edge is also the way to the app's hidden menu bar,
+    /// and a pointer brushing past on its way there must not open the island; with
+    /// the hover delay set to nothing, this still asks for a moment's rest.
+    static let fullScreenDwell: TimeInterval = 0.25
+
+    /// How far the pointer may drift on the notch and still be resting there, while the
+    /// island is hidden for a full-screen app. Further, and it is moving on, and the
+    /// wait to open starts again from where it stops.
+    static let restTolerance: CGFloat = 3
+
+    /// How tall the strip is that stands in for the island at the top of a display
+    /// without a notch while it is hidden for a full-screen app. Thin, so the app's own
+    /// top edge (a browser's tabs, a video's controls) stays the app's.
+    static let edgeTargetHeight: CGFloat = 4
+
+    /// Where the pointer finds the island while there is nothing to see
+    /// (`mode == .hidden`), in global coordinates; null where there is nothing to find.
+    ///
+    /// Hidden for a full-screen app, the island is found — when the person has not
+    /// turned that off — on the notch, where nothing of a full-screen app can be
+    /// clicked (its content starts below the camera housing), or on a display without
+    /// a notch in a strip `edgeTargetHeight` tall at the very top, as wide as the
+    /// resting pill. The strip reaches a point above the screen: the pointer's highest
+    /// position is the top edge itself, where mouse coordinates end. Otherwise a
+    /// notched screen's notch stays a target, and a plain display with nothing to show
+    /// has none.
+    var hiddenTarget: CGRect {
+        if isSuppressed, !opensFromNotchInFullScreen { return .null }
+        if metrics.hasNotch { return metrics.notchRect.insetBy(dx: -2, dy: -2) }
+        guard isSuppressed else { return .null }
+        let width = metrics.notchSize.width + IslandLayout.pillWidening
+        return CGRect(
+            x: metrics.notchMidX - width / 2,
+            y: metrics.screenFrame.maxY - Self.edgeTargetHeight,
+            width: width,
+            height: Self.edgeTargetHeight + 1
+        )
+    }
+
+    /// Hidden for a full-screen app on a display without a notch, where the strip at
+    /// the top edge stands in for the island.
+    var standsInOnEdge: Bool {
+        mode == .hidden && opensWhileSuppressed && !metrics.hasNotch
+    }
+
+    /// The active Space changed, and `isSuppressed` still describes the Space that
+    /// went. While hidden for a full-screen app, a wait on the notch to open the
+    /// island ends: the pointer has to come back to it on the new Space, rather than
+    /// the island opening over whatever arrives. An island open over the full-screen
+    /// app is left for `spaceDidSettle` to decide on, once it is known where the
+    /// display has gone.
+    func spaceDidChange() {
+        guard isSuppressed else { return }
+        cancelExpand()
+        if isExpanded { openAcrossSpaceChange = true }
+    }
+
+    /// The full-screen watcher has looked again after a change of Space, so
+    /// `isSuppressed` is up to date. An island that was open over a full-screen app
+    /// when the Space changed closes, as what it was opened over has gone — unless the
+    /// app simply left full screen under it (Esc, say, which changes Space too): the
+    /// display is no longer full screen and the app it opened over is still in front.
+    /// Then it stays open, now the normal island.
+    func spaceDidSettle() {
+        guard openAcrossSpaceChange else { return }
+        openAcrossSpaceChange = false
+        #if DEBUG
+        if isPinnedOpen { return }
+        #endif
+        if isSuppressed || appInFront() != appInFrontAtOpen { collapse() }
+    }
+
     // MARK: Pointer
 
     /// Called by the window controller as the pointer moves, with whether it is over
@@ -138,22 +245,57 @@ final class IslandViewModel {
     /// and it opens on a click. Were it part of the island's hover, the island would
     /// swell and open by itself as the pointer arrived, swallowing it before it could
     /// be clicked.
-    func pointer(inside: Bool, overSecondary: Bool = false) {
+    ///
+    /// `point` is where the pointer is, in global coordinates, and `buttonsDown` whether
+    /// a mouse button is held; only the notch of an island hidden for a full-screen app
+    /// looks at them.
+    func pointer(inside: Bool, overSecondary: Bool = false, at point: CGPoint? = nil, buttonsDown: Bool = false) {
         if overSecondary != isHoveringSecondary {
             withAnimation(.islandHover) { isHoveringSecondary = overSecondary }
         }
-        guard inside != isHovering else { return }
+        guard inside != isHovering else {
+            if inside, peekWait != .none, mode == .hidden { peek(at: point, buttonsDown: buttonsDown) }
+            return
+        }
         withAnimation(.islandHover) { isHovering = inside }
 
         if inside {
             cancelCollapse()
-            if !isExpanded, Prefs.expandOnHover, mode != .hidden, !isShowingCard {
-                scheduleExpand(after: Prefs.hoverDelay)
+            if !isExpanded, Prefs.expandOnHover, !isShowingCard {
+                if mode != .hidden {
+                    scheduleExpand(after: Prefs.hoverDelay)
+                } else if opensWhileSuppressed {
+                    peek(at: point, buttonsDown: buttonsDown)
+                }
             }
         } else {
             cancelExpand()
             if isExpanded { scheduleCollapse(after: 0.28) }
         }
+    }
+
+    /// The pointer is on the notch (or the strip standing in for it) while the island
+    /// is hidden for a full-screen app. It opens once the pointer has come to rest there
+    /// for the hover delay (never less than `fullScreenDwell`), counted from where it
+    /// stopped rather than from where it arrived: a pointer sliding along the top edge,
+    /// crossing the full-screen menu bar or pushing a game's view north, is passing
+    /// however slowly it goes, and every move beyond `restTolerance` starts the wait
+    /// again. A drag that reaches the top (selecting upwards so the app scrolls, or
+    /// dragging a scrubber) is the app's, and the wait starts only once the button is
+    /// let go.
+    private func peek(at point: CGPoint?, buttonsDown: Bool) {
+        if buttonsDown {
+            expandWork?.cancel()
+            expandWork = nil
+            peekWait = .held
+            return
+        }
+        if case .resting(let rest) = peekWait,
+           point.map({ hypot($0.x - rest.x, $0.y - rest.y) <= Self.restTolerance }) ?? true {
+            return
+        }
+        scheduleExpand(after: max(Prefs.hoverDelay, Self.fullScreenDwell))
+        peekWait = .resting(at: point ?? .zero)
     }
 
     func tap() {
@@ -162,8 +304,18 @@ final class IslandViewModel {
         expand()
     }
 
-    /// A click somewhere other than the island.
-    func clickOutside() {
+    /// A click somewhere other than the island. `onEdgeStrip` says it landed on the
+    /// strip that stands in for the island on a display without a notch
+    /// (`standsInOnEdge`). For someone who opens the island by clicking, the strip is
+    /// drawn to take that click itself, too faint to see (`IslandRootView`); should it
+    /// come through to the app all the same, it still opens the island. Opening on
+    /// hover, the strip is not drawn and a click there is the app's, which ends the
+    /// wait to open like any other click.
+    func clickOutside(onEdgeStrip: Bool = false) {
+        if onEdgeStrip, !Prefs.expandOnHover, standsInOnEdge {
+            tap()
+            return
+        }
         cancelExpand()
         #if DEBUG
         if isPinnedOpen { return }
@@ -175,6 +327,7 @@ final class IslandViewModel {
         cancelExpand()
         cancelCollapse()
         let wasExpanded = isExpanded
+        if !wasExpanded { appInFrontAtOpen = appInFront() }
         withAnimation(.islandOpen) {
             self.focus = focus
             isExpanded = true
@@ -185,6 +338,7 @@ final class IslandViewModel {
     func collapse() {
         cancelExpand()
         cancelCollapse()
+        openAcrossSpaceChange = false
         guard isExpanded else { return }
         withAnimation(.islandClose) {
             isExpanded = false
@@ -238,6 +392,7 @@ final class IslandViewModel {
     private func cancelExpand() {
         expandWork?.cancel()
         expandWork = nil
+        peekWait = .none
     }
 
     private func scheduleCollapse(after delay: TimeInterval) {
@@ -268,6 +423,14 @@ struct IslandLayout: Equatable {
     static let homeHeight: CGFloat = 116
     static let expandedInset = EdgeInsets(top: 0, leading: 20, bottom: 16, trailing: 20)
     static let bubbleGap: CGFloat = 7
+    /// How much wider than its notch-sized core the resting pill on a display without a
+    /// notch is.
+    static let pillWidening: CGFloat = 36
+    /// Hidden for a full-screen app on a notched display, the island is tucked this far
+    /// inside the camera housing's sides and bottom, with bottom corners at least as
+    /// round as the housing's, so no edge of it can show beside the housing.
+    static let tuckInset: CGFloat = 2
+    static let tuckedRadius: CGFloat = 14
     /// The second activity folded into the island: its circle, inset from the island's
     /// end so it sits concentric with the rounded corner (with room to swell under the
     /// pointer), and the gap between it and the primary's leading content.
@@ -315,6 +478,9 @@ struct IslandLayout: Equatable {
     var bodyHeight: CGFloat = 0
     var bubbleDiameter: CGFloat = 0
     var showsShadow = false
+    /// Whether the island is drawn. When it is not, it is fully transparent, and the
+    /// window passes clicks where it would be straight through.
+    var isDrawn = true
 
     /// Default width either side of the notch for compact content.
     static func defaultSide(for notch: CGSize) -> CGFloat { notch.height + 12 }
@@ -401,7 +567,27 @@ struct IslandLayout: Equatable {
 
         switch model.mode {
         case .hidden:
-            layout.size = CGSize(width: notch.width * 0.6, height: 0)
+            if model.opensWhileSuppressed, !floating {
+                // Hidden for a full-screen app, yet still opened from the notch: tucked
+                // just inside the camera housing, where it cannot be seen, rather than
+                // not drawn at all. So the notch takes a click or a swipe as the resting
+                // island does, and the island opens out of the notch, and closes back
+                // into it, exactly as it does outside full screen.
+                layout.size = CGSize(
+                    width: metrics.notchSize.width - 2 * tuckInset,
+                    height: metrics.notchSize.height - tuckInset
+                )
+                layout.earRadius = 0
+                corners(tuckedRadius)
+            } else if model.opensWhileSuppressed {
+                // Without a notch there is nowhere to tuck it: not drawn, but kept at
+                // the resting pill's size, so it opens from where the pill would be.
+                layout.size.width += pillWidening
+                layout.isDrawn = false
+            } else {
+                layout.size = CGSize(width: notch.width * 0.6, height: 0)
+                layout.isDrawn = false
+            }
 
         case .idle:
             if dots > 0 {
@@ -409,7 +595,7 @@ struct IslandLayout: Equatable {
                 wings(leading: 0, trailing: dots, grow: 5 * hover)
             } else if floating {
                 // The resting pill, where the user asked for one.
-                layout.size.width += 36 + 10 * hover
+                layout.size.width += pillWidening + 10 * hover
             } else {
                 // A little growth under the pointer says "this opens".
                 layout.size.width += 14 * hover

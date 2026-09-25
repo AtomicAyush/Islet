@@ -58,6 +58,17 @@ final class IslandManager {
                 }
             })
         }
+        // A change of Space at once ends any wait on the notch of an island hidden for
+        // a full-screen app. Whether an island open over the app closes waits until the
+        // watcher has seen where the Space went (`onSpaceSettled`, below): leaving full
+        // screen is a change of Space too.
+        observers.append(workspace.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.controllers.values.forEach { $0.model.spaceDidChange() }
+            }
+        })
         observers.append(DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main
         ) { [weak self] _ in
@@ -65,6 +76,9 @@ final class IslandManager {
         })
 
         fullScreen.onChange = { [weak self] in self?.applyFullScreen() }
+        fullScreen.onSpaceSettled = { [weak self] in
+            self?.controllers.values.forEach { $0.model.spaceDidSettle() }
+        }
         fullScreen.start()
         watchSecondary()
     }
@@ -137,6 +151,10 @@ final class IslandManager {
         let idlePill = Prefs.idlePillOnPlainDisplays
         for controller in controllers.values where controller.model.showsIdlePill != idlePill {
             controller.model.showsIdlePill = idlePill
+        }
+        let fromNotch = Prefs.openFromNotchInFullScreen
+        for controller in controllers.values where controller.model.opensFromNotchInFullScreen != fromNotch {
+            controller.model.opensFromNotchInFullScreen = fromNotch
         }
         applyFullScreen()
     }

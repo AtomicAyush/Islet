@@ -7,6 +7,7 @@ struct IslandRootView: View {
     /// Told whenever the island's footprint changes, so the controller can update
     /// where clicks are caught.
     var onLayoutChange: (IslandLayout) -> Void = { _ in }
+    @AppStorage(Prefs.Key.expandOnHover) private var expandOnHover = true
 
     var body: some View {
         let layout = model.layout
@@ -16,11 +17,34 @@ struct IslandRootView: View {
 
             IslandSurface(model: model, layout: layout)
                 .offset(y: layout.topInset)
+
+            if model.standsInOnEdge, !expandOnHover {
+                EdgeStrip(model: model)
+            }
         }
         .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .onChange(of: layout, initial: true) { _, new in onLayoutChange(new) }
+    }
+}
+
+/// The strip at the top edge that stands in for the island while it is hidden for a
+/// full-screen app on a display without a notch (`IslandViewModel.hiddenTarget`), for
+/// someone who opens the island by clicking. Nothing of the island is drawn there, and
+/// the window lets a click on nothing through to the app below, which would take the
+/// click as well as the island opening; so the strip is drawn, too faint to see, for the
+/// window to take the click itself. Opening on hover, it is not drawn, and a click on
+/// the app's top edge stays the app's.
+private struct EdgeStrip: View {
+    let model: IslandViewModel
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.01))
+            .frame(width: model.hiddenTarget.width, height: IslandViewModel.edgeTargetHeight)
+            .contentShape(Rectangle())
+            .onTapGesture { model.tap() }
     }
 }
 
@@ -79,7 +103,17 @@ private struct IslandSurface: View {
                 model.tap()
             }
         }
-        .opacity(model.mode == .hidden ? 0 : 1)
+        // Hidden for a full-screen app on a display without a notch, the island is not
+        // drawn, so it comes and goes by its opacity. Opening, it is there at once, at
+        // the resting pill's size, and grows as it does outside full screen rather than
+        // fading in as a grey ghost; closing, it stays until it has all but shrunk back
+        // to the pill, then goes.
+        .transaction { transaction in
+            guard model.opensWhileSuppressed else { return }
+            transaction.animation = layout.isDrawn ? nil : .easeIn(duration: 0.1).delay(0.2)
+        } body: {
+            $0.opacity(layout.isDrawn ? 1 : 0)
+        }
     }
 
     @ViewBuilder

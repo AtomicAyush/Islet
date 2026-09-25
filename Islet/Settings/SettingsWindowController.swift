@@ -13,7 +13,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func show() {
         if window == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
+                contentRect: NSRect(x: 0, y: 0, width: 620, height: 560),
                 styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
@@ -22,7 +22,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
             window.contentViewController = NSHostingController(rootView: SettingsView())
-            window.setContentSize(NSSize(width: 620, height: 520))
+            window.setContentSize(NSSize(width: 620, height: 560))
             window.center()
             window.delegate = self
             self.window = window

@@ -48,6 +48,7 @@ enum Prefs {
         static let haptics = "haptics"
         static let displays = "displays"
         static let hideInFullScreen = "hideInFullScreen"
+        static let openFromNotchInFullScreen = "openFromNotchInFullScreen"
         static let showMenuBarIcon = "showMenuBarIcon"
         static let idlePillOnPlainDisplays = "idlePillOnPlainDisplays"
 
@@ -63,6 +64,7 @@ enum Prefs {
             Key.haptics: true,
             Key.displays: DisplayChoice.notched.rawValue,
             Key.hideInFullScreen: true,
+            Key.openFromNotchInFullScreen: true,
             Key.showMenuBarIcon: true,
             Key.idlePillOnPlainDisplays: false,
         ]
@@ -78,6 +80,9 @@ enum Prefs {
     static var hoverDelay: TimeInterval { store.double(forKey: Key.hoverDelay) }
     static var haptics: Bool { store.bool(forKey: Key.haptics) }
     static var hideInFullScreen: Bool { store.bool(forKey: Key.hideInFullScreen) }
+    /// Whether the island, hidden for a full-screen app, still opens from the notch
+    /// (on a display without one, from the middle of the top edge).
+    static var openFromNotchInFullScreen: Bool { store.bool(forKey: Key.openFromNotchInFullScreen) }
     static var showMenuBarIcon: Bool { store.bool(forKey: Key.showMenuBarIcon) }
     static var idlePillOnPlainDisplays: Bool { store.bool(forKey: Key.idlePillOnPlainDisplays) }
 
