@@ -19,7 +19,7 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @AppStorage(Prefs.Key.expandOnHover) private var expandOnHover = true
-    @AppStorage(Prefs.Key.hoverDelay) private var hoverDelay = 0.12
+    @AppStorage(Prefs.Key.hoverDelay) private var hoverDelay = 0.25
     @AppStorage(Prefs.Key.haptics) private var haptics = true
     @AppStorage(Prefs.Key.displays) private var displays = DisplayChoice.notched.rawValue
     @AppStorage(Prefs.Key.hideInFullScreen) private var hideInFullScreen = true

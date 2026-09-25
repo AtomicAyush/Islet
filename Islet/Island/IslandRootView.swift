@@ -28,6 +28,7 @@ struct IslandRootView: View {
 private struct IslandSurface: View {
     let model: IslandViewModel
     let layout: IslandLayout
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let shape = IslandShape(
@@ -52,7 +53,7 @@ private struct IslandSurface: View {
         .clipShape(shape)
         .contentShape(shape)
         .keyframeAnimator(initialValue: Squash(), trigger: model.contentKey) { view, squash in
-            view.scaleEffect(x: squash.x, y: squash.y, anchor: .top)
+            view.scaleEffect(x: reduceMotion ? 1 : squash.x, y: reduceMotion ? 1 : squash.y, anchor: .top)
         } keyframes: { _ in
             // A brief squash and rebound on every change of shape, like the iPhone's
             // island absorbing the impact of new content.
@@ -200,6 +201,7 @@ private struct BubbleDroplet: View, Animatable {
     let layout: IslandLayout
     let activity: (any IslandActivity)?
     let onTap: (String) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var animatableData: CGFloat {
         get { progress }
@@ -213,9 +215,10 @@ private struct BubbleDroplet: View, Animatable {
         // The island's rounded right end, relative to the notch's centre.
         let islandRight = layout.centerOffset + layout.size.width / 2 - layout.earRadius
         let tucked = islandRight - d / 2
-        let x = tucked + (target.width - tucked) * progress
-        let scale = 0.55 + 0.45 * min(progress, 1.2)
-        let isMoving = progress > 0.001 && abs(progress - 1) > 0.001
+        let x = reduceMotion ? target.width : tucked + (target.width - tucked) * progress
+        let scale = reduceMotion ? 1 : 0.55 + 0.45 * min(progress, 1.2)
+        // With Reduce Motion on, the bubble just fades in place: no neck, no travel.
+        let isMoving = !reduceMotion && progress > 0.001 && abs(progress - 1) > 0.001
 
         ZStack(alignment: .top) {
             if isMoving {

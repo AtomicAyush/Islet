@@ -40,7 +40,7 @@ enum Prefs {
     static func register(features: [any Feature]) {
         var defaults: [String: Any] = [
             Key.expandOnHover: true,
-            Key.hoverDelay: 0.12,
+            Key.hoverDelay: 0.25,
             Key.haptics: true,
             Key.displays: DisplayChoice.notched.rawValue,
             Key.hideInFullScreen: true,
