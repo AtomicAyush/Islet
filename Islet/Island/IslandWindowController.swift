@@ -26,7 +26,7 @@ final class IslandWindowController {
 
         let root = IslandRootView(model: model) { [weak self] layout in
             self?.layout = layout
-            self?.updateHitTesting()
+            self?.updateHitTesting(pointerMoved: false)
         }
         let host = IslandHostingView(rootView: root)
         // The canvas is a fixed size; don't let SwiftUI's content resize the panel.
@@ -156,13 +156,20 @@ final class IslandWindowController {
 
     /// Catch clicks only over the island (and its bubble); let everything else
     /// through to the menu bar and windows below.
-    private func updateHitTesting() {
+    ///
+    /// When the island changes shape on its own (a banner arriving, say) the pointer
+    /// may now be over it without having moved. That updates click-catching, but it
+    /// does not count as hovering — otherwise a pointer resting near the top of the
+    /// screen would open the island every time something happened.
+    private func updateHitTesting(pointerMoved: Bool = true) {
         guard let layout else { return }
         let point = NSEvent.mouseLocation
         let inside = islandRect(for: layout).contains(point) || bubbleRect(for: layout)?.contains(point) == true
         let catchesDrops = fileDragActive && model.isExpanded
         panel.ignoresMouseEvents = !(inside || catchesDrops)
-        model.pointer(inside: inside)
+        if pointerMoved || !inside {
+            model.pointer(inside: inside)
+        }
     }
 
     private func islandRect(for layout: IslandLayout) -> CGRect {

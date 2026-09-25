@@ -75,7 +75,9 @@ final class TimerModel {
             MainActor.assumeIsolated { self?.finish() }
         }
         finishWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + end.timeIntervalSinceNow, execute: work)
+        // Wall-clock, not uptime: the Mac may sleep while the timer runs, and it
+        // should still end at the time it said it would.
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + end.timeIntervalSinceNow, execute: work)
         onChange()
     }
 
