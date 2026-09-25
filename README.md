@@ -11,9 +11,25 @@ the camera while something is going on, and opens into a card when the pointer r
 
 **Now Playing.** Whatever the Mac is playing — Music, Spotify, a browser — with the artwork
 left of the camera and a waveform on the right, tinted with the cover's colour. Opened, it
-is a player: artwork, a scrolling title, a scrubber you can drag, and the controls. A song
-change gets a moment's banner. The waveform runs on Core Animation, so a song playing costs
-next to nothing.
+is a player: artwork, a scrolling title, a scrubber you can drag, and the controls, with
+shuffle and repeat where the player reports them. A song change gets a moment's banner. The
+waveform runs on Core Animation, so a song playing costs next to nothing.
+
+Video gets its own look — YouTube in a browser, the TV app, QuickTime, IINA, VLC: a 16:9
+thumbnail and a progress ring beside the notch, and 15-second jumps in the player.
+
+With a music app that has a library, the player also opens **Up Next** (tap a track to jump
+to it) and **Playlists** (tap one to switch):
+
+- *Spotify* needs a one-time sign-in through a Spotify app of your own, since Spotify only
+  lets registered apps read your queue: create one at
+  [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) with the Web
+  API, add the redirect URI `islet://nowplaying/spotify-callback`, paste its client ID in
+  Settings → Activities → Now Playing, and click Connect. Spotify requires the app's owner
+  to have Premium. Spotify's Jam has no public API, so the Jam button brings Spotify
+  forward.
+- *Music* asks once for permission to control Music. It offers playlists; Music does not
+  expose Up Next to other apps.
 
 **Timer.** Start one from the opened island (or `islet://timer/start?minutes=5`) and it counts
 down beside the notch in the Clock app's orange; opened, it pauses and cancels. When it ends
@@ -38,6 +54,12 @@ starts, with a Join button when there is a Zoom, Meet, Teams, Webex or FaceTime 
 
 **Camera & Microphone.** A green dot beside the notch while the camera is in use, an orange
 one while only the microphone is — as on the iPhone.
+
+**Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
+the opened island and on the home page. When two apps play at once, the mixer takes the
+bubble beside the island. macOS has no per-app volume, so Islet makes one with Core Audio
+process taps (macOS 14.2 or later): the first time you move a slider, macOS asks to let Islet
+record system audio, which is how it passes the app's sound through at the level you set.
 
 **Drop Zone.** Drag files toward the notch and the island opens onto two targets: AirDrop,
 and a shelf that keeps them for later. Shelved files show on the home page and drag back out
