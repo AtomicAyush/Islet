@@ -22,6 +22,10 @@ final class IslandWindowController {
     /// Sideways travel of the same swipe (positive = right), for turning home pages.
     private var swipeTravelX: CGFloat = 0
     private var swipeHandled = false
+    /// Each swipe is either sideways or up-and-down, decided from its first few points
+    /// of travel, so drift in the other direction cannot trigger the other gesture.
+    private enum SwipeAxis { case undecided, horizontal, vertical }
+    private var swipeAxis = SwipeAxis.undecided
 
     init(screen: NSScreen) {
         self.screen = screen
@@ -108,6 +112,7 @@ final class IslandWindowController {
             swipeTravel = 0
             swipeTravelX = 0
             swipeHandled = false
+            swipeAxis = .undecided
         }
         guard event.phase == .changed || event.phase == .began, !swipeHandled else { return }
 
@@ -115,15 +120,23 @@ final class IslandWindowController {
         swipeTravel += inverted ? event.scrollingDeltaY : -event.scrollingDeltaY
         swipeTravelX += inverted ? event.scrollingDeltaX : -event.scrollingDeltaX
 
-        // Sideways on the open home page turns its pages: fingers left, next page. In
-        // the scrolling layout the row takes the swipe itself.
-        if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
+        if swipeAxis == .undecided, max(abs(swipeTravel), abs(swipeTravelX)) > 8 {
+            swipeAxis = abs(swipeTravelX) > abs(swipeTravel) ? .horizontal : .vertical
+        }
+        switch swipeAxis {
+        case .undecided:
+            return
+        case .horizontal:
+            // Sideways on the open home page turns its pages: fingers left, next page.
+            // In the scrolling layout the row takes the swipe itself.
             guard Prefs.homeLayout == .pages, model.isExpanded,
                   model.resolvedFocus == IslandViewModel.homeFocus,
                   abs(swipeTravelX) > 30 else { return }
             swipeHandled = true
             model.homePage = max(0, model.homePage + (swipeTravelX < 0 ? 1 : -1))
             return
+        case .vertical:
+            break
         }
 
         if swipeTravel > 24, !model.isExpanded {
@@ -139,11 +152,14 @@ final class IslandWindowController {
         switch event.type {
         case .leftMouseDown where isLocal:
             dragChangeCount = NSPasteboard(name: .drag).changeCount
-            pressBeganInside = true
+            // Local events include Islet's other windows (Settings); only the panel counts.
+            pressBeganInside = event.window === panel
+            model.dragStartedOnIsland = pressBeganInside
         case .leftMouseDown, .rightMouseDown:
             // A global press: this click was not on the island.
             dragChangeCount = NSPasteboard(name: .drag).changeCount
             pressBeganInside = false
+            model.dragStartedOnIsland = false
             model.clickOutside()
         case .leftMouseUp:
             pressBeganInside = false
@@ -188,9 +204,19 @@ final class IslandWindowController {
     private func updateHitTesting(pointerMoved: Bool = true) {
         guard let layout else { return }
         let point = NSEvent.mouseLocation
-        let inside = islandRect(for: layout).contains(point) || bubbleRect(for: layout)?.contains(point) == true
+        let overIsland = islandRect(for: layout).contains(point)
+        let overBubble = !overIsland && bubbleRect(for: layout)?.contains(point) == true
+        let inside = overIsland || overBubble
+        // A press that began on the island (dragging the scrubber, say) holds it open
+        // until release, wherever the pointer wanders; mouse-up clears the press and
+        // comes back through here. Outgoing file drags change the drag pasteboard and
+        // are left alone.
+        if !inside, pressBeganInside, NSEvent.pressedMouseButtons & 1 != 0,
+           NSPasteboard(name: .drag).changeCount == dragChangeCount {
+            return
+        }
         if pointerMoved || !inside {
-            model.pointer(inside: inside)
+            model.pointer(inside: inside, bubble: overBubble ? model.bubbleActivity?.id : nil)
         }
     }
 

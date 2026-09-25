@@ -38,6 +38,10 @@ final class IslandViewModel {
     /// Which page of home tiles is showing, when they need more than one.
     var homePage = 0
 
+    /// The current press began on the island, so a drag it starts is outgoing (a file
+    /// dragged off the shelf) and the island must not treat it as one arriving.
+    @ObservationIgnored var dragStartedOnIsland = false
+
     #if DEBUG
     /// Keeps the island open whatever the pointer does, for screenshots
     /// (`islet://open?pin=1`; `islet://close` releases it).
@@ -47,6 +51,9 @@ final class IslandViewModel {
     let center = ActivityCenter.shared
 
     @ObservationIgnored private var expandWork: DispatchWorkItem?
+    /// What resting the pointer should open: the bubble's activity, or `nil` for the
+    /// island's own.
+    @ObservationIgnored private var hoverFocus: String?
     @ObservationIgnored private var collapseWork: DispatchWorkItem?
 
     init(metrics: NotchMetrics) {
@@ -60,7 +67,8 @@ final class IslandViewModel {
         if isSuppressed { return .hidden }
         if let banner = center.banner { return .banner(id: banner.id) }
         if let primary = center.primary { return .compact(id: primary.id) }
-        return metrics.hasNotch || showsIdlePill ? .idle : .hidden
+        // Camera and microphone dots need somewhere to sit, notch or not.
+        return metrics.hasNotch || showsIdlePill || !center.indicators.isEmpty ? .idle : .hidden
     }
 
     var resolvedFocus: String {
@@ -99,14 +107,17 @@ final class IslandViewModel {
 
     // MARK: Pointer
 
-    /// Called by the window controller as the pointer crosses the island's edge.
-    func pointer(inside: Bool) {
+    /// Called by the window controller as the pointer moves. `bubble` is the activity
+    /// in the detached bubble when the pointer is over that rather than the island,
+    /// so resting there opens the bubble's activity.
+    func pointer(inside: Bool, bubble: String? = nil) {
+        hoverFocus = inside ? bubble : nil
         guard inside != isHovering else { return }
         withAnimation(.islandHover) { isHovering = inside }
 
         if inside {
             cancelCollapse()
-            if !isExpanded, Prefs.expandOnHover, mode != .hidden {
+            if !isExpanded, Prefs.expandOnHover, mode != .hidden, !isShowingCard {
                 scheduleExpand(after: Prefs.hoverDelay)
             }
         } else {
@@ -176,11 +187,19 @@ final class IslandViewModel {
 
     // MARK: Timers
 
+    /// A card banner is up. Cards can hold buttons (restart a timer, say), so resting
+    /// on one must not replace it with the opened island; a click still opens it.
+    private var isShowingCard: Bool {
+        guard case .banner = mode, case .card? = center.banner?.style else { return false }
+        return true
+    }
+
     private func scheduleExpand(after delay: TimeInterval) {
         cancelExpand()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.isHovering else { return }
-            self.expand()
+            // A card may have arrived while waiting.
+            guard let self, self.isHovering, !self.isShowingCard else { return }
+            self.expand(focus: self.hoverFocus)
         }
         expandWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)

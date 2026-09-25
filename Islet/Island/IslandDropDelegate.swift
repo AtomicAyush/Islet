@@ -15,7 +15,8 @@ struct IslandDropDelegate: DropDelegate {
     private var target: (any DropTarget)? { model.center.dropTarget }
 
     func validateDrop(info: DropInfo) -> Bool {
-        target != nil && info.hasItemsConforming(to: [.fileURL])
+        // A file dragged off the shelf starts over the island; it is leaving.
+        !model.dragStartedOnIsland && target != nil && info.hasItemsConforming(to: [.fileURL])
     }
 
     func dropEntered(info: DropInfo) {

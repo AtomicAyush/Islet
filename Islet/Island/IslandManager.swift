@@ -60,7 +60,9 @@ final class IslandManager {
     /// the pointer, else the first.
     var focusedController: IslandWindowController? {
         let point = NSEvent.mouseLocation
-        return controllers.values.first { $0.screen.frame.contains(point) } ?? controllers.values.first
+        // Mouse coordinates run over (minY, maxY], so a pointer parked at the very top
+        // edge — where it rests for a notch app — belongs to that screen.
+        return controllers.values.first { NSMouseInRect(point, $0.screen.frame, false) } ?? controllers.values.first
     }
 
     // MARK: Screens

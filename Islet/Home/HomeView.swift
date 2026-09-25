@@ -154,7 +154,17 @@ private struct ScrollingTileRow: View {
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 row.scrollTargetLayout()
+                    .background {
+                        // Where the row sits, for macOS 14, which has no scroll geometry.
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: RowOffsetKey.self,
+                                value: -geo.frame(in: .named(RowOffsetKey.space)).minX
+                            )
+                        }
+                    }
             }
+            .coordinateSpace(name: RowOffsetKey.space)
             .scrollTargetBehavior(.viewAligned)
             .modifier(ScrollOffsetReader(offset: $offset))
             .mask(edgeFades(
@@ -178,7 +188,7 @@ private struct ScrollingTileRow: View {
 }
 
 /// Reports a horizontal scroll view's offset. macOS 15 says so directly; macOS 14
-/// has to infer it from where the content sits.
+/// infers it from where the row sits in the scroll view's coordinate space.
 private struct ScrollOffsetReader: ViewModifier {
     @Binding var offset: CGFloat
 
@@ -190,9 +200,15 @@ private struct ScrollOffsetReader: ViewModifier {
                 offset = new
             }
         } else {
-            content
+            content.onPreferenceChange(RowOffsetKey.self) { offset = $0 }
         }
     }
+}
+
+private struct RowOffsetKey: PreferenceKey {
+    static let space = "homeTileRow"
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 /// A rounded, faintly lit card for a home widget.
