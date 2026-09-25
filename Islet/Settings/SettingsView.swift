@@ -39,8 +39,12 @@ private struct GeneralSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Open at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, on in setLaunchAtLogin(on) }
+                // Through a binding, not onChange: writing the real state back after a
+                // failure would otherwise run the change again and clear the error.
+                Toggle("Open at login", isOn: Binding(
+                    get: { launchAtLogin },
+                    set: { setLaunchAtLogin($0) }
+                ))
                 if let loginError {
                     Text(loginError).font(.caption).foregroundStyle(.red)
                 }
@@ -94,8 +98,8 @@ private struct GeneralSettings: View {
             loginError = nil
         } catch {
             loginError = error.localizedDescription
-            launchAtLogin = SMAppService.mainApp.status == .enabled
         }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
 

@@ -108,7 +108,6 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://timer/start?minutes=5` | Starts a timer (`seconds=` works too) |
 | `islet://timer/pause`, `/resume`, `/cancel` | |
 | `islet://preview?feature=battery&index=0` | Runs a feature's preview |
-
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://settings?tab=activities` | Opens Settings on a tab |
 

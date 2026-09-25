@@ -10,6 +10,10 @@ import AppKit
 ///     islet://<feature>/…          handed to that feature, e.g. islet://timer/start?minutes=5
 @MainActor
 enum URLRouter {
+    /// URLs that arrived before launch finished (the one that launched Islet, say),
+    /// held until there is an island to act on. `nil` once launch has finished.
+    private static var pending: [URL]? = []
+
     static func install() {
         NSAppleEventManager.shared().setEventHandler(
             Handler.shared,
@@ -17,6 +21,21 @@ enum URLRouter {
             forEventClass: AEEventClass(kInternetEventClass),
             andEventID: AEEventID(kAEGetURL)
         )
+    }
+
+    /// Routes the held URLs; called once the islands and features are up.
+    static func launchFinished() {
+        let held = pending ?? []
+        pending = nil
+        held.forEach(route)
+    }
+
+    static func receive(_ url: URL) {
+        if pending != nil {
+            pending?.append(url)
+        } else {
+            route(url)
+        }
     }
 
     static func route(_ url: URL) {
@@ -68,7 +87,7 @@ enum URLRouter {
         @objc func handle(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
             guard let string = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
                   let url = URL(string: string) else { return }
-            MainActor.assumeIsolated { URLRouter.route(url) }
+            MainActor.assumeIsolated { URLRouter.receive(url) }
         }
     }
 }
