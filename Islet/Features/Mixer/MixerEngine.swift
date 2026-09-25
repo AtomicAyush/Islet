@@ -387,7 +387,7 @@ final class MixerEngine: @unchecked Sendable {
             return nil
         }
         do {
-            return try VolumeTap.make(appName: app.source.name, signature: signature, output: output, gain: level)
+            return try VolumeTap.make(app: app.source, signature: signature, output: output, gain: level)
         } catch {
             recordFailure(id, signature: signature, error: error)
             return nil

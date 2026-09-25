@@ -12,6 +12,9 @@ import os
 /// is lost if Islet stops or quits: macOS removes private taps and devices with the
 /// process that made them.
 ///
+/// While it runs, it is listed in `MixerTaps`, so the Now Playing waveform can follow
+/// the app's sound from here rather than tap it a second time.
+///
 /// Made, used and destroyed only on the mixer's queue.
 final class VolumeTap {
     /// What a tap was made over. A change of either means making a new one.
@@ -36,13 +39,20 @@ final class VolumeTap {
 
     let signature: Signature
     private(set) var isRunning = false
+    private let appID: String
+    private let sampleRate: Float64
     private let tap: AudioObjectID
     private let aggregate: AudioObjectID
     private let proc: AudioDeviceIOProcID
     private let renderer: GainRenderer
 
-    private init(signature: Signature, tap: AudioObjectID, aggregate: AudioObjectID, proc: AudioDeviceIOProcID, renderer: GainRenderer) {
+    private init(
+        appID: String, signature: Signature, sampleRate: Float64,
+        tap: AudioObjectID, aggregate: AudioObjectID, proc: AudioDeviceIOProcID, renderer: GainRenderer
+    ) {
+        self.appID = appID
         self.signature = signature
+        self.sampleRate = sampleRate
         self.tap = tap
         self.aggregate = aggregate
         self.proc = proc
@@ -51,12 +61,12 @@ final class VolumeTap {
 
     /// Builds the tap, device and IOProc, not yet running. Creating the tap is what
     /// makes macOS ask for permission, if it has not been answered.
-    static func make(appName: String, signature: Signature, output: MixerOutputDevice, gain: Float) throws -> VolumeTap {
+    static func make(app: MixerSource, signature: Signature, output: MixerOutputDevice, gain: Float) throws -> VolumeTap {
         guard #available(macOS 14.2, *) else { throw Failure.unsupported }
 
         let description = CATapDescription(stereoMixdownOfProcesses: signature.processes)
         description.uuid = UUID()
-        description.name = "Islet – \(appName)"
+        description.name = "Islet – \(app.name)"
         description.isPrivate = true
         description.muteBehavior = .mutedWhenTapped
 
@@ -66,12 +76,12 @@ final class VolumeTap {
         var proc: AudioDeviceIOProcID?
         do {
             let tapUID = MixerHAL.string(kAudioTapPropertyUID, of: tap) ?? description.uuid.uuidString
-            let composition = composition(name: appName, tapUID: tapUID, output: output)
+            let composition = composition(name: app.name, tapUID: tapUID, output: output)
             try check(AudioHardwareCreateAggregateDevice(composition as CFDictionary, &aggregate))
             guard let tapStream = tapStreamIndex(on: aggregate, output: output) else { throw Failure.unexpectedLayout }
 
             let sampleRate = MixerHAL.read(Float64(0), kAudioDevicePropertyNominalSampleRate, of: aggregate) ?? 48_000
-            let renderer = GainRenderer(gain: gain, sampleRate: sampleRate)
+            let renderer = GainRenderer(gain: gain, sampleRate: sampleRate, listener: MixerTaps.listener)
             // No dispatch queue: the block runs on the HAL's realtime IO thread.
             try check(AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, nil) { _, input, _, destination, _ in
                 renderer.render(input, tapBuffer: tapStream, into: destination)
@@ -80,7 +90,10 @@ final class VolumeTap {
             if output.inputStreams > 0 {
                 try useOnlyStream(tapStream, of: output.inputStreams + 1, on: aggregate, for: proc)
             }
-            return VolumeTap(signature: signature, tap: tap, aggregate: aggregate, proc: proc, renderer: renderer)
+            return VolumeTap(
+                appID: app.id, signature: signature, sampleRate: sampleRate,
+                tap: tap, aggregate: aggregate, proc: proc, renderer: renderer
+            )
         } catch {
             if let proc { AudioDeviceDestroyIOProcID(aggregate, proc) }
             if aggregate != kAudioObjectUnknown { AudioHardwareDestroyAggregateDevice(aggregate) }
@@ -98,11 +111,15 @@ final class VolumeTap {
         guard !isRunning else { return }
         try Self.check(AudioDeviceStart(aggregate, proc))
         isRunning = true
+        MixerTaps.started(MixerTaps.Running(
+            tap: renderer.id, appID: appID, sampleRate: sampleRate, isHeard: renderer.isHeard
+        ))
     }
 
     /// Hands the app's sound back to its normal path.
     func stop() {
         guard isRunning else { return }
+        MixerTaps.stopped(renderer.id)
         AudioDeviceStop(aggregate, proc)
         isRunning = false
     }
@@ -116,8 +133,10 @@ final class VolumeTap {
     }
 
     // MARK: Building
+    //
+    // Shared with the Now Playing waveform's tap, which is built the same way.
 
-    private static func check(_ status: OSStatus) throws {
+    static func check(_ status: OSStatus) throws {
         guard status != noErr else { return }
         if status == kAudioHardwareIllegalOperationError || status == kAudioDevicePermissionsError {
             throw Failure.refused
@@ -127,7 +146,7 @@ final class VolumeTap {
 
     /// Private, so it never shows in Sound settings and goes when Islet does; timed by
     /// the output, with the tap resampled to follow it.
-    private static func composition(name: String, tapUID: String, output: MixerOutputDevice) -> [String: Any] {
+    static func composition(name: String, tapUID: String, output: MixerOutputDevice) -> [String: Any] {
         [
             kAudioAggregateDeviceNameKey: "Islet – \(name)",
             kAudioAggregateDeviceUIDKey: deviceUIDPrefix + UUID().uuidString,
@@ -148,7 +167,7 @@ final class VolumeTap {
     /// mistake would play a microphone through the speakers: the count must match,
     /// and the last stream must not declare a physical terminal, which a microphone
     /// or line input does and the tap does not.
-    private static func tapStreamIndex(on aggregate: AudioObjectID, output: MixerOutputDevice) -> Int? {
+    static func tapStreamIndex(on aggregate: AudioObjectID, output: MixerOutputDevice) -> Int? {
         guard output.inputStreams > 0 else { return 0 }
         let streams = MixerHAL.objects(kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeInput, of: aggregate)
         guard streams.count == output.inputStreams + 1, let last = streams.last else { return nil }
@@ -159,7 +178,7 @@ final class VolumeTap {
 
     /// Leaves the output's own inputs off for this IOProc, so taking an app's sound
     /// over never opens a headset's microphone.
-    private static func useOnlyStream(_ index: Int, of count: Int, on device: AudioObjectID, for proc: AudioDeviceIOProcID) throws {
+    static func useOnlyStream(_ index: Int, of count: Int, on device: AudioObjectID, for proc: AudioDeviceIOProcID) throws {
         let layout = MemoryLayout<AudioHardwareIOProcStreamUsage>.self
         guard let procOffset = layout.offset(of: \.mIOProc),
               let countOffset = layout.offset(of: \.mNumberStreams),
@@ -187,9 +206,19 @@ final class VolumeTap {
 /// crosses over through a try-lock; one missed is picked up a cycle later, a few
 /// milliseconds on. Changes are ramped rather than stepped, which would click, and
 /// a boost is rounded off towards full scale rather than clipped.
+///
+/// Its listener, if Islet has one, hears the tapped sound before the gain, and only
+/// reads it: what plays is the same with or without it.
 final class GainRenderer: @unchecked Sendable {
     /// Where boosted sound starts being rounded off.
     private static let knee: Float = 0.8
+    /// Hands out `id`s. Only ever touched on the mixer's queue, where taps are made.
+    private static var made = 0
+
+    /// Tells this renderer's sound from other taps' in `MixerSoundListener.hear`.
+    let id: Int
+    private let listener: (any MixerSoundListener)?
+    var isHeard: Bool { listener != nil }
 
     private let lock: UnsafeMutablePointer<os_unfair_lock>
     /// Guarded by `lock`.
@@ -200,7 +229,10 @@ final class GainRenderer: @unchecked Sendable {
     /// The most the gain moves in one frame: from silence to full in 15 ms.
     private let step: Float
 
-    init(gain: Float, sampleRate: Float64) {
+    init(gain: Float, sampleRate: Float64, listener: (any MixerSoundListener)? = nil) {
+        Self.made += 1
+        id = Self.made
+        self.listener = listener
         lock = .allocate(capacity: 1)
         lock.initialize(to: os_unfair_lock())
         target = gain
@@ -239,6 +271,7 @@ final class GainRenderer: @unchecked Sendable {
         }
         let sourceChannels = Int(inputs[tapBuffer].mNumberChannels)
         let sourceFrames = Int(inputs[tapBuffer].mDataByteSize) / (sourceChannels * MemoryLayout<Float>.size)
+        listener?.hear(source, frames: sourceFrames, channels: sourceChannels, from: id)
         var outputChannels = 0
         for buffer in outputs { outputChannels += Int(buffer.mNumberChannels) }
         let mixesToMono = outputChannels == 1 && sourceChannels > 1
@@ -292,5 +325,59 @@ final class GainRenderer: @unchecked Sendable {
         guard magnitude > knee else { return sample }
         let eased = knee + (1 - knee) * tanhf((magnitude - knee) / (1 - knee))
         return sample < 0 ? -eased : eased
+    }
+}
+
+// MARK: - Listening in
+
+/// Follows the sound a mixer tap passes through, before its gain: the Now Playing
+/// waveform, so an app the mixer already taps is not tapped twice.
+///
+/// Called on the HAL's IO thread for every buffer of every running tap, with the
+/// tap's interleaved samples. It must return at once for a tap it is not following,
+/// and never allocate or wait. It only reads; the samples are the ones about to play.
+protocol MixerSoundListener: AnyObject, Sendable {
+    func hear(_ samples: UnsafePointer<Float>, frames: Int, channels: Int, from tap: Int)
+}
+
+/// The mixer's taps that are running, by app, and the one listener they all tell.
+///
+/// Taps are listed from the mixer's queue as their IO starts and stops, and
+/// `didChange` is posted each time, on that queue.
+enum MixerTaps {
+    struct Running: Equatable, Sendable {
+        /// The renderer's id, as `MixerSoundListener.hear` gives it.
+        let tap: Int
+        let appID: String
+        let sampleRate: Float64
+        /// Made while a listener was set, so the listener hears it.
+        let isHeard: Bool
+    }
+
+    static let didChange = Notification.Name("Islet.MixerTaps.didChange")
+
+    private static let lock = NSLock()
+    private static var storedListener: (any MixerSoundListener)?
+    private static var storedRunning: [Running] = []
+
+    /// Every tap made after this is set tells it what it hears. Set once, as Islet
+    /// starts, before the mixer makes any.
+    static var listener: (any MixerSoundListener)? {
+        get { lock.withLock { storedListener } }
+        set { lock.withLock { storedListener = newValue } }
+    }
+
+    static var running: [Running] {
+        lock.withLock { storedRunning }
+    }
+
+    fileprivate static func started(_ tap: Running) {
+        lock.withLock { storedRunning.append(tap) }
+        NotificationCenter.default.post(name: didChange, object: nil)
+    }
+
+    fileprivate static func stopped(_ tap: Int) {
+        lock.withLock { storedRunning.removeAll { $0.tap == tap } }
+        NotificationCenter.default.post(name: didChange, object: nil)
     }
 }

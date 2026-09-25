@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The players with something loaded, as a row of their app icons: the one on show
 /// lit and ringed, the others dimmed. Clicking one shows it. One that is playing
-/// carries a few bars, which Core Animation moves, so they cost nothing per frame.
-/// Nothing at all while there is only one player.
+/// carries a few bars, which Core Animation moves, so they cost nothing per frame;
+/// the one on show's follow its music, as the island's other waveforms do. Nothing
+/// at all while there is only one player.
 struct NowPlayingSwitcher: View {
     let model: NowPlayingModel
     let iconSize: CGFloat
@@ -50,7 +51,7 @@ private struct SessionButton: View {
                 }
                 .overlay(alignment: .bottomTrailing) {
                     if isPlaying {
-                        PlayingBars(size: size)
+                        PlayingBars(size: size, follows: isShown)
                             .offset(x: size * 0.22, y: size * 0.22)
                             .transition(.opacity)
                     }
@@ -82,9 +83,11 @@ private struct SessionButton: View {
 /// Three small bars on a black disc, tucked over an icon's corner.
 private struct PlayingBars: View {
     let size: CGFloat
+    /// The player on show: its bars follow its music when they can.
+    let follows: Bool
 
     var body: some View {
-        WaveformBars(playing: true, colour: .white, bars: 3, barWidth: 1.5, spacing: 1)
+        WaveformBars(playing: true, colour: .white, bars: 3, barWidth: 1.5, spacing: 1, follows: follows)
             .frame(width: 6.5, height: size * 0.36)
             .frame(width: size * 0.62, height: size * 0.62)
             .background(Circle().fill(.black))

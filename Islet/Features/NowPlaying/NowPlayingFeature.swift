@@ -6,10 +6,13 @@ enum NowPlayingPrefs {
     static let hideAfterPause = "nowPlaying.hideAfterPause"
     static let tintWaveform = "nowPlaying.tintWaveform"
     static let showSongChanges = "nowPlaying.showSongChanges"
+    /// The waveform follows the playing app's sound, where macOS lets Islet hear it.
+    static let followMusic = "nowPlaying.waveformFollowsMusic"
 
     static let hideAfterPauseDefault = 30
     static let tintWaveformDefault = true
     static let showSongChangesDefault = true
+    static let followMusicDefault = true
     static let neverHide = -1
 }
 
@@ -63,6 +66,9 @@ final class NowPlayingFeature: Feature {
     private static let pauseGrace: TimeInterval = 1.5
 
     init() {
+        // Made now, before the mixer makes any tap, so the waveform can listen in on
+        // the mixer's taps rather than make its own.
+        _ = NowPlayingLevels.shared
         model.send = { [weak self] command, app, mayPrompt in self?.send(command, to: app, mayPrompt: mayPrompt) }
         model.onChange = { [weak self] in self?.sync() }
         model.onTrackChange = { [weak self] in self?.trackChanged() }
@@ -93,6 +99,7 @@ final class NowPlayingFeature: Feature {
         previewLibrary = nil
         cancelHide()
         model.reset()
+        NowPlayingLevels.shared.show(nil, playing: false)
         // Closes any panel and drops its requests.
         library.use(nil)
         libraryTrack = nil
@@ -211,6 +218,9 @@ final class NowPlayingFeature: Feature {
         let isPreviewing = model.isPreviewing
         let isActive = isRunning || isPreviewing
         syncLibrary(isActive: isActive)
+        // Only a real session's app is listened to: a preview's bars are canned.
+        let listened = isRunning && !isPreviewing && model.isLive ? model.track?.bundleID : nil
+        NowPlayingLevels.shared.show(listened, playing: model.isPlaying)
 
         if isActive, model.hasSession {
             if !homeWidgetShown {

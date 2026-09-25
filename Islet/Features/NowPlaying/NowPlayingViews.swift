@@ -33,8 +33,10 @@ struct NowPlayingArtworkView: View {
 
 /// Bars that dance while something plays and settle low when it stops.
 ///
-/// Not real audio: each bar follows its own fixed sum of sines, so the motion is
-/// smooth and never repeats visibly, and costs nothing to compute.
+/// Where Islet can hear the playing app (see `NowPlayingLevels`), they follow the
+/// music, a band of frequencies each, bass on the left. Otherwise — no permission,
+/// a preview, Reduce Motion — each bar follows its own fixed sum of sines, so the
+/// motion is smooth and never repeats visibly, and costs nothing to compute.
 struct NowPlayingWaveform: View {
     let model: NowPlayingModel
     var bars = 5
@@ -49,7 +51,8 @@ struct NowPlayingWaveform: View {
             colour: NSColor(model.tint(tinted)),
             bars: bars,
             barWidth: barWidth,
-            spacing: spacing
+            spacing: spacing,
+            follows: true
         )
         .frame(width: CGFloat(bars) * barWidth + CGFloat(bars - 1) * spacing, height: height)
     }
@@ -59,12 +62,17 @@ struct NowPlayingWaveform: View {
 /// render server plays on its own, so a song playing for an hour costs the app nothing
 /// per frame — drawn from SwiftUI, the same motion re-rendered the island thirty times a
 /// second and kept a core a tenth busy.
+///
+/// `follows` marks bars drawn for the app on show, which follow its live levels when
+/// there are any: then a display link sets their heights, and only while they are on
+/// screen and the music plays.
 struct WaveformBars: NSViewRepresentable {
     let playing: Bool
     let colour: NSColor
     let bars: Int
     let barWidth: CGFloat
     let spacing: CGFloat
+    var follows = false
 
     func makeNSView(context: Context) -> WaveformBarsView {
         WaveformBarsView(bars: bars, barWidth: barWidth, spacing: spacing)
@@ -73,6 +81,7 @@ struct WaveformBars: NSViewRepresentable {
     func updateNSView(_ view: WaveformBarsView, context: Context) {
         view.setColour(colour)
         view.setPlaying(playing)
+        view.setFollows(follows)
     }
 }
 
@@ -86,11 +95,31 @@ final class WaveformBarsView: NSView {
     private static let shapes: [(Double, Double, Double, Double)] = [
         (4, 0.0, 9, 1.7), (7, 2.1, 4, 0.4), (3, 4.2, 11, 2.6), (6, 1.3, 8, 5.1), (8, 3.3, 5, 0.8),
     ]
+    /// Live, a bar closes on its level with these time constants, on top of the
+    /// levels' own rise and fall: within a frame going up, a few frames coming down,
+    /// so the motion reads as the music rather than as flicker.
+    private static let liveRise: CFTimeInterval = 0.012
+    private static let liveFall: CFTimeInterval = 0.040
+    /// Live frames a second: plenty for bars this size, and half a ProMotion display's.
+    private static let liveFrameRate = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
 
     private let barLayers: [CALayer]
     private let barWidth: CGFloat
     private let spacing: CGFloat
     private var isPlaying: Bool?
+
+    /// The analyser's layout for this many bars; any other count uses the five-bar
+    /// one, and bars past its fifth stay at rest.
+    private let levelLayout: Int
+    private var follows = false
+    private var isOnScreen = false
+    /// The heights come from the live levels rather than the canned animations.
+    private var isLive = false
+    private var heights: [CGFloat]
+    private var levels: [CGFloat]
+    private var lastFrame: CFTimeInterval?
+    private var displayLink: CADisplayLink?
+    private var occlusionObserver: NSObjectProtocol?
 
     init(bars: Int, barWidth: CGFloat, spacing: CGFloat) {
         self.barWidth = barWidth
@@ -101,6 +130,9 @@ final class WaveformBarsView: NSView {
             bar.backgroundColor = NSColor.white.cgColor
             return bar
         }
+        levelLayout = AudioLevelAnalyser.layouts.firstIndex(of: bars) ?? 0
+        heights = Array(repeating: Self.rest, count: bars)
+        levels = Array(repeating: 0, count: bars)
         super.init(frame: .zero)
         wantsLayer = true
         barLayers.forEach { layer?.addSublayer($0) }
@@ -108,6 +140,11 @@ final class WaveformBarsView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        displayLink?.invalidate()
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+    }
 
     override var isFlipped: Bool { true }
 
@@ -136,6 +173,30 @@ final class WaveformBarsView: NSView {
         guard playing != isPlaying else { return }
         let first = isPlaying == nil
         isPlaying = playing
+        if wantsLive {
+            goLive()
+            return
+        }
+        leaveLive()
+        animate(playing: playing, first: first)
+    }
+
+    /// Whether these bars are drawn for the app on show.
+    func setFollows(_ follows: Bool) {
+        guard follows != self.follows else { return }
+        self.follows = follows
+        register()
+        reconsider()
+    }
+
+    /// The live levels started or stopped coming.
+    func liveLevelsChanged() {
+        reconsider()
+    }
+
+    // MARK: Canned
+
+    private func animate(playing: Bool, first: Bool) {
         for (index, bar) in barLayers.enumerated() {
             let current = bar.presentation()?.value(forKeyPath: "transform.scale.y") as? CGFloat ?? Self.rest
             bar.removeAllAnimations()
@@ -184,6 +245,139 @@ final class WaveformBarsView: NSView {
 
         bar.add(rise, forKey: "rise")
         bar.add(loop, forKey: "wave")
+    }
+
+    // MARK: Live
+
+    private var wantsLive: Bool {
+        follows && isPlaying == true && isOnScreen && NowPlayingLevels.shared.isLive
+    }
+
+    private func reconsider() {
+        let wanted = wantsLive
+        guard wanted != isLive else { return }
+        if wanted {
+            goLive()
+        } else {
+            leaveLive()
+            if let isPlaying { animate(playing: isPlaying, first: false) }
+        }
+    }
+
+    /// Takes the bars over from wherever the canned motion has them.
+    private func goLive() {
+        isLive = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, bar) in barLayers.enumerated() {
+            let current = bar.presentation()?.value(forKeyPath: "transform.scale.y") as? CGFloat ?? heights[index]
+            bar.removeAllAnimations()
+            bar.transform = CATransform3DMakeScale(1, current, 1)
+            heights[index] = current
+        }
+        CATransaction.commit()
+        lastFrame = nil
+        if displayLink == nil {
+            let link = displayLink(target: DisplayLinkTarget(self), selector: #selector(DisplayLinkTarget.step(_:)))
+            link.preferredFrameRateRange = Self.liveFrameRate
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
+    }
+
+    private func leaveLive() {
+        guard isLive else { return }
+        isLive = false
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    /// Moves the bars towards the levels heard at `time`, in host seconds: the moment
+    /// the frame will be on screen.
+    func advance(to time: CFTimeInterval) {
+        let elapsed = lastFrame.map { min(max(time - $0, 0), 0.1) } ?? 1.0 / 60
+        lastFrame = time
+        if !NowPlayingLevels.shared.levels(layout: levelLayout, bars: levels.count, at: time, into: &levels) {
+            for index in levels.indices { levels[index] = 0 }
+        }
+        let rise = CGFloat(1 - exp(-elapsed / Self.liveRise))
+        let fall = CGFloat(1 - exp(-elapsed / Self.liveFall))
+        var moved = false
+        for index in heights.indices {
+            let target = Self.rest + (1 - Self.rest) * levels[index]
+            let height = heights[index]
+            let next = height + (target - height) * (target > height ? rise : fall)
+            // A bar at rest stays put, so silence commits nothing.
+            guard abs(next - height) > 0.0005 else { continue }
+            heights[index] = next
+            moved = true
+        }
+        guard moved else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, bar) in barLayers.enumerated() {
+            bar.transform = CATransform3DMakeScale(1, heights[index], 1)
+        }
+        CATransaction.commit()
+    }
+
+    // MARK: On screen
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        occlusionObserver = nil
+        if let window {
+            occlusionObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.screenChanged() }
+            }
+        }
+        screenChanged()
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        screenChanged()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        screenChanged()
+    }
+
+    /// On screen: in a window macOS counts as visible (not on a sleeping display,
+    /// behind the lock screen or ordered out), and not hidden.
+    private func screenChanged() {
+        let onScreen = window?.occlusionState.contains(.visible) == true && !isHiddenOrHasHiddenAncestor
+        guard onScreen != isOnScreen else { return }
+        isOnScreen = onScreen
+        register()
+        reconsider()
+    }
+
+    /// Only bars for the app on show that are on screen keep its tap running.
+    private func register() {
+        if follows && isOnScreen {
+            NowPlayingLevels.shared.register(self)
+        } else {
+            NowPlayingLevels.shared.unregister(self)
+        }
+    }
+}
+
+/// Calls a waveform's display link through to it without the link, which holds its
+/// target, keeping the view alive.
+private final class DisplayLinkTarget: NSObject {
+    private weak var view: WaveformBarsView?
+
+    init(_ view: WaveformBarsView) {
+        self.view = view
+    }
+
+    @objc func step(_ link: CADisplayLink) {
+        view?.advance(to: link.targetTimestamp)
     }
 }
 
@@ -867,6 +1061,7 @@ struct NowPlayingSettings: View {
     @AppStorage(NowPlayingPrefs.hideAfterPause) private var hideAfterPause = NowPlayingPrefs.hideAfterPauseDefault
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
     @AppStorage(NowPlayingPrefs.showSongChanges) private var songChanges = NowPlayingPrefs.showSongChangesDefault
+    @AppStorage(NowPlayingPrefs.followMusic) private var followsMusic = NowPlayingPrefs.followMusicDefault
 
     var body: some View {
         Picker("Hide after pausing", selection: $hideAfterPause) {
@@ -877,6 +1072,10 @@ struct NowPlayingSettings: View {
         }
         .onChange(of: hideAfterPause) { onHideAfterPauseChange() }
         Toggle("Tint the waveform with the artwork's colour", isOn: $tinted)
+        Toggle(isOn: $followsMusic) {
+            Text("Waveform follows the music")
+            Text("Uses the system audio recording permission; macOS shows its purple indicator while it listens.")
+        }
         Toggle("Show song changes", isOn: $songChanges)
 
         // What each music app's library needs: a sign-in, a permission.

@@ -12,8 +12,11 @@ the camera while something is going on, and opens into a card when the pointer r
 **Now Playing.** Whatever the Mac is playing — Music, Spotify, a browser — with the artwork
 left of the camera and a waveform on the right, tinted with the cover's colour. Opened, it
 is a player: artwork, a scrolling title, a scrubber you can drag, and the controls, with
-shuffle and repeat where the player reports them. A song change gets a moment's banner. The
-waveform runs on Core Animation, so a song playing costs next to nothing.
+shuffle and repeat where the player reports them. A song change gets a moment's banner. On
+macOS 15 and later, once Islet may record system audio (the permission the Sound Mixer asks
+for), the waveform follows the music itself, bass on the left and cymbals on the right, in time
+with what you hear; macOS shows its purple recording indicator while it listens. Without that,
+or with "Waveform follows the music" off, the bars dance on Core Animation as before.
 
 Video gets its own look — YouTube in a browser, the TV app, QuickTime, IINA, VLC: a 16:9
 thumbnail and a progress ring beside the notch, and 15-second jumps in the player.
