@@ -99,6 +99,8 @@ final class NowPlayingFeature: Feature {
 
     /// `islet://nowPlaying/toggle`, `/next`, `/previous`.
     func handle(_ url: URL) -> Bool {
+        // Sign-in callbacks and the like, for a music app's library.
+        if MediaLibraries.handle(url) { return true }
         switch url.path() {
         case "/toggle": model.togglePlayPause()
         case "/next": model.next()

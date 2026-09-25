@@ -13,5 +13,7 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Islet sets the volume of each app separately by passing its sound through at the level you choose.</string>
 </dict>
 </plist>

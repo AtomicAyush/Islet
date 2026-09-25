@@ -52,6 +52,7 @@ final class FeatureRegistry {
 
     let features: [any Feature] = [
         NowPlayingFeature(),
+        MixerFeature(),
         TimerFeature(),
         BatteryFeature(),
         SystemHUDFeature(),

@@ -204,6 +204,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Islet lists your Music playlists and switches between them when you pick one in the island.";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Islet reads the exact battery level of your AirPods and other headphones over Bluetooth.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Islet shows your next event in the island shortly before it starts.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Islet shows your next event in the island shortly before it starts.";
@@ -238,6 +239,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Islet lists your Music playlists and switches between them when you pick one in the island.";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Islet reads the exact battery level of your AirPods and other headphones over Bluetooth.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Islet shows your next event in the island shortly before it starts.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Islet shows your next event in the island shortly before it starts.";
