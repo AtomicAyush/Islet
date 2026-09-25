@@ -26,6 +26,9 @@ final class IslandWindowController {
     /// of travel, so drift in the other direction cannot trigger the other gesture.
     private enum SwipeAxis { case undecided, horizontal, vertical }
     private var swipeAxis = SwipeAxis.undecided
+    /// The swipe began over a list that scrolls up and down (Up Next, the mixer), so
+    /// up-and-down swipes are the list's, not the island's.
+    private var swipeOverList = false
 
     init(screen: NSScreen) {
         self.screen = screen
@@ -113,6 +116,7 @@ final class IslandWindowController {
             swipeTravelX = 0
             swipeHandled = false
             swipeAxis = .undecided
+            swipeOverList = model.isExpanded && isOverVerticalList(event)
         }
         guard event.phase == .changed || event.phase == .began, !swipeHandled else { return }
 
@@ -136,7 +140,7 @@ final class IslandWindowController {
             model.homePage = max(0, model.homePage + (swipeTravelX < 0 ? 1 : -1))
             return
         case .vertical:
-            break
+            if swipeOverList { return }
         }
 
         if swipeTravel > 24, !model.isExpanded {
@@ -146,6 +150,24 @@ final class IslandWindowController {
             swipeHandled = true
             model.collapse()
         }
+    }
+
+    /// Whether the pointer is over a scroll view with more content than it shows, top
+    /// to bottom. SwiftUI's ScrollView is an NSScrollView underneath, so a hit test
+    /// finds it.
+    private func isOverVerticalList(_ event: NSEvent) -> Bool {
+        guard let content = panel.contentView,
+              let hit = content.hitTest(content.convert(event.locationInWindow, from: nil))
+        else { return false }
+        var scroll = hit as? NSScrollView ?? hit.enclosingScrollView
+        while let current = scroll {
+            if let document = current.documentView,
+               document.frame.height > current.contentView.bounds.height + 1 {
+                return true
+            }
+            scroll = current.enclosingScrollView
+        }
+        return false
     }
 
     private func handle(_ event: NSEvent, isLocal: Bool) {
