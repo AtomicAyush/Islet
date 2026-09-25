@@ -4,14 +4,14 @@ import SwiftUI
 
 /// The cover, or a music note on a dark tile until one arrives.
 struct NowPlayingArtworkView: View {
-    let model: NowPlayingModel
+    let artwork: NowPlayingArtwork?
     let size: CGFloat
     let radius: CGFloat
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         ZStack {
-            if let artwork = model.artwork {
+            if let artwork {
                 Image(nsImage: artwork.image)
                     .resizable()
                     .interpolation(.high)
@@ -27,7 +27,7 @@ struct NowPlayingArtworkView: View {
         }
         .frame(width: size, height: size)
         .clipShape(shape)
-        .animation(.easeInOut(duration: 0.3), value: model.artwork?.id)
+        .animation(.easeInOut(duration: 0.3), value: artwork?.id)
     }
 }
 
@@ -59,7 +59,7 @@ struct NowPlayingWaveform: View {
 /// render server plays on its own, so a song playing for an hour costs the app nothing
 /// per frame — drawn from SwiftUI, the same motion re-rendered the island thirty times a
 /// second and kept a core a tenth busy.
-private struct WaveformBars: NSViewRepresentable {
+struct WaveformBars: NSViewRepresentable {
     let playing: Bool
     let colour: NSColor
     let bars: Int
@@ -341,6 +341,27 @@ extension NowPlayingModel {
     }
 }
 
+/// The artist, or a video's channel, and at the end of the line the switcher when
+/// more than one player has something loaded. The line keeps the icons' height
+/// either way, so the player does not shift as a second player comes and goes.
+struct NowPlayingSubtitleRow: View {
+    let model: NowPlayingModel
+    let fontSize: CGFloat
+    let iconSize: CGFloat
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(model.subtitle)
+                .font(.system(size: fontSize, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            NowPlayingSwitcher(model: model, iconSize: iconSize)
+        }
+        .frame(height: iconSize)
+    }
+}
+
 /// The icon of the app playing, tucked over the artwork's corner.
 struct NowPlayingAppBadge: View {
     let model: NowPlayingModel
@@ -425,14 +446,57 @@ private struct ModeToggle: View {
 
 // MARK: - Presentations
 
+/// The cover left of the notch. Moving to another player slides it the way the
+/// fingers went: the last player's cover out, the new one's in from the other side.
+/// Only for the moment of the move; at rest nothing animates.
 struct NowPlayingCompactLeading: View {
     let model: NowPlayingModel
 
     var body: some View {
-        if !model.isVideo {
-            NowPlayingArtworkView(model: model, size: 20, radius: 5)
-        } else if model.artwork != nil {
-            NowPlayingThumbnail(model: model, width: 30, radius: 4)
+        let last = model.lastSwitch
+        // How far a cover travels on its way in or out.
+        let travel: CGFloat = 16
+        let way: CGFloat = last.forward ? -1 : 1
+        ZStack {
+            // A new cover for each move, so the new artwork does not cross-fade over
+            // the old one as it slides in. Inside the stack, because the animator
+            // starts over, without sliding, when the view it wraps is replaced.
+            CompactCover(artwork: model.artwork, isVideo: model.isVideo)
+                .id(last.count)
+        }
+        .keyframeAnimator(initialValue: 1.0, trigger: last.count) { cover, value in
+            // The animator stops at its last frame, a hair short of 1; were that not
+            // counted as done, the last cover would stay behind, all but invisible.
+            let progress = value > 0.99 ? 1 : max(value, 0)
+            ZStack {
+                if progress < 1 {
+                    CompactCover(artwork: last.previousArtwork, isVideo: last.previousWasVideo)
+                        // A swipe during a slide starts another with the cover it
+                        // leaves, rather than cross-fading the one on its way out.
+                        .id(last.count)
+                        .modifier(CompactSlide(offset: way * travel * progress, gone: progress))
+                }
+                cover
+                    .modifier(CompactSlide(offset: -way * travel * (1 - progress), gone: 1 - progress))
+            }
+        } keyframes: { _ in
+            MoveKeyframe(0)
+            // A spring quicker than its segment, so it has all but settled by the end.
+            SpringKeyframe(1, duration: 0.45, spring: .smooth(duration: 0.3))
+        }
+    }
+}
+
+/// A song's artwork, a video's thumbnail, or a play glyph for a video without one.
+private struct CompactCover: View {
+    let artwork: NowPlayingArtwork?
+    let isVideo: Bool
+
+    var body: some View {
+        if !isVideo {
+            NowPlayingArtworkView(artwork: artwork, size: 20, radius: 5)
+        } else if artwork != nil {
+            NowPlayingThumbnail(artwork: artwork, width: 30, radius: 4)
         } else {
             Image(systemName: "play.rectangle.fill")
                 .font(.system(size: 15, weight: .semibold))
@@ -441,17 +505,34 @@ struct NowPlayingCompactLeading: View {
     }
 }
 
-/// The waveform for music; for a video, a ring that fills as it plays.
+/// A cover on its way in or out: `gone` is 0 in place and 1 out of sight.
+private struct CompactSlide: ViewModifier {
+    let offset: CGFloat
+    let gone: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: 3 * gone)
+            .opacity(1 - gone)
+            .offset(x: offset)
+    }
+}
+
+/// The waveform for music; for a video, a ring that fills as it plays. Moving
+/// between the two cross-fades.
 struct NowPlayingCompactTrailing: View {
     let model: NowPlayingModel
 
     var body: some View {
-        if model.isVideo {
-            NowPlayingProgressRing(model: model, lineWidth: 2.5)
-                .frame(width: 16, height: 16)
-        } else {
-            NowPlayingWaveform(model: model, bars: 5, barWidth: 2, spacing: 2, height: 14)
+        ZStack {
+            if model.isVideo {
+                NowPlayingProgressRing(model: model, lineWidth: 2.5)
+                    .frame(width: 16, height: 16)
+            } else {
+                NowPlayingWaveform(model: model, bars: 5, barWidth: 2, spacing: 2, height: 14)
+            }
         }
+        .animation(.easeInOut(duration: 0.25), value: model.isVideo)
     }
 }
 
@@ -462,7 +543,7 @@ struct NowPlayingMinimal: View {
 
     var body: some View {
         if model.artwork != nil {
-            NowPlayingArtworkView(model: model, size: 22, radius: 11)
+            NowPlayingArtworkView(artwork: model.artwork, size: 22, radius: 11)
         } else if model.isVideo {
             NowPlayingProgressRing(model: model, lineWidth: 2)
                 .frame(width: 15, height: 15)
@@ -536,10 +617,7 @@ private struct NowPlayingMusicPlayer: View {
                             .foregroundStyle(.white)
                         NowPlayingWaveform(model: model, bars: 5, barWidth: 2.5, spacing: 2, height: 16)
                     }
-                    Text(model.subtitle)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
+                    NowPlayingSubtitleRow(model: model, fontSize: 13, iconSize: 18)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -588,7 +666,7 @@ private struct NowPlayingMusicPlayer: View {
         Button {
             model.openSourceApp()
         } label: {
-            NowPlayingArtworkView(model: model, size: 60, radius: 12)
+            NowPlayingArtworkView(artwork: model.artwork, size: 60, radius: 12)
                 .overlay(alignment: .bottomTrailing) { NowPlayingAppBadge(model: model, size: 22) }
         }
         .buttonStyle(.plain)
@@ -606,9 +684,9 @@ private struct NowPlayingMiniPlayer: View {
                 model.openSourceApp()
             } label: {
                 if model.isVideo {
-                    NowPlayingThumbnail(model: model, width: 78, radius: 8)
+                    NowPlayingThumbnail(artwork: model.artwork, width: 78, radius: 8)
                 } else {
-                    NowPlayingArtworkView(model: model, size: 44, radius: 10)
+                    NowPlayingArtworkView(artwork: model.artwork, size: 44, radius: 10)
                 }
             }
             .buttonStyle(.plain)
@@ -616,10 +694,7 @@ private struct NowPlayingMiniPlayer: View {
             VStack(alignment: .leading, spacing: 2) {
                 NowPlayingMarquee(text: model.title, font: .system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
-                Text(model.subtitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
+                NowPlayingSubtitleRow(model: model, fontSize: 12, iconSize: 16)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -665,9 +740,9 @@ struct NowPlayingHomeTile: View {
             model.openSourceApp()
         } label: {
             if model.isVideo {
-                NowPlayingThumbnail(model: model, width: 64, radius: 8)
+                NowPlayingThumbnail(artwork: model.artwork, width: 64, radius: 8)
             } else {
-                NowPlayingArtworkView(model: model, size: 44, radius: 9)
+                NowPlayingArtworkView(artwork: model.artwork, size: 44, radius: 9)
             }
         }
         .buttonStyle(.plain)
@@ -722,9 +797,9 @@ struct NowPlayingSongBannerLeading: View {
     @ViewBuilder
     private func cover(width: CGFloat) -> some View {
         if model.isVideo {
-            NowPlayingThumbnail(model: model, width: width, radius: 4)
+            NowPlayingThumbnail(artwork: model.artwork, width: width, radius: 4)
         } else {
-            NowPlayingArtworkView(model: model, size: 20, radius: 5)
+            NowPlayingArtworkView(artwork: model.artwork, size: 20, radius: 5)
         }
     }
 }

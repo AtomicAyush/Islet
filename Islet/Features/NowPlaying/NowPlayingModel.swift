@@ -135,21 +135,71 @@ struct NowPlayingChoice {
     var snapshot: NowPlayingSnapshot?
 }
 
-/// The latest report from each source the island can follow.
+/// A player with something loaded, as the switcher lists it: one per app, however
+/// the island hears from it.
+struct NowPlayingSession: Equatable, Identifiable {
+    /// Where its reports come from, and so where its controls go.
+    var source: NowPlayingSource
+    /// `nil` only for an app MediaRemote does not name.
+    var bundleID: String?
+    var isPlaying: Bool
+
+    /// The app. Only MediaRemote's can be unnamed, and it has one session at most.
+    var id: String { bundleID ?? "" }
+}
+
+/// The person's latest move to another player: which way, and what was on show
+/// before, for the compact cover to slide over from.
+struct NowPlayingSwitch: Sendable {
+    /// One more for each move; each move slides.
+    var count = 0
+    /// Towards the next player, as fingers moving left: the covers slide left.
+    var forward = true
+    var previousArtwork: NowPlayingArtwork?
+    var previousWasVideo = false
+}
+
+/// The latest report from each source the island can follow, and the player the
+/// person picked among them.
 struct NowPlayingReports {
     /// `nil` while MediaRemote reports nothing.
     var system: NowPlayingSnapshot?
     /// Players that are playing or paused; one that stopped or quit has none.
     var players: [NowPlayingBroadcastPlayer: NowPlayingSnapshot] = [:]
+    /// The session the person picked, by swiping or from the switcher. It is kept to
+    /// while its app has one, however the others play; `nil` leaves the choice to the
+    /// rules below.
+    var picked: NowPlayingSession.ID?
 
-    /// What the island follows: MediaRemote's session while it plays; else a player
-    /// that says it is playing, even though MediaRemote reports another app's paused
-    /// session; else the player already followed, now paused, rather than turn to
-    /// something paused before it; else MediaRemote's session, paused or gone.
+    /// Every player with something loaded, one per app, in an order that holds
+    /// still: MediaRemote's app, then Spotify and Music from their own notifications.
+    /// MediaRemote names one app at a time, so a browser's video is here only while
+    /// it is that app; a player it is itself reporting is left to it, as below.
+    var sessions: [NowPlayingSession] {
+        var sessions: [NowPlayingSession] = []
+        if let system {
+            sessions.append(NowPlayingSession(source: .system, bundleID: system.track.bundleID, isPlaying: system.isPlaying))
+        }
+        for player in NowPlayingBroadcastPlayer.allCases where player.bundleID != system?.track.bundleID {
+            if let report = players[player] {
+                sessions.append(NowPlayingSession(source: .player(player), bundleID: player.bundleID, isPlaying: report.isPlaying))
+            }
+        }
+        return sessions
+    }
+
+    /// What the island follows: the picked session while there is one; else
+    /// MediaRemote's session while it plays; else a player that says it is playing,
+    /// even though MediaRemote reports another app's paused session; else the player
+    /// already followed, now paused, rather than turn to something paused before it;
+    /// else MediaRemote's session, paused or gone.
     ///
     /// A player MediaRemote is itself reporting is left to MediaRemote, which has its
     /// exact position and artwork.
     func choice(following followed: NowPlayingBroadcastPlayer?) -> NowPlayingChoice {
+        if let picked, let session = sessions.first(where: { $0.id == picked }) {
+            return NowPlayingChoice(source: session.source, snapshot: report(from: session.source))
+        }
         if let system, system.isPlaying { return NowPlayingChoice(source: .system, snapshot: system) }
         let others = NowPlayingBroadcastPlayer.allCases.filter { $0.bundleID != system?.track.bundleID }
         if let playing = others.first(where: { players[$0]?.isPlaying == true }) {
@@ -160,12 +210,26 @@ struct NowPlayingReports {
         }
         return NowPlayingChoice(source: .system, snapshot: system)
     }
+
+    /// Lets go of the pick once its app has nothing loaded, so that the app coming
+    /// back later does not take the island over again.
+    mutating func dropLostPick() {
+        if let picked, !sessions.contains(where: { $0.id == picked }) { self.picked = nil }
+    }
+
+    private func report(from source: NowPlayingSource) -> NowPlayingSnapshot? {
+        switch source {
+        case .system: system
+        case .player(let player): players[player]
+        }
+    }
 }
 
 /// The system's now-playing session, as the island shows it: the current track, or
 /// the last one after its player went away. MediaRemote names a single app, so
 /// Spotify's and Music's own notifications are weighed against it, and the island
-/// follows whichever is really playing (see `NowPlayingReports`).
+/// follows whichever is really playing (see `NowPlayingReports`) — unless the person
+/// has picked one of them themselves.
 ///
 /// Controls act optimistically: a command changes what is shown at once, and the
 /// player's own report confirms or corrects it a moment later.
@@ -190,6 +254,13 @@ final class NowPlayingModel {
     /// The player jumps 15 seconds itself; otherwise a jump is a seek.
     private(set) var jumpsBack = false
     private(set) var jumpsForward = false
+    /// Every player with something loaded, in an order that holds still: the
+    /// switcher's icons.
+    private(set) var sessions: [NowPlayingSession] = []
+    /// Which of `sessions` is on show; `nil` while the last session is kept after its
+    /// player went away.
+    private(set) var shownSession: NowPlayingSession.ID?
+    private(set) var lastSwitch = NowPlayingSwitch()
 
     /// Carries a command to the source on show. Never called while a preview is shown.
     @ObservationIgnored var send: (NowPlayingCommand, NowPlayingSource) -> Void = { _, _ in }
@@ -197,6 +268,8 @@ final class NowPlayingModel {
     @ObservationIgnored var onChange: () -> Void = {}
     /// Called when a playing session moves on to a different track.
     @ObservationIgnored var onTrackChange: () -> Void = {}
+    /// Called after the person moved to another player.
+    @ObservationIgnored var onSwitch: () -> Void = {}
 
     /// Sample data is on screen; the players' reports are kept but not shown.
     var isPreviewing: Bool { previewReports != nil }
@@ -277,6 +350,8 @@ final class NowPlayingModel {
         followed = nil
         lastSeen = nil
         quietChangeAt = nil
+        // The count stays, so a cover still on screen does not slide for a reset.
+        lastSwitch = NowPlayingSwitch(count: lastSwitch.count)
         clearExpectation()
         clearModeExpectation()
         show(NowPlayingChoice(source: .system), announce: false)
@@ -301,6 +376,7 @@ final class NowPlayingModel {
         guard var reports = previewReports else { return }
         let before = reports.system?.track
         reports.system = sample
+        reports.dropLostPick()
         previewReports = reports
         show(
             reports.choice(following: source.player), announce: true,
@@ -314,6 +390,57 @@ final class NowPlayingModel {
         clearExpectation()
         clearModeExpectation()
         refresh(announce: false)
+    }
+
+    // MARK: Switching
+
+    /// Moves to the next or previous player with something loaded, wrapping round,
+    /// and keeps to it (see `NowPlayingReports.picked`). False when there is no other
+    /// to move to.
+    @discardableResult
+    func switchSession(forward: Bool) -> Bool {
+        let count = sessions.count
+        guard count > 1 else { return false }
+        let target = sessions.firstIndex { $0.id == shownSession }
+            .map { ($0 + (forward ? 1 : count - 1)) % count }
+            ?? (forward ? 0 : count - 1)
+        show(picked: sessions[target].id, forward: forward)
+        return true
+    }
+
+    /// Shows the session picked from the switcher, and keeps to it.
+    func pick(_ id: NowPlayingSession.ID) {
+        guard id != shownSession, let target = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let here = sessions.firstIndex { $0.id == shownSession }
+        show(picked: id, forward: here.map { target > $0 } ?? true)
+    }
+
+    /// Hands the island back to the automatic choice, as when a picked player's pause
+    /// has outlasted its hold; that choice may be playing.
+    func forgetPick() {
+        guard reports.picked != nil else { return }
+        reports.picked = nil
+        refresh(announce: false)
+    }
+
+    /// Turning to a player is not a song change, even though its song differs.
+    private func show(picked id: NowPlayingSession.ID, forward: Bool) {
+        lastSwitch = NowPlayingSwitch(
+            count: lastSwitch.count + 1, forward: forward, previousArtwork: artwork, previousWasVideo: isVideo
+        )
+        // What was waiting on the last player's word says nothing about this one.
+        clearExpectation()
+        clearModeExpectation()
+        quietChangeAt = nil
+        if var preview = previewReports {
+            preview.picked = id
+            previewReports = preview
+            show(preview.choice(following: source.player), announce: false)
+        } else {
+            reports.picked = id
+            refresh(announce: false)
+        }
+        onSwitch()
     }
 
     // MARK: Controls
@@ -485,6 +612,7 @@ final class NowPlayingModel {
     /// Chooses what to follow from the latest reports, and shows it unless a preview
     /// is on screen.
     private func refresh(announce: Bool, update: Update? = nil) {
+        reports.dropLostPick()
         let choice = reports.choice(following: followed)
         followed = choice.source.player
         if choice.snapshot != nil { lastSeen = choice }
@@ -548,8 +676,12 @@ final class NowPlayingModel {
         if isLive != (snapshot != nil) { isLive = snapshot != nil }
         if artwork != shown?.artwork { artwork = shown?.artwork }
         if previousTrack?.bundleID != newTrack?.bundleID {
-            appIcon = Self.icon(for: newTrack?.bundleID)
+            appIcon = Self.appIcon(for: newTrack?.bundleID)
         }
+        let sessions = (previewReports ?? reports).sessions
+        if self.sessions != sessions { self.sessions = sessions }
+        let shownSession = snapshot == nil ? nil : sessions.first { $0.source == newSource }?.id
+        if self.shownSession != shownSession { self.shownSession = shownSession }
         let video = shown?.isVideo ?? false
         if isVideo != video { isVideo = video }
         if self.shuffle != shuffle { self.shuffle = shuffle }
@@ -589,17 +721,26 @@ final class NowPlayingModel {
         if self.timing != timing { self.timing = timing }
     }
 
-    // MARK: App icons
+    // MARK: Apps
 
-    private static var icons: [String: NSImage] = [:]
+    private static var apps: [String: (icon: NSImage?, name: String?)] = [:]
 
-    /// Looked up once per app: LaunchServices is not free, and reports arrive often.
-    private static func icon(for bundleID: String?) -> NSImage? {
+    static func appIcon(for bundleID: String?) -> NSImage? { app(bundleID)?.icon }
+
+    static func appName(for bundleID: String?) -> String? { app(bundleID)?.name }
+
+    /// Looked up once per app, found or not: LaunchServices is not free, and reports
+    /// arrive often.
+    private static func app(_ bundleID: String?) -> (icon: NSImage?, name: String?)? {
         guard let bundleID else { return nil }
-        if let cached = icons[bundleID] { return cached }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
-        let icon = NSWorkspace.shared.icon(forFile: url.path)
-        icons[bundleID] = icon
-        return icon
+        if let known = apps[bundleID] { return known }
+        let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        let found = (
+            icon: url.map { NSWorkspace.shared.icon(forFile: $0.path) },
+            name: url.map { FileManager.default.displayName(atPath: $0.path) }
+                .map { $0.hasSuffix(".app") ? String($0.dropLast(4)) : $0 }
+        )
+        apps[bundleID] = found
+        return found
     }
 }

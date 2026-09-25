@@ -2,7 +2,7 @@ import SwiftUI
 
 /// A video's thumbnail at 16:9, or a play glyph on a dark tile until one arrives.
 struct NowPlayingThumbnail: View {
-    let model: NowPlayingModel
+    let artwork: NowPlayingArtwork?
     let width: CGFloat
     let radius: CGFloat
 
@@ -10,7 +10,7 @@ struct NowPlayingThumbnail: View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         let height = (width * 9 / 16).rounded()
         ZStack {
-            if let artwork = model.artwork {
+            if let artwork {
                 Image(nsImage: artwork.image)
                     .resizable()
                     .interpolation(.high)
@@ -26,7 +26,7 @@ struct NowPlayingThumbnail: View {
         }
         .frame(width: width, height: height)
         .clipShape(shape)
-        .animation(.easeInOut(duration: 0.3), value: model.artwork?.id)
+        .animation(.easeInOut(duration: 0.3), value: artwork?.id)
     }
 }
 
@@ -166,7 +166,7 @@ struct NowPlayingVideoPlayer: View {
                 Button {
                     model.openSourceApp()
                 } label: {
-                    NowPlayingThumbnail(model: model, width: 110, radius: 10)
+                    NowPlayingThumbnail(artwork: model.artwork, width: 110, radius: 10)
                         .overlay(alignment: .bottomTrailing) { NowPlayingAppBadge(model: model, size: 22) }
                 }
                 .buttonStyle(.plain)
@@ -174,10 +174,7 @@ struct NowPlayingVideoPlayer: View {
                 VStack(alignment: .leading, spacing: 3) {
                     NowPlayingMarquee(text: model.title, font: .system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
-                    Text(model.subtitle)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
+                    NowPlayingSubtitleRow(model: model, fontSize: 13, iconSize: 18)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

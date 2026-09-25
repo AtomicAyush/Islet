@@ -55,6 +55,8 @@ final class NowPlayingFeature: Feature {
     private static let libraryPreviewLength: TimeInterval = 20
     /// How long the video plays in the preview of another player playing on.
     private static let videoPauseDelay: TimeInterval = 4
+    /// Long enough to move to the song, open the island and move back.
+    private static let severalPlayersLength: TimeInterval = 13
     /// The shortest hold after a pause. Players pause for a moment between tracks,
     /// and the activity should not blink out and back for that.
     private static let pauseGrace: TimeInterval = 1.5
@@ -63,6 +65,7 @@ final class NowPlayingFeature: Feature {
         model.send = { [weak self] command, source in self?.send(command, to: source) }
         model.onChange = { [weak self] in self?.sync() }
         model.onTrackChange = { [weak self] in self?.trackChanged() }
+        model.onSwitch = { [weak self] in self?.switched() }
         library.onPanelChange = { [weak self] in self?.republishIfResized() }
         broadcasts.onUpdate = { [weak self] player, snapshot in self?.model.ingest(snapshot, from: player) }
         broadcasts.onCommandFailed = { [weak self] sent in self?.model.commandFailed(sentAt: sent) }
@@ -104,9 +107,9 @@ final class NowPlayingFeature: Feature {
         AnyView(NowPlayingSettings { [weak self] in self?.hideAfterPauseChanged() })
     }
 
-    /// Each shows sample data for 10 seconds (the library's, 20), then hands back to
-    /// whatever is really playing. None of them touches a real player or library:
-    /// the songs come with a sample library of their own.
+    /// Each shows sample data for 10 seconds (the library's 20, several players' 13),
+    /// then hands back to whatever is really playing. None of them touches a real
+    /// player or library: the songs come with a sample library of their own.
     var previews: [FeaturePreview] {
         [
             FeaturePreview(title: "Sample song (playing)") { [weak self] in
@@ -124,6 +127,9 @@ final class NowPlayingFeature: Feature {
             },
             FeaturePreview(title: "Another player keeps playing") { [weak self] in
                 self?.previewAnotherPlayer()
+            },
+            FeaturePreview(title: "Several players") { [weak self] in
+                self?.previewSeveralPlayers()
             },
             FeaturePreview(title: "Up Next and playlists") { [weak self] in
                 self?.previewLibraryPanel()
@@ -210,11 +216,11 @@ final class NowPlayingFeature: Feature {
         publish()
     }
 
-    /// The playing app's library, or the preview's sample one, for the opened
-    /// player; and a fresh list in its panel when the track moves on.
+    /// The playing app's library, or the preview's sample one for its songs, for the
+    /// opened player; and a fresh list in its panel when the track moves on.
     private func syncLibrary(isActive: Bool) {
         if model.isPreviewing {
-            library.use(previewLibrary)
+            library.use(model.isVideo ? nil : previewLibrary)
         } else if isActive, model.isLive {
             library.use(MediaLibraries.library(for: model.track?.bundleID))
         } else {
@@ -238,9 +244,9 @@ final class NowPlayingFeature: Feature {
                     // Never pull the player out from under the pointer; try again once
                     // the island has closed.
                     self.scheduleHide(after: Self.pauseGrace)
-                } else {
-                    ActivityCenter.shared.end(id: self.activity.id)
+                    return
                 }
+                self.endActivityUnlessPlaying()
             }
         }
         hideWork = work
@@ -253,9 +259,28 @@ final class NowPlayingFeature: Feature {
         hideWork = nil
     }
 
+    /// Takes the activity down unless it is running and playing. A player picked by
+    /// hand gives way first to the automatic choice, which keeps the island if it
+    /// plays: a pick that outlived the activity would leave the island dark while
+    /// another player plays on.
+    private func endActivityUnlessPlaying() {
+        if !model.isPlaying { model.forgetPick() }
+        guard !(isRunning && model.isPlaying) else { return }
+        cancelHide()
+        ActivityCenter.shared.end(id: activity.id)
+    }
+
     /// A new hold applies to a pause already on screen, counted from now; otherwise
     /// switching from "Never" would leave the island up until the next play or pause.
     private func hideAfterPauseChanged() {
+        cancelHide()
+        sync()
+    }
+
+    /// A player the person moved to gets the whole hold if it is paused, counted from
+    /// now; and a banner about another player's song is out of date.
+    private func switched() {
+        ActivityCenter.shared.dismissBanner(id: Self.songBannerID)
         cancelHide()
         sync()
     }
@@ -312,14 +337,48 @@ final class NowPlayingFeature: Feature {
     private func previewAnotherPlayer() {
         let video = NowPlayingSnapshot.dolomites(playing: true)
         preview(video, players: [.spotify: .midnightDrive(playing: true, in: NowPlayingBroadcastPlayer.spotify.bundleID)])
+        previewSteps([
+            (Self.videoPauseDelay, { [weak self] in self?.model.previewReport(video.paused(at: Date())) }),
+        ])
+    }
+
+    /// A video in Safari and a song in Spotify, both playing, with the video on show
+    /// as MediaRemote reports it. The island moves to the song as a swipe would, opens
+    /// on the switcher, and goes back to the video as a click on its icon would.
+    private func previewSeveralPlayers() {
+        let video = NowPlayingSnapshot.dolomites(playing: true)
+        preview(
+            video,
+            players: [.spotify: .midnightDrive(playing: true, in: NowPlayingBroadcastPlayer.spotify.bundleID)],
+            library: NowPlayingSampleLibrary(), for: Self.severalPlayersLength
+        )
+        previewSteps([
+            (2.5, { [weak self] in self?.model.switchSession(forward: true) }),
+            (2, { [weak self] in
+                guard let self else { return }
+                IslandManager.shared.focusedController?.model.expand(focus: self.activity.id)
+            }),
+            (3, { [weak self] in
+                if let app = video.track.bundleID { self?.model.pick(app) }
+            }),
+        ])
+    }
+
+    /// Runs a preview's steps in turn, each the given number of seconds after the
+    /// one before.
+    private func previewSteps(_ steps: ArraySlice<(delay: TimeInterval, run: @MainActor () -> Void)>) {
+        guard let step = steps.first else {
+            previewStepWork = nil
+            return
+        }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
-                self?.previewStepWork = nil
-                self?.model.previewReport(video.paused(at: Date()))
+                step.run()
+                self?.previewSteps(steps.dropFirst())
             }
         }
         previewStepWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.videoPauseDelay, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + step.delay, execute: work)
     }
 
     /// Opens the island on the sample song with its Up Next panel showing, as
@@ -341,10 +400,7 @@ final class NowPlayingFeature: Feature {
         ActivityCenter.shared.dismissBanner(id: Self.songBannerID)
         model.endPreview()
         // The preview put the activity up; a paused session would not have.
-        if !(isRunning && model.isPlaying) {
-            cancelHide()
-            ActivityCenter.shared.end(id: activity.id)
-        }
+        endActivityUnlessPlaying()
     }
 }
 
@@ -372,6 +428,11 @@ final class NowPlayingActivity: IslandActivity {
     func compactTrailing() -> AnyView { AnyView(NowPlayingCompactTrailing(model: model)) }
     func minimal() -> AnyView { AnyView(NowPlayingMinimal(model: model)) }
     func expanded() -> AnyView { AnyView(NowPlayingExpanded(model: model, library: library)) }
+
+    /// Moves between the players that have something loaded; nothing to do with one.
+    func swipe(_ direction: ActivitySwipe) -> Bool {
+        model.switchSession(forward: direction == .next)
+    }
 }
 
 private extension NowPlayingSnapshot {
