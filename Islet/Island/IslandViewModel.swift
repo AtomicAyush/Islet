@@ -242,10 +242,6 @@ struct IslandLayout: Equatable {
     static let indicatorPitch: CGFloat = 11
 
     var size: CGSize
-    /// How far the island's centre sits right of the notch's centre. Non-zero when
-    /// the two sides of compact content differ in width: the island shifts so the
-    /// gap in the middle stays exactly over the camera.
-    var centerOffset: CGFloat = 0
     /// Gap above the island: zero when it hangs from a notch, a few points when it
     /// floats on a display without one.
     var topInset: CGFloat = 0
@@ -256,10 +252,15 @@ struct IslandLayout: Equatable {
     /// The camera's gap. Under a notch it is drawn a point wider on each side than
     /// the hardware so no sliver of menu bar shows between the two.
     var notch: CGSize
-    /// Compact / banner content widths either side of the notch. The trailing
-    /// width includes the indicator strip.
+    /// Compact / banner wing widths either side of the notch. Always equal, so the
+    /// island stays centred on the notch — the iPhone's does around its camera. The
+    /// trailing wing includes the indicator strip.
     var leadingWidth: CGFloat = 0
     var trailingWidth: CGFloat = 0
+    /// The width each side's content asked for, placed at its wing's outer edge;
+    /// the difference from the wing is black space next to the notch.
+    var leadingContentWidth: CGFloat = 0
+    var trailingContentWidth: CGFloat = 0
     /// Width at the right edge given to indicator dots.
     var indicatorWidth: CGFloat = 0
     /// Expanded body height below the notch row.
@@ -273,7 +274,7 @@ struct IslandLayout: Equatable {
     /// Where the bubble's centre sits relative to the notch's top centre.
     var bubbleCenterOffset: CGSize {
         CGSize(
-            width: centerOffset + size.width / 2 + Self.bubbleGap + bubbleDiameter / 2,
+            width: size.width / 2 + Self.bubbleGap + bubbleDiameter / 2,
             height: topInset + notch.height / 2
         )
     }
@@ -310,15 +311,18 @@ struct IslandLayout: Equatable {
             layout.topRadius = floating ? (top ?? bottom) : 0
         }
 
-        /// Lays out content either side of the notch at notch height.
+        /// Lays out content either side of the notch at notch height, both wings as
+        /// wide as the wider side asks.
         func wings(leading: CGFloat, trailing: CGFloat, grow: CGFloat) {
-            layout.leadingWidth = leading
-            layout.trailingWidth = trailing
+            let wing = max(leading, trailing)
+            layout.leadingContentWidth = leading
+            layout.trailingContentWidth = trailing
+            layout.leadingWidth = wing
+            layout.trailingWidth = wing
             layout.size = CGSize(
-                width: notch.width + leading + trailing + 2 * ear + 2 * grow,
+                width: notch.width + 2 * wing + 2 * ear + 2 * grow,
                 height: notch.height + grow / 5
             )
-            layout.centerOffset = (trailing - leading) / 2
             corners(floating ? layout.size.height / 2 : min(notch.height / 2 - 2, 14) + grow / 10)
         }
 
@@ -386,7 +390,7 @@ struct IslandLayout: Equatable {
         }
 
         // Never ask for more than the window can hold.
-        layout.size.width = min(layout.size.width, canvas.width - 40 - 2 * abs(layout.centerOffset))
+        layout.size.width = min(layout.size.width, canvas.width - 40)
         layout.size.height = min(layout.size.height, canvas.height - 30)
         return layout
     }

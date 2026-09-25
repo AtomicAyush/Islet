@@ -245,7 +245,7 @@ final class IslandWindowController {
     private func islandRect(for layout: IslandLayout) -> CGRect {
         let metrics = model.metrics
         var rect = CGRect(
-            x: metrics.notchMidX + layout.centerOffset - layout.size.width / 2,
+            x: metrics.notchMidX - layout.size.width / 2,
             y: metrics.screenFrame.maxY - layout.topInset - layout.size.height,
             width: layout.size.width,
             height: layout.size.height

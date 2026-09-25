@@ -15,7 +15,7 @@ struct IslandRootView: View {
             BubbleLayer(model: model, layout: layout)
 
             IslandSurface(model: model, layout: layout)
-                .offset(x: layout.centerOffset, y: layout.topInset)
+                .offset(y: layout.topInset)
         }
         .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
         .ignoresSafeArea()
@@ -129,7 +129,8 @@ private struct Squash {
 }
 
 /// Compact content: one view left of the notch, one right, and the camera between.
-/// Indicator dots, if any, sit at the far right.
+/// Each view gets the width it asked for at its wing's outer edge; indicator dots,
+/// if any, sit at the far right.
 private struct CompactRow: View {
     let leading: AnyView
     let trailing: AnyView
@@ -139,14 +140,21 @@ private struct CompactRow: View {
     var body: some View {
         HStack(spacing: 0) {
             leading
-                .frame(width: layout.leadingWidth, height: layout.notch.height)
+                .frame(width: layout.leadingContentWidth, height: layout.notch.height)
+                .frame(width: layout.leadingWidth, alignment: .leading)
             Spacer(minLength: layout.notch.width)
-            trailing
-                .frame(width: max(0, layout.trailingWidth - layout.indicatorWidth), height: layout.notch.height)
-            if layout.indicatorWidth > 0 {
-                IndicatorDots(indicators: indicators)
-                    .frame(width: layout.indicatorWidth, height: layout.notch.height, alignment: .leading)
+            HStack(spacing: 0) {
+                trailing
+                    .frame(
+                        width: max(0, layout.trailingContentWidth - layout.indicatorWidth),
+                        height: layout.notch.height
+                    )
+                if layout.indicatorWidth > 0 {
+                    IndicatorDots(indicators: indicators)
+                        .frame(width: layout.indicatorWidth, height: layout.notch.height, alignment: .leading)
+                }
             }
+            .frame(width: layout.trailingWidth, alignment: .trailing)
         }
         .frame(height: layout.notch.height)
     }
@@ -214,7 +222,7 @@ private struct BubbleDroplet: View, Animatable {
         let h = layout.notch.height
         let target = layout.bubbleCenterOffset
         // The island's rounded right end, relative to the notch's centre.
-        let islandRight = layout.centerOffset + layout.size.width / 2 - layout.earRadius
+        let islandRight = layout.size.width / 2 - layout.earRadius
         let tucked = islandRight - d / 2
         let x = reduceMotion ? target.width : tucked + (target.width - tucked) * progress
         let scale = reduceMotion ? 1 : 0.55 + 0.45 * min(progress, 1.2)
