@@ -20,6 +20,23 @@ enum DisplayChoice: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the home page lays out tiles that do not fit side by side.
+enum HomeLayout: String, CaseIterable, Identifiable {
+    /// One row that scrolls sideways.
+    case scroll
+    /// Whole pages of tiles, turned with dots or a sideways swipe.
+    case pages
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .scroll: "Scroll sideways"
+        case .pages: "Pages"
+        }
+    }
+}
+
 /// UserDefaults keys and their defaults. Views bind to these with `@AppStorage`;
 /// everything else reads them through the accessors below so there is one spelling
 /// of each key.
@@ -27,6 +44,7 @@ enum Prefs {
     enum Key {
         static let expandOnHover = "expandOnHover"
         static let hoverDelay = "hoverDelay"
+        static let homeLayout = "homeLayout"
         static let haptics = "haptics"
         static let displays = "displays"
         static let hideInFullScreen = "hideInFullScreen"
@@ -41,6 +59,7 @@ enum Prefs {
         var defaults: [String: Any] = [
             Key.expandOnHover: true,
             Key.hoverDelay: 0.25,
+            Key.homeLayout: HomeLayout.scroll.rawValue,
             Key.haptics: true,
             Key.displays: DisplayChoice.notched.rawValue,
             Key.hideInFullScreen: true,
@@ -61,6 +80,10 @@ enum Prefs {
     static var hideInFullScreen: Bool { store.bool(forKey: Key.hideInFullScreen) }
     static var showMenuBarIcon: Bool { store.bool(forKey: Key.showMenuBarIcon) }
     static var idlePillOnPlainDisplays: Bool { store.bool(forKey: Key.idlePillOnPlainDisplays) }
+
+    static var homeLayout: HomeLayout {
+        HomeLayout(rawValue: store.string(forKey: Key.homeLayout) ?? "") ?? .scroll
+    }
 
     static var displays: DisplayChoice {
         DisplayChoice(rawValue: store.string(forKey: Key.displays) ?? "") ?? .notched

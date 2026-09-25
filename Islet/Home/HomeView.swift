@@ -3,17 +3,22 @@ import SwiftUI
 /// The opened island when nothing is running, or when its house tab is picked:
 /// the date on the left and each feature's tile beside it.
 ///
-/// When the tiles would be squeezed below a readable width they are split into
-/// pages, each filling the row exactly — no tile is ever shown in part. Dots under the
-/// date say which page is showing; clicking one, or a two-finger swipe sideways over
-/// the island, turns the page.
+/// When the tiles would be squeezed below a readable width they keep that width,
+/// and either scroll sideways in one row or are split into pages, each filling the
+/// row exactly — whichever Settings asks for. With pages, dots under the date say
+/// which is showing; clicking one, or a two-finger swipe sideways, turns the page.
 struct HomeView: View {
     let widgets: [HomeWidget]
     @Binding var page: Int
+    @AppStorage(Prefs.Key.homeLayout) private var layout = HomeLayout.scroll.rawValue
 
-    /// The narrowest a weight-1 tile gets before tiles move to another page.
+    /// The narrowest a weight-1 tile gets before the row scrolls or pages.
     static let minimumUnit: CGFloat = 112
     static let spacing: CGFloat = 10
+
+    @State private var pageCount = 1
+
+    private var usesPages: Bool { layout == HomeLayout.pages.rawValue }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -26,7 +31,7 @@ struct HomeView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.35))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            } else if usesPages {
                 GeometryReader { geo in
                     let pages = Self.pages(of: widgets, width: geo.size.width)
                     let current = min(max(page, 0), pages.count - 1)
@@ -36,7 +41,6 @@ struct HomeView: View {
                             insertion: .opacity.combined(with: .offset(x: 24)),
                             removal: .opacity.combined(with: .offset(x: -24))
                         ))
-                        .onAppear { pageCount = pages.count }
                         .onChange(of: pages.count, initial: true) { _, count in
                             pageCount = count
                             if page > count - 1 { page = count - 1 }
@@ -46,17 +50,19 @@ struct HomeView: View {
                             if value > pages.count - 1 { page = pages.count - 1 }
                         }
                 }
+            } else {
+                GeometryReader { geo in
+                    ScrollingTileRow(widgets: widgets, width: geo.size.width)
+                }
             }
         }
         .padding(.top, 6)
         .animation(.islandMorph, value: page)
     }
 
-    @State private var pageCount = 1
-
     @ViewBuilder
     private var pageDots: some View {
-        if pageCount > 1 {
+        if usesPages, pageCount > 1 {
             HStack(spacing: 5) {
                 ForEach(0..<pageCount, id: \.self) { index in
                     Button {
@@ -112,6 +118,79 @@ private struct TileRow: View {
                 HomeTile { widget.view }
                     .frame(width: unit * widget.weight)
             }
+        }
+    }
+}
+
+/// Every tile in one row, sharing it by weight while they fit; past that they keep
+/// the minimum width and the row scrolls, snapping to tile edges. An edge fades only
+/// while there is more to scroll to on that side, so the last tile, once scrolled
+/// to, is shown whole.
+private struct ScrollingTileRow: View {
+    let widgets: [HomeWidget]
+    let width: CGFloat
+
+    static let fade: CGFloat = 22
+
+    /// How far the row has scrolled from its start, in points.
+    @State private var offset: CGFloat = 0
+
+    var body: some View {
+        let totalWeight = widgets.reduce(0) { $0 + $1.weight }
+        let spacing = CGFloat(widgets.count - 1) * HomeView.spacing
+        let share = (width - spacing) / max(totalWeight, 1)
+        let unit = max(share, HomeView.minimumUnit)
+        let contentWidth = unit * totalWeight + spacing
+
+        let row = HStack(spacing: HomeView.spacing) {
+            ForEach(widgets) { widget in
+                HomeTile { widget.view }
+                    .frame(width: unit * widget.weight)
+            }
+        }
+
+        if contentWidth <= width + 0.5 {
+            row
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                row.scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.viewAligned)
+            .modifier(ScrollOffsetReader(offset: $offset))
+            .mask(edgeFades(
+                leading: offset > 1,
+                trailing: offset + width < contentWidth - 1
+            ))
+        }
+    }
+
+    private func edgeFades(leading: Bool, trailing: Bool) -> some View {
+        HStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                .frame(width: leading ? Self.fade : 0)
+            Color.black
+            LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(width: trailing ? Self.fade : 0)
+        }
+        .animation(.easeOut(duration: 0.18), value: leading)
+        .animation(.easeOut(duration: 0.18), value: trailing)
+    }
+}
+
+/// Reports a horizontal scroll view's offset. macOS 15 says so directly; macOS 14
+/// has to infer it from where the content sits.
+private struct ScrollOffsetReader: ViewModifier {
+    @Binding var offset: CGFloat
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.x + geometry.contentInsets.leading
+            } action: { _, new in
+                offset = new
+            }
+        } else {
+            content
         }
     }
 }

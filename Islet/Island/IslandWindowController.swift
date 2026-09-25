@@ -115,9 +115,11 @@ final class IslandWindowController {
         swipeTravel += inverted ? event.scrollingDeltaY : -event.scrollingDeltaY
         swipeTravelX += inverted ? event.scrollingDeltaX : -event.scrollingDeltaX
 
-        // Sideways on the open home page turns its pages: fingers left, next page.
+        // Sideways on the open home page turns its pages: fingers left, next page. In
+        // the scrolling layout the row takes the swipe itself.
         if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
-            guard model.isExpanded, model.resolvedFocus == IslandViewModel.homeFocus,
+            guard Prefs.homeLayout == .pages, model.isExpanded,
+                  model.resolvedFocus == IslandViewModel.homeFocus,
                   abs(swipeTravelX) > 30 else { return }
             swipeHandled = true
             model.homePage = max(0, model.homePage + (swipeTravelX < 0 ? 1 : -1))

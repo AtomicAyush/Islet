@@ -28,6 +28,7 @@ private struct GeneralSettings: View {
     @AppStorage(Prefs.Key.expandOnHover) private var expandOnHover = true
     @AppStorage(Prefs.Key.hoverDelay) private var hoverDelay = 0.25
     @AppStorage(Prefs.Key.haptics) private var haptics = true
+    @AppStorage(Prefs.Key.homeLayout) private var homeLayout = HomeLayout.scroll.rawValue
     @AppStorage(Prefs.Key.displays) private var displays = DisplayChoice.notched.rawValue
     @AppStorage(Prefs.Key.hideInFullScreen) private var hideInFullScreen = true
     @AppStorage(Prefs.Key.idlePillOnPlainDisplays) private var idlePill = false
@@ -63,6 +64,11 @@ private struct GeneralSettings: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Trackpad feedback", isOn: $haptics)
+                Picker("Home tiles that don't fit", selection: $homeLayout) {
+                    ForEach(HomeLayout.allCases) { layout in
+                        Text(layout.title).tag(layout.rawValue)
+                    }
+                }
             }
 
             Section("Displays") {
