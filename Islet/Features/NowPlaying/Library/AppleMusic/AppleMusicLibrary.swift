@@ -16,3 +16,10 @@ final class AppleMusicLibrary: MediaLibrary {
     func play(_ playlist: MediaPlaylist) async throws {}
     func playFromQueue(_ item: MediaItem, at index: Int) async throws {}
 }
+
+import SwiftUI
+
+/// Placeholder: the Music app's access, shown in Now Playing's settings.
+struct AppleMusicSettingsView: View {
+    var body: some View { EmptyView() }
+}

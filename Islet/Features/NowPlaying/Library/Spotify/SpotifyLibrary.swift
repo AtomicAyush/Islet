@@ -16,3 +16,10 @@ final class SpotifyLibrary: MediaLibrary {
     func play(_ playlist: MediaPlaylist) async throws {}
     func playFromQueue(_ item: MediaItem, at index: Int) async throws {}
 }
+
+import SwiftUI
+
+/// Placeholder: connecting Spotify, shown in Now Playing's settings.
+struct SpotifySettingsView: View {
+    var body: some View { EmptyView() }
+}
