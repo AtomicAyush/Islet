@@ -123,4 +123,20 @@ extern void adapter_speed_env();
 // Exits with exit code 0, if it is. Any other exit code means it is not.
 extern void adapter_test();
 
+// Local change (Islet), see VENDORED.md.
+// Returns if the application with the given bundle identifier is the one
+// MediaRemote currently delivers commands to (a browser also matches the helper
+// process that plays its web media). Otherwise exits with
+// kMRAExitOtherApplication, or with kMRAExitNoApplication when no application
+// is now playing or MediaRemote does not answer in time.
+typedef enum {
+    kMRAExitOtherApplication = 10,
+    kMRAExitNoApplication = 11,
+    // Set by the Perl entry point when this framework has no adapter_expect.
+    kMRAExitCannotExpect = 12,
+} MRAExpectExitCode;
+
+extern void adapter_expect(NSString *bundleIdentifier);
+extern void adapter_expect_env();
+
 #endif // MEDIAREMOTEADAPTER_ADAPTER_H

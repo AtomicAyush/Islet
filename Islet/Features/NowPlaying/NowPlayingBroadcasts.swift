@@ -132,7 +132,7 @@ private func seconds(_ value: Any?, scale: Double = 1) -> TimeInterval? {
 }
 
 /// Listens to Spotify's and Music's own notifications, looks up Spotify's covers,
-/// and carries the island's controls to whichever of them it is showing.
+/// and carries the island's controls to either of them when it shows it.
 ///
 /// Nothing polls: the players post on every play, pause and change of track, and
 /// until one does after launch, nothing is known about it.
@@ -140,9 +140,6 @@ private func seconds(_ value: Any?, scale: Double = 1) -> TimeInterval? {
 final class NowPlayingBroadcasts {
     /// A player's new state, or `nil` once it has stopped or quit.
     var onUpdate: (NowPlayingBroadcastPlayer, NowPlayingSnapshot?) -> Void = { _, _ in }
-    /// A command sent at the given moment did not reach the player, or it turned it
-    /// down.
-    var onCommandFailed: (Date) -> Void = { _ in }
 
     private var states: [NowPlayingBroadcastPlayer: NowPlayingBroadcastState] = [:]
     private var observer: BroadcastObserver?
@@ -280,22 +277,24 @@ final class NowPlayingBroadcasts {
 
     // MARK: Controls
 
-    /// Sends a control to the player. A player announces plays, pauses and new
-    /// tracks, which confirm those commands, but not a move within a track, so a seek
-    /// or a restart it accepted is taken as done from when it was sent — unless it
-    /// has posted since, which knows better.
-    func perform(_ command: NowPlayingCommand, on player: NowPlayingBroadcastPlayer) {
+    /// Sends a control to the player, and `completion` how it went, on the main
+    /// queue; `mayPrompt` as `NowPlayingPlayerControl` takes it. A player announces
+    /// plays, pauses and new tracks, which confirm those commands, but not a move
+    /// within a track, so a seek or a restart it accepted is taken as done from when
+    /// it was sent — unless it has posted since, which knows better.
+    func perform(
+        _ command: NowPlayingCommand, on player: NowPlayingBroadcastPlayer, mayPrompt: Bool,
+        completion: @escaping @MainActor (NowPlayingDelivery) -> Void
+    ) {
         let sent = Date()
         let generation = self.generation
-        NowPlayingPlayerControl.send(command, to: player) { [weak self] accepted in
+        NowPlayingPlayerControl.send(command, to: player, mayPrompt: mayPrompt) { [weak self] delivery in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, self.generation == generation else { return }
-                    if accepted {
+                    if delivery == .delivered, let self, self.generation == generation {
                         self.moved(player, by: command, sentAt: sent)
-                    } else {
-                        self.onCommandFailed(sent)
                     }
+                    completion(delivery)
                 }
             }
         }

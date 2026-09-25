@@ -1,8 +1,8 @@
 import AppKit
 
-/// Carries the island's controls to Spotify or Music while the island follows the
-/// player's own notifications rather than MediaRemote, whose commands would go to
-/// whichever app macOS thinks is playing.
+/// Carries the island's controls to Spotify or Music whenever the island shows them,
+/// however it heard of them: MediaRemote's commands go to whichever app macOS has
+/// elected as now playing, which may be another app entirely.
 ///
 /// These are the Apple Events AppleScript sends for `playpause`, `next track`,
 /// `previous track` (Music's `back track`) and `set player position`, built
@@ -13,8 +13,11 @@ import AppKit
 ///
 /// Each blocks — on the player, or on the person answering the Automation prompt
 /// macOS shows the first time Islet controls that app — so they run one at a time
-/// on a private serial queue. Once refused, a command simply fails; macOS does not
-/// ask again, and nothing here retries.
+/// on a private serial queue. Only a press in the island may put that prompt up: a
+/// command from a Shortcut or a script could raise it with nobody looking, and hold
+/// every control queued behind it until someone answers. Until macOS has said yes,
+/// and once refused, a command is unavailable this way, and the caller tries
+/// MediaRemote instead.
 enum NowPlayingPlayerControl {
     private static let queue = DispatchQueue(
         label: "com.ayush.Islet.playerControl", qos: .userInitiated, autoreleaseFrequency: .workItem
@@ -22,39 +25,64 @@ enum NowPlayingPlayerControl {
     /// Long enough for a busy player; short enough that a hung one does not hold up
     /// the controls queued behind it for long.
     private static let timeout: TimeInterval = 5
+    /// `errAETimeout`, which the SDK no longer names.
+    private static let timedOut = -1712
 
-    /// Calls `completion`, on the private queue, with whether the player took it.
+    /// Calls `completion`, on the private queue, with how it went. `mayPrompt` lets
+    /// macOS ask the person, if they have not decided yet.
     static func send(
-        _ command: NowPlayingCommand, to player: NowPlayingBroadcastPlayer,
-        completion: @escaping @Sendable (Bool) -> Void
+        _ command: NowPlayingCommand, to player: NowPlayingBroadcastPlayer, mayPrompt: Bool,
+        completion: @escaping @Sendable (NowPlayingDelivery) -> Void
     ) {
-        queue.async { completion(perform(command, on: player)) }
+        queue.async { completion(perform(command, on: player, mayPrompt: mayPrompt)) }
     }
 
-    private static func perform(_ command: NowPlayingCommand, on player: NowPlayingBroadcastPlayer) -> Bool {
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: player.bundleID).first,
-              let event = event(for: command, to: player, process: app.processIdentifier),
-              permission(for: event, to: player) == noErr,
-              let reply = try? event.sendEvent(options: .waitForReply, timeout: timeout)
-        else { return false }
-        // An error the player raised comes back in the reply.
-        let error = reply.paramDescriptor(forKeyword: AEKeyword(keyErrorNumber))?.int32Value ?? 0
-        return error == noErr
-    }
-
-    /// Whether Islet may send this event to the player, asking the person if they
-    /// have not decided yet. Blocks while the prompt is up.
-    private static func permission(for event: NSAppleEventDescriptor, to player: NowPlayingBroadcastPlayer) -> OSStatus {
-        let target = NSAppleEventDescriptor(bundleIdentifier: player.bundleID)
-        return withExtendedLifetime(target) {
-            guard let address = target.aeDesc else { return OSStatus(paramErr) }
-            return AEDeterminePermissionToAutomateTarget(address, event.eventClass, event.eventID, true)
+    /// Whether these players have an Apple Event for the command at all.
+    static func carries(_ command: NowPlayingCommand) -> Bool {
+        switch command {
+        case .togglePlayPause, .next, .previous, .seek: true
+        case .jumpBack, .jumpForward, .shuffle, .repeatMode: false
         }
     }
 
-    /// The event for a command, or `nil` for one the island never sends to these
-    /// players: they report no shuffle, repeat or jumps of their own, so those
-    /// controls are not offered.
+    /// Unavailable when the event never left: the player is not running, or Islet may
+    /// not automate it (or may not yet, and must not ask). Once it has left, a timeout
+    /// or the player's own error is a failure, since the player may yet act on it and a
+    /// second way would repeat it.
+    private static func perform(
+        _ command: NowPlayingCommand, on player: NowPlayingBroadcastPlayer, mayPrompt: Bool
+    ) -> NowPlayingDelivery {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: player.bundleID).first,
+              let event = event(for: command, to: player, process: app.processIdentifier),
+              permission(for: event, to: player, askingUser: mayPrompt) == noErr
+        else { return .unavailable }
+        let reply: NSAppleEventDescriptor
+        do {
+            reply = try event.sendEvent(options: .waitForReply, timeout: timeout)
+        } catch {
+            return (error as NSError).code == timedOut ? .failed : .unavailable
+        }
+        // An error the player raised comes back in the reply.
+        let error = reply.paramDescriptor(forKeyword: AEKeyword(keyErrorNumber))?.int32Value ?? 0
+        return error == noErr ? .delivered : .failed
+    }
+
+    /// Whether Islet may send this event to the player, with `askingUser` asking the
+    /// person if they have not decided yet, and blocking while the prompt is up.
+    /// Without it, an undecided person is `errAEEventWouldRequireUserConsent`.
+    private static func permission(
+        for event: NSAppleEventDescriptor, to player: NowPlayingBroadcastPlayer, askingUser: Bool
+    ) -> OSStatus {
+        let target = NSAppleEventDescriptor(bundleIdentifier: player.bundleID)
+        return withExtendedLifetime(target) {
+            guard let address = target.aeDesc else { return OSStatus(paramErr) }
+            return AEDeterminePermissionToAutomateTarget(address, event.eventClass, event.eventID, askingUser)
+        }
+    }
+
+    /// The event for a command, or `nil` for one these players have no event for
+    /// (see `carries`). Their own notifications report no shuffle, repeat or jumps, so
+    /// those controls only appear when MediaRemote reports them, and go that way.
     static func event(
         for command: NowPlayingCommand, to player: NowPlayingBroadcastPlayer, process: pid_t
     ) -> NSAppleEventDescriptor? {

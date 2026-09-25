@@ -1,3 +1,4 @@
+import os
 import SwiftUI
 
 enum NowPlayingPrefs {
@@ -62,13 +63,12 @@ final class NowPlayingFeature: Feature {
     private static let pauseGrace: TimeInterval = 1.5
 
     init() {
-        model.send = { [weak self] command, source in self?.send(command, to: source) }
+        model.send = { [weak self] command, app, mayPrompt in self?.send(command, to: app, mayPrompt: mayPrompt) }
         model.onChange = { [weak self] in self?.sync() }
         model.onTrackChange = { [weak self] in self?.trackChanged() }
         model.onSwitch = { [weak self] in self?.switched() }
         library.onPanelChange = { [weak self] in self?.republishIfResized() }
         broadcasts.onUpdate = { [weak self] player, snapshot in self?.model.ingest(snapshot, from: player) }
-        broadcasts.onCommandFailed = { [weak self] sent in self?.model.commandFailed(sentAt: sent) }
     }
 
     func start() {
@@ -137,14 +137,17 @@ final class NowPlayingFeature: Feature {
         ]
     }
 
-    /// `islet://nowPlaying/toggle`, `/next`, `/previous`.
+    /// `islet://nowPlaying/toggle`, `/next`, `/previous`. They come from Shortcuts and
+    /// scripts, often with nobody watching, so they never put up macOS's Automation
+    /// prompt: where Islet has not yet been allowed to control Spotify or Music, they
+    /// go through MediaRemote, if the player is the app it has elected.
     func handle(_ url: URL) -> Bool {
         // Sign-in callbacks and the like, for a music app's library.
         if MediaLibraries.handle(url) { return true }
         switch url.path() {
-        case "/toggle": model.togglePlayPause()
-        case "/next": model.next()
-        case "/previous": model.previous()
+        case "/toggle": model.togglePlayPause(mayPrompt: false)
+        case "/next": model.next(mayPrompt: false)
+        case "/previous": model.previous(mayPrompt: false)
         default: return false
         }
         return true
@@ -157,12 +160,48 @@ final class NowPlayingFeature: Feature {
         model.ingest(snapshot)
     }
 
-    /// A control goes to whoever the island is showing: MediaRemote's app, or the
-    /// player the island followed instead of it.
-    private func send(_ command: NowPlayingCommand, to source: NowPlayingSource) {
-        switch source {
-        case .system: adapter?.perform(command)
-        case .player(let player): broadcasts.perform(command, on: player)
+    /// A control goes to the app the island shows and to no other (see
+    /// `NowPlayingRouting`). One that does not get there puts back what the player
+    /// last reported.
+    private func send(_ command: NowPlayingCommand, to app: String?, mayPrompt: Bool) {
+        let sent = Date()
+        NowPlayingRouting.deliver(
+            command, along: NowPlayingRouting.routes(for: command, to: app)[...],
+            using: { [weak self] route, command, completion in
+                guard let self else { return completion(.unavailable) }
+                self.send(command, by: route, mayPrompt: mayPrompt, completion: completion)
+            },
+            completion: { [weak self] delivery, route in
+                let way = route.map { String(describing: $0) } ?? "no way"
+                NowPlayingRouting.log.notice(
+                    "\(String(describing: command), privacy: .public) for \(app ?? "an unnamed app", privacy: .public) by \(way, privacy: .public): \(String(describing: delivery), privacy: .public)"
+                )
+                if delivery != .delivered { self?.model.commandFailed(command, sentAt: sent) }
+            }
+        )
+    }
+
+    private func send(
+        _ command: NowPlayingCommand, by route: NowPlayingRoute, mayPrompt: Bool,
+        completion: @escaping @MainActor (NowPlayingDelivery) -> Void
+    ) {
+        switch route {
+        case .appleEvents(let player):
+            broadcasts.perform(command, on: player, mayPrompt: mayPrompt, completion: completion)
+        case .mediaRemote(let app):
+            perform(command, onlyTo: app, completion: completion)
+        case .mediaRemoteAnyApp:
+            perform(command, onlyTo: nil, completion: completion)
+        }
+    }
+
+    private func perform(
+        _ command: NowPlayingCommand, onlyTo app: String?,
+        completion: @escaping @MainActor (NowPlayingDelivery) -> Void
+    ) {
+        guard let adapter else { return completion(.unavailable) }
+        adapter.perform(command, onlyTo: app) { delivery in
+            DispatchQueue.main.async { MainActor.assumeIsolated { completion(delivery) } }
         }
     }
 

@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import os
 
 /// What is playing, independent of how far through it is.
 struct NowPlayingTrack: Equatable, Sendable {
@@ -115,7 +116,8 @@ enum NowPlayingVideo {
     }
 }
 
-/// Where the session on show comes from, and so where its controls go.
+/// Where the session on show comes from. Its controls go by its app instead (see
+/// `NowPlayingRouting`).
 enum NowPlayingSource: Equatable, Sendable {
     /// MediaRemote's now-playing session, through the adapter.
     case system
@@ -138,7 +140,7 @@ struct NowPlayingChoice {
 /// A player with something loaded, as the switcher lists it: one per app, however
 /// the island hears from it.
 struct NowPlayingSession: Equatable, Identifiable {
-    /// Where its reports come from, and so where its controls go.
+    /// Where its reports come from.
     var source: NowPlayingSource
     /// `nil` only for an app MediaRemote does not name.
     var bundleID: String?
@@ -262,8 +264,12 @@ final class NowPlayingModel {
     private(set) var shownSession: NowPlayingSession.ID?
     private(set) var lastSwitch = NowPlayingSwitch()
 
-    /// Carries a command to the source on show. Never called while a preview is shown.
-    @ObservationIgnored var send: (NowPlayingCommand, NowPlayingSource) -> Void = { _, _ in }
+    /// Carries a command to the app on show, `nil` for one MediaRemote does not name,
+    /// however the island heard of it (see `NowPlayingRouting`). `mayPrompt` is false
+    /// for a command that did not come from a press in the island, which must not put
+    /// up macOS's Automation prompt (see `NowPlayingPlayerControl`). Never called while
+    /// a preview is shown.
+    @ObservationIgnored var send: (NowPlayingCommand, _ app: String?, _ mayPrompt: Bool) -> Void = { _, _, _ in }
     /// Called after every change that could show or end the activity.
     @ObservationIgnored var onChange: () -> Void = {}
     /// Called when a playing session moves on to a different track.
@@ -281,7 +287,7 @@ final class NowPlayingModel {
     /// back to a session paused before it.
     @ObservationIgnored private var followed: NowPlayingBroadcastPlayer?
     @ObservationIgnored private var lastSeen: NowPlayingChoice?
-    /// Where what is shown came from, so its controls go there too.
+    /// Where what is shown came from.
     @ObservationIgnored private var source: NowPlayingSource = .system
     @ObservationIgnored private var speed: Double = 1
     @ObservationIgnored private var expectation: Expectation?
@@ -313,6 +319,10 @@ final class NowPlayingModel {
     private struct ModeExpectation {
         var shuffle: NowPlayingShuffle?
         var repeatMode: NowPlayingRepeat?
+        /// When each was last set, so that a refusal takes back only its own change,
+        /// and not one made since.
+        var shuffleIssued = Date.distantPast
+        var repeatIssued = Date.distantPast
     }
 
     /// How long an unconfirmed command's result is shown before the player's last
@@ -445,17 +455,19 @@ final class NowPlayingModel {
 
     // MARK: Controls
 
-    func togglePlayPause() {
+    /// `mayPrompt` false for a command from a Shortcut or a script rather than the
+    /// island's own buttons (see `send`); likewise for `next` and `previous`.
+    func togglePlayPause(mayPrompt: Bool = true) {
         if hasSession {
             let playing = !isPlaying
             expect(playing: playing, timing: timing.anchored(at: Date(), rate: playing ? speed : 0))
         }
-        issue(.togglePlayPause)
+        issue(.togglePlayPause, mayPrompt: mayPrompt)
     }
 
-    func next() { skip(.next) }
+    func next(mayPrompt: Bool = true) { skip(.next, mayPrompt: mayPrompt) }
 
-    func previous() { skip(.previous) }
+    func previous(mayPrompt: Bool = true) { skip(.previous, mayPrompt: mayPrompt) }
 
     func seek(to seconds: TimeInterval) {
         guard hasSession, timing.duration > 0 else { return }
@@ -518,27 +530,67 @@ final class NowPlayingModel {
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    private func skip(_ command: NowPlayingCommand) {
+    private func skip(_ command: NowPlayingCommand, mayPrompt: Bool) {
         if hasSession {
             var restarted = timing
             restarted.elapsed = 0
             restarted.timestamp = Date()
             expect(playing: isPlaying, timing: restarted)
         }
-        issue(command)
+        issue(command, mayPrompt: mayPrompt)
     }
 
-    private func issue(_ command: NowPlayingCommand) {
+    /// By the app on show rather than by `source`: MediaRemote's session is whichever
+    /// app it elected when it last reported, and its commands go to whichever app it
+    /// has elected when they arrive, which need not be the same one.
+    private func issue(_ command: NowPlayingCommand, mayPrompt: Bool = true) {
         guard !isPreviewing else { return }
-        send(command, source)
+        NowPlayingRouting.log.notice("\(String(describing: command), privacy: .public): \(self.routingState, privacy: .public)")
+        send(command, track?.bundleID, mayPrompt)
     }
 
-    /// The player turned down a command sent at `sent`, or never got it (it quit, or
-    /// Islet may not control it), so show what it last reported now rather than after
-    /// the grace. A command issued since has its own result on screen, which stays.
-    func commandFailed(sentAt sent: Date) {
-        guard let expectation, expectation.issued <= sent else { return }
-        clearExpectation()
+    /// What a control is decided by, for the log: the app on show and how the island
+    /// came to show it, against what each source last said. Bundle identifiers and
+    /// play states only, and not the island's own play state, which the control has
+    /// already changed optimistically.
+    private var routingState: String {
+        func app(_ bundleID: String?) -> String { bundleID.flatMap { $0.isEmpty ? nil : $0 } ?? "an unnamed app" }
+        func state(_ snapshot: NowPlayingSnapshot) -> String { snapshot.isPlaying ? "playing" : "paused" }
+        let system = reports.system.map { "\(app($0.track.bundleID)) \(state($0))" } ?? "nothing"
+        let players = NowPlayingBroadcastPlayer.allCases.compactMap { player in
+            reports.players[player].map { "\(player.bundleID) \(state($0))" }
+        }
+        let from = source.player.map { "\($0.bundleID)'s own notifications" } ?? "MediaRemote"
+        return "shows \(app(track?.bundleID)) from \(from), session \(shownSession.map(app) ?? "none (kept)"),"
+            + " picked \(reports.picked.map(app) ?? "none"); MediaRemote reports \(system);"
+            + " players report \(players.isEmpty ? "nothing" : players.joined(separator: ", "))"
+    }
+
+    /// The player turned down `command`, sent at `sent`, or never got it (it quit,
+    /// Islet may not control it, or MediaRemote would have delivered it to another
+    /// app), so show what it last reported now rather than after the grace. Only that
+    /// command's own change goes back — a shuffle's or a repeat's, or else the
+    /// playback's — and not one issued since, whose result stays on screen.
+    func commandFailed(_ command: NowPlayingCommand, sentAt sent: Date) {
+        switch command {
+        case .shuffle, .repeatMode:
+            guard var expected = modeExpectation else { return }
+            if case .shuffle = command, expected.shuffle != nil, expected.shuffleIssued <= sent {
+                expected.shuffle = nil
+            } else if case .repeatMode = command, expected.repeatMode != nil, expected.repeatIssued <= sent {
+                expected.repeatMode = nil
+            } else {
+                return
+            }
+            if expected.shuffle == nil, expected.repeatMode == nil {
+                clearModeExpectation()
+            } else {
+                modeExpectation = expected
+            }
+        case .togglePlayPause, .next, .previous, .seek, .jumpBack, .jumpForward:
+            guard let expectation, expectation.issued <= sent else { return }
+            clearExpectation()
+        }
         refresh(announce: false)
     }
 
@@ -578,8 +630,15 @@ final class NowPlayingModel {
     private func expect(shuffle: NowPlayingShuffle? = nil, repeat repeatMode: NowPlayingRepeat? = nil) {
         if !isPreviewing {
             var expected = modeExpectation ?? ModeExpectation()
-            if let shuffle { expected.shuffle = shuffle }
-            if let repeatMode { expected.repeatMode = repeatMode }
+            let now = Date()
+            if let shuffle {
+                expected.shuffle = shuffle
+                expected.shuffleIssued = now
+            }
+            if let repeatMode {
+                expected.repeatMode = repeatMode
+                expected.repeatIssued = now
+            }
             modeExpectation = expected
             modeExpectationWork?.cancel()
             let work = DispatchWorkItem { [weak self] in

@@ -32,6 +32,9 @@ FUNCTION:
   speed    Sets the playback speed
   test     Tests if the adapter is entitled to use the MediaRemote framework.
            An exit code other than 0 indicates the adapter is non-functional
+  expect   Exits with 0 if the given application is the one MediaRemote
+           currently sends commands to, 10 if another one is, 11 if none is
+           (local change, see VENDORED.md)
 
 PARAMS:
   send(command)
@@ -44,8 +47,17 @@ PARAMS:
     mode: The repeat mode
   speed(speed)
     speed: The playback speed
+  expect(bundle_id)
+    bundle_id: The bundle identifier of the application
 
 OPTIONS:
+  send, seek, shuffle, repeat
+    --to=BUNDLE_ID: Only act if BUNDLE_ID is the application MediaRemote
+      currently sends commands to, as "expect" checks, and otherwise exit with
+      its code without sending anything; 12 if this framework cannot check.
+      MediaRemote cannot be made to deliver to another application: it
+      redirects a targeted command from this process to the elected one.
+      (Local change, see VENDORED.md.)
   get
     --now: Adds an "elapsedTimeNow" key with an estimation of the current
       elapsed playback time. This estimation may be off by up to a second.
@@ -124,7 +136,8 @@ fail "Invalid function name: '$function_name'"
   || $function_name eq "shuffle"
   || $function_name eq "repeat"
   || $function_name eq "speed"
-  || $function_name eq "test";
+  || $function_name eq "test"
+  || $function_name eq "expect";
 
 sub parse_options {
   my ($start_index) = @_;
@@ -182,6 +195,26 @@ sub set_env_option_value {
     fail "Missing value for option '$key'";
   }
   set_env_option_unsafe($key, $value);
+}
+
+# Local change (Islet), see VENDORED.md: the commands take --to=BUNDLE_ID and then
+# act only on that application, by way of adapter_expect.
+my $expected_bundle_id;
+if ($function_name eq "send"
+  || $function_name eq "seek"
+  || $function_name eq "shuffle"
+  || $function_name eq "repeat") {
+  my $options = parse_options(0);
+  foreach my $key (keys %{$options}) {
+    if ($key eq "to") {
+      $expected_bundle_id = $options->{$key};
+      fail "Missing value for option '$key'"
+        unless defined $expected_bundle_id && $expected_bundle_id ne "";
+    }
+    else {
+      fail "Unrecognized option '$key'";
+    }
+  }
 }
 
 my $symbol_name = "adapter_$function_name";
@@ -272,6 +305,13 @@ elsif ($function_name eq "speed") {
 elsif ($function_name eq "test") {
   $symbol_name = "adapter_test";
 }
+elsif ($function_name eq "expect") {
+  my $bundle_id = shift @ARGV;
+  fail "Missing bundle identifier for '$function_name' command"
+    unless defined $bundle_id && $bundle_id ne "";
+  set_env_param($symbol_name, 0, "bundle", "$bundle_id");
+  $symbol_name = env_func($symbol_name);
+}
 
 if (defined shift @ARGV) {
   fail "Too many arguments";
@@ -279,6 +319,26 @@ if (defined shift @ARGV) {
 
 my $symbol = DynaLoader::dl_find_symbol($handle, "$symbol_name")
   or fail "Symbol '$symbol_name' not found in $framework";
+
+# Checked straight before acting, so that nothing is sent when another
+# application is now playing. adapter_expect exits with its own code if so.
+if (defined $expected_bundle_id) {
+  my $expect = DynaLoader::dl_find_symbol($handle, "adapter_expect_env");
+  if (!$expect) {
+    print STDERR "Symbol 'adapter_expect_env' not found in $framework\n";
+    exit 12;
+  }
+  set_env_param("adapter_expect", 0, "bundle", $expected_bundle_id);
+  DynaLoader::dl_install_xsub("main::expect", $expect);
+  eval {
+    no strict "refs";
+    &{"main::expect"}();
+  };
+  if ($@) {
+    fail "Error executing expect: $@";
+  }
+}
+
 DynaLoader::dl_install_xsub("main::$function_name", $symbol);
 
 eval {

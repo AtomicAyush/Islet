@@ -188,20 +188,53 @@ final class NowPlayingAdapter: @unchecked Sendable {
 
     // MARK: Commands
 
-    func perform(_ command: NowPlayingCommand) {
-        switch command {
-        case .togglePlayPause: run(["send", "2"])
-        case .next: run(["send", "4"])
-        case .previous: run(["send", "5"])
-        case .seek(let seconds): run(["seek", String(Int64(max(0, seconds) * 1_000_000))])
-        case .jumpBack: run(["send", "12"])
-        case .jumpForward: run(["send", "13"])
-        case .shuffle(let mode): run(["shuffle", String(mode.rawValue)])
-        case .repeatMode(let mode): run(["repeat", String(mode.rawValue)])
+    /// Sends a command through MediaRemote, which delivers it to the app it has
+    /// elected as now playing. With `app`, the adapter first checks that `app` is that
+    /// one, and sends nothing if not. `completion` gets the outcome on the adapter's
+    /// queue once the command's process has exited.
+    func perform(
+        _ command: NowPlayingCommand, onlyTo app: String?,
+        completion: @escaping @Sendable (NowPlayingDelivery) -> Void
+    ) {
+        run(Self.arguments(for: command, onlyTo: app)) { status in
+            completion(Self.delivery(exitStatus: status, checked: app != nil))
         }
     }
 
-    private func run(_ arguments: [String]) {
+    /// The adapter's arguments for a command, after the script and framework paths.
+    static func arguments(for command: NowPlayingCommand, onlyTo app: String?) -> [String] {
+        var arguments: [String]
+        switch command {
+        case .togglePlayPause: arguments = ["send", "2"]
+        case .next: arguments = ["send", "4"]
+        case .previous: arguments = ["send", "5"]
+        case .seek(let seconds): arguments = ["seek", String(Int64(max(0, seconds) * 1_000_000))]
+        case .jumpBack: arguments = ["send", "12"]
+        case .jumpForward: arguments = ["send", "13"]
+        case .shuffle(let mode): arguments = ["shuffle", String(mode.rawValue)]
+        case .repeatMode(let mode): arguments = ["repeat", String(mode.rawValue)]
+        }
+        if let app { arguments.append("--to=\(app)") }
+        return arguments
+    }
+
+    /// What the command process's exit status says; `nil` when it could not be run.
+    /// A checked command exits 10 when another app is now playing and 11 when none
+    /// is, having sent nothing, and 12 when the framework cannot check, which leaves
+    /// the plain send to try. Only 12 does: a checked command that could not even
+    /// start fails, since the plain send after it is the one that could reach another
+    /// app, and could not start either.
+    static func delivery(exitStatus: Int32?, checked: Bool) -> NowPlayingDelivery {
+        guard let exitStatus else { return checked ? .failed : .unavailable }
+        switch (exitStatus, checked) {
+        case (0, _): return .delivered
+        case (10, true), (11, true): return .elsewhere
+        case (12, true): return .unavailable
+        default: return .failed
+        }
+    }
+
+    private func run(_ arguments: [String], completion: @escaping @Sendable (Int32?) -> Void) {
         queue.async { [self] in
             let process = Process()
             process.executableURL = perl
@@ -211,9 +244,18 @@ final class NowPlayingAdapter: @unchecked Sendable {
             process.standardInput = FileHandle.nullDevice
             // Kept until it exits so it can be reaped, and terminated by stop().
             process.terminationHandler = { [weak self] process in
-                self?.queue.async { self?.commands.remove(process) }
+                // Stopped by a signal (stop() terminates it) is no exit status at all.
+                let status = process.terminationReason == .exit ? process.terminationStatus : -1
+                guard let self else { return completion(status) }
+                self.queue.async {
+                    self.commands.remove(process)
+                    completion(status)
+                }
             }
-            guard (try? process.run()) != nil else { return }
+            guard (try? process.run()) != nil else {
+                completion(nil)
+                return
+            }
             commands.insert(process)
         }
     }
