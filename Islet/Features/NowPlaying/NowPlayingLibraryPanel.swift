@@ -143,7 +143,7 @@ final class NowPlayingLibraryModel {
             let result: Listing
             do {
                 switch panel {
-                case .upNext: result = .queue(try await library.upNext())
+                case .upNext: result = .queue(try await library.upNext().all)
                 case .playlists: result = .playlists(try await library.playlists())
                 }
             } catch {

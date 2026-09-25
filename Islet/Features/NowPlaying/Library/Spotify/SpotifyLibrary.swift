@@ -123,8 +123,8 @@ final class SpotifyLibrary: MediaLibrary {
 
     // MARK: Library
 
-    func upNext() async throws -> [MediaItem] {
-        try await call { try await $0.upNext() }
+    func upNext() async throws -> MediaQueue {
+        MediaQueue(upcoming: try await call { try await $0.upNext() })
     }
 
     func playlists() async throws -> [MediaPlaylist] {

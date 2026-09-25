@@ -18,13 +18,15 @@ protocol MediaLibrary: AnyObject {
 
     /// Signs in or asks for permission. Only ever called from a button.
     func connect()
-    /// Tracks coming up after the current one, soonest first.
-    func upNext() async throws -> [MediaItem]
+    /// What is coming up after the current track.
+    func upNext() async throws -> MediaQueue
     /// The person's playlists.
     func playlists() async throws -> [MediaPlaylist]
     func play(_ playlist: MediaPlaylist) async throws
-    /// Jumps ahead to an item from `upNext()`, at its position in that list.
+    /// Jumps ahead to an item from `upNext()`, at its position in `MediaQueue.all`.
     func playFromQueue(_ item: MediaItem, at index: Int) async throws
+    /// Puts an item at the front of the queue, to play after the current track.
+    func playNext(_ item: MediaItem) async throws
     /// Opens the app's listen-together feature (Spotify's Jam), as far as it allows.
     func openListeningTogether()
     /// `islet://nowplaying/…` URLs meant for this library (a sign-in callback, say).
@@ -34,6 +36,26 @@ protocol MediaLibrary: AnyObject {
 extension MediaLibrary {
     func handle(_ url: URL) -> Bool { false }
     func openListeningTogether() {}
+    func playNext(_ item: MediaItem) async throws {
+        throw MediaLibraryError(message: "\(displayName) can't queue from here")
+    }
+}
+
+/// What is coming up, split the way Spotify shows it: songs the person queued, which
+/// play first, then the rest of the playlist or album that is playing.
+struct MediaQueue: Equatable {
+    /// "Next in queue": queued by the person.
+    var queued: [MediaItem] = []
+    /// "Next from …": the rest of what is playing.
+    var upcoming: [MediaItem] = []
+    /// What `upcoming` comes from ("My playlist #9"), when known.
+    var sourceName: String?
+    /// Whether the two could be told apart. When not, everything is in `upcoming`
+    /// and it is shown as one list.
+    var isSplit = false
+
+    /// Everything, in the order it will play.
+    var all: [MediaItem] { queued + upcoming }
 }
 
 enum MediaLibraryState: Equatable {
@@ -51,6 +73,7 @@ struct MediaLibraryCapabilities: OptionSet {
     static let playFromQueue = MediaLibraryCapabilities(rawValue: 1 << 1)
     static let playlists = MediaLibraryCapabilities(rawValue: 1 << 2)
     static let listeningTogether = MediaLibraryCapabilities(rawValue: 1 << 3)
+    static let playNext = MediaLibraryCapabilities(rawValue: 1 << 4)
 }
 
 struct MediaItem: Identifiable, Hashable {

@@ -89,7 +89,7 @@ final class AppleMusicLibrary: MediaLibrary {
         }
     }
 
-    func upNext() async throws -> [MediaItem] {
+    func upNext() async throws -> MediaQueue {
         throw MediaLibraryError(message: Self.noUpNext)
     }
 

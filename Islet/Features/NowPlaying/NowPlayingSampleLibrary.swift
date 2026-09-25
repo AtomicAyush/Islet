@@ -21,9 +21,9 @@ final class NowPlayingSampleLibrary: MediaLibrary {
 
     func connect() {}
 
-    func upNext() async throws -> [MediaItem] {
+    func upNext() async throws -> MediaQueue {
         try await Task.sleep(for: Self.delay)
-        return queue
+        return MediaQueue(upcoming: queue)
     }
 
     func playlists() async throws -> [MediaPlaylist] {
