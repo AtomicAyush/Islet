@@ -60,6 +60,7 @@ final class FeatureRegistry {
         CalendarFeature(),
         PrivacyFeature(),
         FocusFeature(),
+        ShortcutsFeature(),
         DropZoneFeature(),
     ]
 

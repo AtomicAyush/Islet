@@ -78,6 +78,17 @@ may read, so this needs Full Disk Access; until it has it, the home tile says so
 other apps turn Focus on or off, so clicking the tile runs a shortcut of yours: make one with
 the Set Focus action set to toggle Do Not Disturb, and pick it in Settings.
 
+**Shortcuts.** While a shortcut runs, its icon sits left of the camera and a spinner right of
+it, as on the iPhone; a tick or a cross shows as it ends, and the island gives itself back.
+Opened, it says which shortcut is running and for how long, and offers Stop for one Islet
+started. Pin up to six shortcuts to the home page and click one to run it; text a shortcut
+hands back comes up in a card, to read or copy. Runs started anywhere else — the Shortcuts
+app, the menu bar, Spotlight, Siri, an automation — show too: Islet notices them in
+Shortcuts' database, which, like the shortcuts' icons, needs Full Disk Access. Without it the
+island shows only the runs Islet starts, and shortcuts by name on a plain tile. macOS still
+shows its own indicator in the menu bar while a shortcut runs, whoever started it (Islet
+included), and has no setting to hide it; it goes a few seconds after the shortcut ends.
+
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
 bubble beside the island. macOS has no per-app volume, so Islet makes one with Core Audio
@@ -164,6 +175,7 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://preview?feature=battery&index=0` | Runs a feature's preview |
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
+| `islet://shortcuts/run?name=Morning%20Lights` | Runs a shortcut (`id=` takes the identifier `shortcuts list --show-identifiers` prints) |
 | `islet://settings?tab=activities` | Opens Settings on a tab |
 
 ```bash

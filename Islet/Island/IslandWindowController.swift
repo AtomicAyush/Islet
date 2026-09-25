@@ -145,7 +145,10 @@ final class IslandWindowController {
             swipeTravelX = 0
             swipeHandled = false
             swipeAxis = .undecided
-            swipeOverList = model.isExpanded && isOverVerticalList(event)
+            // A card can scroll too (a shortcut's result): its text takes the swipe,
+            // not the island, which would open over it mid-read.
+            swipeOverList = (model.isExpanded || model.isShowingCard)
+                && Self.isOverVerticalList(in: panel, at: event.locationInWindow)
         }
         guard event.phase == .changed || event.phase == .began, !swipeHandled else { return }
 
@@ -188,12 +191,15 @@ final class IslandWindowController {
         }
     }
 
-    /// Whether the pointer is over a scroll view with more content than it shows, top
-    /// to bottom. SwiftUI's ScrollView is an NSScrollView underneath, so a hit test
-    /// finds it.
-    private func isOverVerticalList(_ event: NSEvent) -> Bool {
-        guard let content = panel.contentView,
-              let hit = content.hitTest(content.convert(event.locationInWindow, from: nil))
+    /// Whether a point in `window` is over a scroll view with more content than it
+    /// shows, top to bottom. SwiftUI's ScrollView is an NSScrollView underneath, so a
+    /// hit test finds it.
+    static func isOverVerticalList(in window: NSWindow, at locationInWindow: NSPoint) -> Bool {
+        // A hit test takes its point in the view's superview's coordinates. The hosting
+        // view is flipped and the window's frame view is not, so the view's own
+        // coordinates would mirror the point top to bottom and miss the island.
+        guard let content = window.contentView, let frame = content.superview,
+              let hit = content.hitTest(frame.convert(locationInWindow, from: nil))
         else { return false }
         var scroll = hit as? NSScrollView ?? hit.enclosingScrollView
         while let current = scroll {

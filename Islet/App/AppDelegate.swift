@@ -46,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         FeatureRegistry.shared.stopAll()
+        // Features stop their shortcuts gently, and follow up on a timer the app will
+        // not live to fire; whatever is still running is ended now instead.
+        ToolRun.terminateAll()
     }
 
     /// Opening the app again from Finder or Spotlight shows Settings, since there is

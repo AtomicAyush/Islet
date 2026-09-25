@@ -373,7 +373,7 @@ final class IslandViewModel {
 
     /// A card banner is up. Cards can hold buttons (restart a timer, say), so resting
     /// on one must not replace it with the opened island; a click still opens it.
-    private var isShowingCard: Bool {
+    var isShowingCard: Bool {
         guard case .banner = mode, case .card? = center.banner?.style else { return false }
         return true
     }
