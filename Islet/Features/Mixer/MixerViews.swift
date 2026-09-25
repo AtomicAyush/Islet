@@ -141,26 +141,49 @@ struct MixerCompactLeading: View {
     }
 }
 
-/// "2 apps".
+/// The app on top of the icon stack, by name — the island picks one to show rather
+/// than a count — and "+1" for the others playing too.
 struct MixerCompactTrailing: View {
     let model: MixerModel
 
+    static let nameFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    static let maximumNameWidth: CGFloat = 110
+    static let inset: CGFloat = 10
+
+    /// The width the name and the count need, for the activity's wing.
+    static func width(featured: String?, others: Int) -> CGFloat {
+        let name = featured.map {
+            min(ceil(($0 as NSString).size(withAttributes: [.font: nameFont]).width) + 2, maximumNameWidth)
+        } ?? 0
+        let count = others > 0 ? 6 + ceil(("+\(others)" as NSString).size(withAttributes: [.font: nameFont]).width) + 2 : 0
+        return name + count + 2 * inset
+    }
+
     var body: some View {
-        let count = model.apps.count
-        HStack(spacing: 3) {
-            Text("\(count)")
-                .foregroundStyle(.white)
-                .contentTransition(.numericText())
-            Text(count == 1 ? "app" : "apps")
-                .foregroundStyle(.white.opacity(0.55))
+        let others = max(0, model.apps.count - 1)
+        HStack(spacing: 6) {
+            if let featured = model.apps.last {
+                Text(featured.name)
+                    .font(Font(Self.nameFont))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: Self.maximumNameWidth, alignment: .trailing)
+                    .id(featured.id)
+                    .transition(.opacity)
+            }
+            if others > 0 {
+                Text("+\(others)")
+                    .font(Font(Self.nameFont))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .fixedSize()
+            }
         }
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
-        .monospacedDigit()
-        .lineLimit(1)
-        .fixedSize()
-        .animation(.islandMorph, value: count)
+        .animation(.islandMorph, value: model.apps.map(\.id))
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.trailing, 8)
+        .padding(.trailing, Self.inset)
     }
 }
 

@@ -155,6 +155,7 @@ final class MixerActivity: IslandActivity {
     /// What the island's size depends on; a change re-publishes the activity.
     struct Sizes: Equatable {
         var leading: CGFloat
+        var trailing: CGFloat
         var expanded: CGFloat
     }
 
@@ -168,12 +169,16 @@ final class MixerActivity: IslandActivity {
     var sizes: Sizes {
         Sizes(
             leading: max(44, MixerIconStack.width(count: model.apps.count) + 16),
+            trailing: max(44, MixerCompactTrailing.width(
+                featured: model.apps.last?.name,
+                others: max(0, model.apps.count - 1)
+            )),
             expanded: MixerExpanded.height(rows: model.apps.count, hasNote: model.note != nil)
         )
     }
 
     var compactLeadingWidth: CGFloat? { sizes.leading }
-    var compactTrailingWidth: CGFloat? { 56 }
+    var compactTrailingWidth: CGFloat? { sizes.trailing }
     var expandedHeight: CGFloat { sizes.expanded }
 
     func compactLeading() -> AnyView { AnyView(MixerCompactLeading(model: model)) }
