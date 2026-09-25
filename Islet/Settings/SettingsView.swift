@@ -138,12 +138,9 @@ private struct AboutSettings: View {
     var body: some View {
         VStack(spacing: 14) {
             Spacer()
-            ZStack {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(LinearGradient(colors: [Color(white: 0.2), Color(white: 0.05)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 96, height: 96)
-                Capsule().fill(Color.black).frame(width: 58, height: 20).offset(y: -22)
-            }
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 112, height: 112)
             Text("Islet").font(.system(size: 22, weight: .semibold))
             Text("A Dynamic Island for the Mac notch.")
                 .foregroundStyle(.secondary)

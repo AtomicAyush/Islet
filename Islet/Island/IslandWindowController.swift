@@ -13,6 +13,10 @@ final class IslandWindowController {
     private var monitors: [Any] = []
     private var dragChangeCount = NSPasteboard(name: .drag).changeCount
     private var fileDragActive = false
+    /// Vertical travel of the current two-finger swipe over the island, in the
+    /// direction the fingers moved (positive = down).
+    private var swipeTravel: CGFloat = 0
+    private var swipeHandled = false
 
     init(screen: NSScreen) {
         self.screen = screen
@@ -78,6 +82,37 @@ final class IslandWindowController {
             return event
         }) {
             monitors.append(m)
+        }
+        // Scrolls only reach the panel while the pointer is over the island.
+        if let m = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.handleSwipe(event) }
+            return event
+        }) {
+            monitors.append(m)
+        }
+    }
+
+    /// Two fingers pulled down over the island open it; pushed up, close it. The
+    /// direction follows the fingers, whichever way natural scrolling is set.
+    private func handleSwipe(_ event: NSEvent) {
+        guard event.hasPreciseScrollingDeltas, event.window === panel else { return }
+        if event.phase == .began {
+            swipeTravel = 0
+            swipeHandled = false
+        }
+        guard event.phase == .changed || event.phase == .began, !swipeHandled else { return }
+
+        let delta = event.scrollingDeltaY
+        swipeTravel += event.isDirectionInvertedFromDevice ? delta : -delta
+        // Ignore mostly-sideways swipes; pages inside the island may use them.
+        guard abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) else { return }
+
+        if swipeTravel > 24, !model.isExpanded {
+            swipeHandled = true
+            model.expand()
+        } else if swipeTravel < -24, model.isExpanded {
+            swipeHandled = true
+            model.collapse()
         }
     }
 

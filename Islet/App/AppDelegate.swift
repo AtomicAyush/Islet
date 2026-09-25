@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -16,6 +17,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         IslandManager.shared.start()
         registry.startEnabled()
         statusItem = StatusItemController()
+        welcomeOnFirstLaunch()
+    }
+
+    /// The island is easy to miss the first time — it looks like the notch. Say
+    /// hello once, from the island itself.
+    private func welcomeOnFirstLaunch() {
+        let key = "hasWelcomed"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            ActivityCenter.shared.present(IslandBanner(
+                id: "welcome",
+                style: .card(width: 380, height: 58),
+                duration: 7,
+                content: AnyView(WelcomeCard())
+            ))
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
