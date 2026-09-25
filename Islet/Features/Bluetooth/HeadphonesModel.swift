@@ -3,9 +3,10 @@ import Observation
 
 /// The headphones connected to this Mac and their battery levels.
 ///
-/// Connections come from CoreAudio as they happen; battery levels come from
-/// system_profiler, read once when a headset connects (and again a few seconds later,
-/// since AirPods report their levels late) and whenever the home tile asks.
+/// Connections come from CoreAudio as they happen. Battery levels come from IOBluetooth
+/// when Bluetooth access has been given — exact, and the only source for AirPods Max —
+/// and otherwise from system_profiler. Both are read when a headset connects, again over
+/// the following seconds (AirPods report their levels late), and when the home tile asks.
 @MainActor
 @Observable
 final class HeadphonesModel {
@@ -33,6 +34,7 @@ final class HeadphonesModel {
     @ObservationIgnored private var departures: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var profileRead: Task<Void, Never>?
     @ObservationIgnored private var profileRetry: Task<Void, Never>?
+    @ObservationIgnored private var levelPolls: Task<Void, Never>?
     @ObservationIgnored private var wantsAnotherRead = false
     @ObservationIgnored private var lastProfileRead = Date.distantPast
 
@@ -51,6 +53,9 @@ final class HeadphonesModel {
             guard let self, let watcher, self.watcher === watcher else { return }
             self.apply(snapshot, isInitial: isInitial)
         }
+        BluetoothLevels.shared.onAuthorized = { [weak self] in
+            self?.applyFrameworkLevels()
+        }
     }
 
     func stop() {
@@ -62,6 +67,9 @@ final class HeadphonesModel {
         profileRead = nil
         profileRetry?.cancel()
         profileRetry = nil
+        levelPolls?.cancel()
+        levelPolls = nil
+        BluetoothLevels.shared.onAuthorized = {}
         wantsAnotherRead = false
         lastProfileRead = .distantPast
         headsets = []
@@ -72,6 +80,7 @@ final class HeadphonesModel {
     /// under way is just as fresh, so this never queues another behind it (each island
     /// window's tile asks as it appears).
     func refreshLevels(olderThan age: TimeInterval) {
+        applyFrameworkLevels()
         guard watcher != nil, profileRead == nil, !headsets.isEmpty,
               Date().timeIntervalSince(lastProfileRead) > age
         else { return }
@@ -137,7 +146,9 @@ final class HeadphonesModel {
     /// AirPods often reach system_profiler a few seconds before their levels do, so a
     /// connection reads at once and, if levels are still missing, once more shortly after.
     private func readLevelsAfterConnecting() {
+        applyFrameworkLevels()
         readProfile()
+        pollFrameworkLevels()
         profileRetry?.cancel()
         profileRetry = Task { [weak self] in
             try? await Task.sleep(for: .seconds(4))
@@ -159,10 +170,39 @@ final class HeadphonesModel {
             self.profileRead = nil
             self.lastProfileRead = Date()
             if let devices { self.apply(devices) }
+            // Exact levels win over system_profiler's, which can be stale.
+            self.applyFrameworkLevels()
             if self.wantsAnotherRead {
                 self.wantsAnotherRead = false
                 self.readProfile()
             }
+        }
+    }
+
+    /// IOBluetooth takes a few seconds after a connection to learn the levels. Reading it
+    /// is cheap, so it is asked a few times until every headset has some.
+    private func pollFrameworkLevels() {
+        guard BluetoothLevels.shared.isAuthorized else { return }
+        levelPolls?.cancel()
+        levelPolls = Task { [weak self] in
+            for delay in [1.5, 3.0, 5.0, 8.0] {
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, let self else { return }
+                self.applyFrameworkLevels()
+                if !self.headsets.contains(where: \.battery.isEmpty) { break }
+            }
+            self?.levelPolls = nil
+        }
+    }
+
+    private func applyFrameworkLevels() {
+        guard watcher != nil else { return }
+        let levels = BluetoothLevels.shared.read()
+        guard !levels.isEmpty else { return }
+        for index in headsets.indices {
+            guard let battery = levels[headsets[index].id], battery != headsets[index].battery else { continue }
+            headsets[index].battery = battery
+            onUpdate(headsets[index])
         }
     }
 

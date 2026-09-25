@@ -178,6 +178,23 @@ struct HeadsetHomeTile: View {
                         HeadsetBatteryRings(battery: headset.battery, diameter: 22, spacing: 5)
                         HeadsetBatteryList(battery: headset.battery)
                     }
+                } else if BluetoothLevels.shared.authorization == .notDetermined {
+                    // Only Bluetooth knows some headphones' battery (AirPods Max among
+                    // them); offer to ask, rather than asking unprompted.
+                    Button {
+                        BluetoothLevels.shared.requestAccess()
+                    } label: {
+                        Label("Show battery…", systemImage: "battery.75percent")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 9)
+                            .frame(height: 24)
+                            .background(Capsule().fill(Color.white.opacity(0.14)))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 }
             }
             .animation(.islandMorph, value: headset.battery)

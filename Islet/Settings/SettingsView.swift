@@ -2,14 +2,21 @@ import SwiftUI
 import ServiceManagement
 
 struct SettingsView: View {
+    /// Remembered, and settable from `islet://settings?tab=activities`.
+    @AppStorage(SettingsView.tabKey) private var tab = "general"
+    static let tabKey = "settingsTab"
+
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag("general")
             FeatureSettings()
                 .tabItem { Label("Activities", systemImage: "capsule.fill") }
+                .tag("activities")
             AboutSettings()
                 .tabItem { Label("About", systemImage: "info.circle") }
+                .tag("about")
         }
         .frame(width: 620, height: 520)
     }

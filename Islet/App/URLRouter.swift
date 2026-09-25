@@ -5,6 +5,7 @@ import AppKit
 ///     islet://open                 open the island (on the screen under the pointer)
 ///     islet://open?focus=timer     open it on a particular activity, or "home"
 ///     islet://close
+///     islet://settings?tab=activities
 ///     islet://preview?feature=battery&index=0
 ///     islet://<feature>/…          handed to that feature, e.g. islet://timer/start?minutes=5
 @MainActor
@@ -38,6 +39,11 @@ enum URLRouter {
             island?.isPinnedOpen = false
             #endif
             island?.collapse()
+        case "settings":
+            if let tab = query["tab"] {
+                UserDefaults.standard.set(tab, forKey: SettingsView.tabKey)
+            }
+            SettingsWindowController.shared.show()
         case "preview":
             guard let name = query["feature"], let feature = feature(named: name) else { return }
             let index = Int(query["index"] ?? "0") ?? 0

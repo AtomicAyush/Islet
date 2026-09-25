@@ -3,8 +3,10 @@ import SwiftUI
 /// AirPods and other Bluetooth headphones connecting, with their battery, the way the
 /// iPhone shows them.
 ///
-/// Needs no Bluetooth permission: connections are read from CoreAudio, where every
-/// headset is an audio device, and battery levels from system_profiler.
+/// Connections are read from CoreAudio, where every headset is an audio device, so
+/// they need no Bluetooth permission. Battery levels come from system_profiler, or —
+/// exact, and the only way for AirPods Max — from IOBluetooth once Bluetooth access has
+/// been given from Settings or the home tile.
 @MainActor
 final class BluetoothFeature: Feature {
     let id = "bluetooth"
@@ -160,9 +162,57 @@ final class BluetoothFeature: Feature {
 private struct HeadphonesSettings: View {
     @AppStorage("bluetooth.showConnect") private var showConnect = true
     @AppStorage("bluetooth.showDisconnect") private var showDisconnect = false
+    private let levels = BluetoothLevels.shared
+    private let profile = HeadphoneNotificationsProfile.shared
+    @State private var profileError: String?
 
     var body: some View {
         Toggle("Show when headphones connect", isOn: $showConnect)
         Toggle("Show when they disconnect", isOn: $showDisconnect)
+
+        LabeledContent {
+            switch levels.authorization {
+            case .allowedAlways:
+                Text("On").foregroundStyle(.secondary)
+            case .notDetermined:
+                Button("Allow Bluetooth…") { levels.requestAccess() }
+            default:
+                Button("Open Privacy Settings…") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+        } label: {
+            Text("Exact battery levels")
+            Text("AirPods Max only report their battery over Bluetooth, which needs your permission.")
+        }
+
+        LabeledContent {
+            if profile.isInstalled == true {
+                Button("Remove…") { HeadphoneNotificationsProfile.openProfilesSettings() }
+            } else {
+                Button("Hide It…") {
+                    do {
+                        try profile.install()
+                        profileError = nil
+                    } catch {
+                        profileError = error.localizedDescription
+                    }
+                }
+            }
+        } label: {
+            Text("macOS's own “Connected” notification")
+            Text(profile.isInstalled == true
+                 ? "Hidden by the “Islet: Hide Headphone Notifications” profile. Remove the profile to bring it back."
+                 : "macOS offers no switch for it. Islet can add a profile that turns it off; you approve it in System Settings → General → Device Management.")
+            if let profileError {
+                Text(profileError).foregroundStyle(.red)
+            }
+        }
+        .onAppear { profile.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            profile.refresh()
+        }
     }
 }
