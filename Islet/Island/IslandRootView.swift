@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// The whole canvas: the island hanging from the top centre, and the detached bubble
 /// beside it when two activities are running.
@@ -211,7 +210,7 @@ private struct ExpandedIsland: View {
     @ViewBuilder
     private var page: some View {
         if focus == IslandViewModel.dropFocus, let target = model.center.dropTarget {
-            DropPage(target: target)
+            target.view()
         } else if focus == IslandViewModel.homeFocus {
             HomeView(widgets: model.center.homeWidgets)
         } else if let activity = model.center.activity(id: focus) {
@@ -296,43 +295,5 @@ private struct TabButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-    }
-}
-
-/// Hosts the drop target's page and routes dropped files to it.
-private struct DropPage: View {
-    let target: any DropTarget
-    @State private var isTargeted = false
-
-    var body: some View {
-        target.view(isTargeted: isTargeted)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
-                loadURLs(from: providers) { urls in
-                    _ = target.accept(urls: urls)
-                }
-                return true
-            }
-    }
-
-    private func loadURLs(from providers: [NSItemProvider], completion: @escaping @MainActor ([URL]) -> Void) {
-        let group = DispatchGroup()
-        let lock = NSLock()
-        var urls: [URL] = []
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            group.enter()
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                if let url {
-                    lock.lock()
-                    urls.append(url)
-                    lock.unlock()
-                }
-                group.leave()
-            }
-        }
-        group.notify(queue: .main) {
-            MainActor.assumeIsolated { completion(urls) }
-        }
     }
 }

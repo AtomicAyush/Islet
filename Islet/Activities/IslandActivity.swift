@@ -99,13 +99,13 @@ struct HomeWidget: Identifiable {
 }
 
 /// Receives files dragged onto the island. While a file drag nears the notch, the
-/// island opens onto this target's page; dropping there hands it the files.
+/// island opens onto this target's page and keeps catching the pointer until the
+/// drag ends. The page does its own drop handling (`.onDrop`), so it can offer
+/// more than one place to drop.
 @MainActor
 protocol DropTarget: AnyObject {
     /// Height of the drop page below the notch row.
     var expandedHeight: CGFloat { get }
-    /// The drop page. `isTargeted` is true while files are held over it.
-    func view(isTargeted: Bool) -> AnyView
-    /// Files were dropped on the page. Returns whether they were taken.
-    func accept(urls: [URL]) -> Bool
+    /// The drop page.
+    func view() -> AnyView
 }
