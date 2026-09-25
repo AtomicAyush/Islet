@@ -25,6 +25,7 @@ struct IslandRootView: View {
             }
 
             IslandSurface(model: model, layout: layout)
+                .offset(x: layout.centerOffset)
         }
         .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
         .ignoresSafeArea()
@@ -60,14 +61,27 @@ private struct IslandSurface: View {
     @ViewBuilder
     private var content: some View {
         switch model.mode {
-        case .hidden, .idle:
+        case .hidden:
             Color.clear.frame(height: layout.notch.height)
+
+        case .idle:
+            if model.center.indicators.isEmpty {
+                Color.clear.frame(height: layout.notch.height)
+            } else {
+                CompactRow(
+                    leading: AnyView(EmptyView()),
+                    trailing: AnyView(EmptyView()),
+                    indicators: model.center.indicators,
+                    layout: layout
+                )
+            }
 
         case .compact(let id):
             if let activity = model.center.activity(id: id) {
                 CompactRow(
                     leading: activity.compactLeading(),
                     trailing: activity.compactTrailing(),
+                    indicators: model.center.indicators,
                     layout: layout
                 )
             }
@@ -76,7 +90,7 @@ private struct IslandSurface: View {
             if let banner = model.center.banner {
                 switch banner.style {
                 case .compact:
-                    CompactRow(leading: banner.leading, trailing: banner.trailing, layout: layout)
+                    CompactRow(leading: banner.leading, trailing: banner.trailing, indicators: [], layout: layout)
                 case .card:
                     VStack(spacing: 0) {
                         Color.clear.frame(height: layout.notch.height)
@@ -94,9 +108,11 @@ private struct IslandSurface: View {
 }
 
 /// Compact content: one view left of the notch, one right, and the camera between.
+/// Indicator dots, if any, sit at the far right.
 private struct CompactRow: View {
     let leading: AnyView
     let trailing: AnyView
+    let indicators: [StatusIndicator]
     let layout: IslandLayout
 
     var body: some View {
@@ -105,10 +121,30 @@ private struct CompactRow: View {
                 .frame(width: layout.leadingWidth, height: layout.notch.height)
             Spacer(minLength: layout.notch.width)
             trailing
-                .frame(width: layout.trailingWidth, height: layout.notch.height)
+                .frame(width: max(0, layout.trailingWidth - layout.indicatorWidth), height: layout.notch.height)
+            if layout.indicatorWidth > 0 {
+                IndicatorDots(indicators: indicators)
+                    .frame(width: layout.indicatorWidth, height: layout.notch.height, alignment: .leading)
+            }
         }
         .frame(height: layout.notch.height)
-        .padding(.horizontal, 2)
+    }
+}
+
+struct IndicatorDots: View {
+    let indicators: [StatusIndicator]
+
+    var body: some View {
+        HStack(spacing: IslandLayout.indicatorPitch - 7) {
+            ForEach(indicators) { indicator in
+                Circle()
+                    .fill(indicator.color)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: indicator.color.opacity(0.6), radius: 3)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .padding(.leading, 2)
     }
 }
 
@@ -228,9 +264,14 @@ private struct ExpandedHeader: View {
             .frame(height: layout.notch.height)
             .transition(.opacity)
         } else {
-            TabButton(symbol: "gearshape.fill", isSelected: false) {
-                model.collapse()
-                SettingsWindowController.shared.show()
+            HStack(spacing: 8) {
+                if !model.center.indicators.isEmpty {
+                    IndicatorDots(indicators: model.center.indicators)
+                }
+                TabButton(symbol: "gearshape.fill", isSelected: false) {
+                    model.collapse()
+                    SettingsWindowController.shared.show()
+                }
             }
         }
     }

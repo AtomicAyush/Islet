@@ -24,7 +24,10 @@ final class IslandWindowController {
             self?.layout = layout
             self?.updateHitTesting()
         }
-        panel.contentView = IslandHostingView(rootView: root)
+        let host = IslandHostingView(rootView: root)
+        // The canvas is a fixed size; don't let SwiftUI's content resize the panel.
+        host.sizingOptions = []
+        panel.contentView = host
         panel.orderFrontRegardless()
         installMonitors()
     }
@@ -36,13 +39,17 @@ final class IslandWindowController {
         panel.close()
     }
 
-    /// The screen's geometry changed (resolution, arrangement, notch appeared).
+    /// The screen's geometry changed (resolution, arrangement, notch appeared), or
+    /// the Mac woke. Waking changes no geometry, but after a long sleep the window
+    /// server can drop the panel from the screen, so it is always put back.
     func update(screen: NSScreen) {
         self.screen = screen
         let metrics = NotchMetrics.measure(screen)
-        guard metrics != model.metrics else { return }
-        model.metrics = metrics
+        if metrics != model.metrics {
+            model.metrics = metrics
+        }
         panel.setFrame(Self.frame(for: metrics), display: true)
+        panel.orderFrontRegardless()
     }
 
     private static func frame(for metrics: NotchMetrics) -> CGRect {
@@ -126,15 +133,16 @@ final class IslandWindowController {
     private func islandRect(for layout: IslandLayout) -> CGRect {
         let metrics = model.metrics
         var rect = CGRect(
-            x: metrics.notchMidX - layout.size.width / 2,
+            x: metrics.notchMidX + layout.centerOffset - layout.size.width / 2,
             y: metrics.screenFrame.maxY - layout.size.height,
             width: layout.size.width,
             height: layout.size.height
         )
         if model.mode == .hidden {
             // Nothing drawn, so nothing to hover — except on a notched screen, where
-            // the notch itself stays a target.
-            guard metrics.hasNotch else { return .null }
+            // the notch itself stays a target. Not while an app is full screen,
+            // though: there the top edge belongs to the app's own title bar.
+            guard metrics.hasNotch, !model.isSuppressed else { return .null }
             rect = metrics.notchRect
         }
         // Once open, be forgiving about brushing past the edge.

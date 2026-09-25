@@ -16,6 +16,8 @@ final class ActivityCenter {
     private(set) var homeWidgets: [HomeWidget] = []
     /// Where files dragged onto the island go. `nil` leaves drags alone.
     var dropTarget: (any DropTarget)?
+    /// Dots beside the notch, in display order.
+    private(set) var indicators: [StatusIndicator] = []
 
     /// Bumped whenever an activity re-publishes itself, so views that depend on its
     /// sizes are invalidated even though the array's identity did not change.
@@ -88,6 +90,21 @@ final class ActivityCenter {
         guard let current = banner, id == nil || current.id == id else { return }
         bannerTimer?.cancel()
         withAnimation(.islandMorph) { banner = nil }
+    }
+
+    // MARK: Indicators
+
+    func setIndicator(_ indicator: StatusIndicator) {
+        guard indicators.first(where: { $0.id == indicator.id }) != indicator else { return }
+        var next = indicators.filter { $0.id != indicator.id }
+        next.append(indicator)
+        next.sort { $0.order < $1.order }
+        withAnimation(.islandMorph) { indicators = next }
+    }
+
+    func removeIndicator(id: String) {
+        guard indicators.contains(where: { $0.id == id }) else { return }
+        withAnimation(.islandMorph) { indicators.removeAll { $0.id == id } }
     }
 
     // MARK: Home

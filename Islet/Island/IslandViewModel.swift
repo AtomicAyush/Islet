@@ -198,20 +198,29 @@ final class IslandViewModel {
 /// Every size and radius the island needs for its current mode, worked out in one
 /// place so the view, the hit-testing and the window agree.
 struct IslandLayout: Equatable {
-    /// The window's fixed size. The island is centred at its top edge.
+    /// The window's fixed size. The island hangs from its top edge.
     static let canvas = CGSize(width: 680, height: 330)
     static let expandedWidth: CGFloat = 520
     static let homeHeight: CGFloat = 116
     static let expandedInset = EdgeInsets(top: 0, leading: 20, bottom: 16, trailing: 20)
     static let bubbleGap: CGFloat = 7
+    /// Width of one indicator dot and the gap after it.
+    static let indicatorPitch: CGFloat = 11
 
     var size: CGSize
+    /// How far the island's centre sits right of the notch's centre. Non-zero when
+    /// the two sides of compact content differ in width: the island shifts so the
+    /// gap in the middle stays exactly over the camera.
+    var centerOffset: CGFloat = 0
     var earRadius: CGFloat
     var bottomRadius: CGFloat
     var notch: CGSize
-    /// Compact / banner content widths either side of the notch.
+    /// Compact / banner content widths either side of the notch. The trailing
+    /// width includes the indicator strip.
     var leadingWidth: CGFloat = 0
     var trailingWidth: CGFloat = 0
+    /// Width at the right edge given to indicator dots.
+    var indicatorWidth: CGFloat = 0
     /// Expanded body height below the notch row.
     var bodyHeight: CGFloat = 0
     var bubbleDiameter: CGFloat = 0
@@ -220,9 +229,12 @@ struct IslandLayout: Equatable {
     /// Default width either side of the notch for compact content.
     static func defaultSide(for notch: CGSize) -> CGFloat { notch.height + 12 }
 
-    /// Where the bubble's centre sits relative to the canvas's top centre.
+    /// Where the bubble's centre sits relative to the notch's top centre.
     var bubbleCenterOffset: CGSize {
-        CGSize(width: size.width / 2 + Self.bubbleGap + bubbleDiameter / 2, height: notch.height / 2)
+        CGSize(
+            width: centerOffset + size.width / 2 + Self.bubbleGap + bubbleDiameter / 2,
+            height: notch.height / 2
+        )
     }
 
     @MainActor
@@ -234,6 +246,9 @@ struct IslandLayout: Equatable {
         let center = model.center
         // Touch the revision so re-published activity sizes invalidate the layout.
         _ = center.revision
+        let dots = center.indicators.isEmpty
+            ? 0
+            : CGFloat(center.indicators.count) * indicatorPitch + 6
 
         var layout = IslandLayout(
             size: CGSize(width: notch.width + 2 * ear, height: notch.height),
@@ -243,36 +258,47 @@ struct IslandLayout: Equatable {
             bubbleDiameter: notch.height - 4
         )
 
+        /// Lays out content either side of the notch at notch height.
+        func wings(leading: CGFloat, trailing: CGFloat, grow: CGFloat) {
+            layout.leadingWidth = leading
+            layout.trailingWidth = trailing
+            layout.size = CGSize(
+                width: notch.width + leading + trailing + 2 * ear + 2 * grow,
+                height: notch.height + grow / 5
+            )
+            layout.centerOffset = (trailing - leading) / 2
+            layout.bottomRadius = min(notch.height / 2 - 2, 14) + grow / 10
+        }
+
         switch model.mode {
         case .hidden:
             layout.size = CGSize(width: notch.width * 0.6, height: 0)
 
         case .idle:
-            // A little growth under the pointer says "this opens".
-            layout.size.width += 14 * hover
-            layout.size.height += 3 * hover
-            layout.bottomRadius = 11 + 2 * hover
+            if dots > 0 {
+                layout.indicatorWidth = dots
+                wings(leading: 0, trailing: dots, grow: 5 * hover)
+                layout.bottomRadius = 11 + 2 * hover
+            } else {
+                // A little growth under the pointer says "this opens".
+                layout.size.width += 14 * hover
+                layout.size.height += 3 * hover
+                layout.bottomRadius = 11 + 2 * hover
+            }
 
         case .compact(let id):
             let activity = center.activity(id: id)
-            layout.leadingWidth = activity?.compactLeadingWidth ?? side
-            layout.trailingWidth = activity?.compactTrailingWidth ?? side
-            layout.size = CGSize(
-                width: notch.width + layout.leadingWidth + layout.trailingWidth + 2 * ear + 10 * hover,
-                height: notch.height + 2 * hover
+            layout.indicatorWidth = dots
+            wings(
+                leading: activity?.compactLeadingWidth ?? side,
+                trailing: (activity?.compactTrailingWidth ?? side) + dots,
+                grow: 5 * hover
             )
-            layout.bottomRadius = notch.height / 2 - 2 + hover
 
         case .banner:
             switch center.banner?.style {
             case .compact(let leading, let trailing):
-                layout.leadingWidth = leading
-                layout.trailingWidth = trailing
-                layout.size = CGSize(
-                    width: notch.width + leading + trailing + 2 * ear,
-                    height: notch.height
-                )
-                layout.bottomRadius = notch.height / 2 - 2
+                wings(leading: leading, trailing: trailing, grow: 0)
             case .card(let width, let height):
                 layout.earRadius = 9
                 layout.bodyHeight = height
@@ -306,7 +332,7 @@ struct IslandLayout: Equatable {
         }
 
         // Never ask for more than the window can hold.
-        layout.size.width = min(layout.size.width, canvas.width - 40)
+        layout.size.width = min(layout.size.width, canvas.width - 40 - 2 * abs(layout.centerOffset))
         layout.size.height = min(layout.size.height, canvas.height - 30)
         return layout
     }

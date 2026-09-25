@@ -77,6 +77,16 @@ struct IslandBanner {
     var content: AnyView = AnyView(EmptyView())
 }
 
+/// A small coloured dot beside the notch, like the iPhone's camera and microphone
+/// indicators. Indicators sit at the island's right edge whether it is resting or
+/// showing an activity, and never take the island over.
+struct StatusIndicator: Identifiable, Equatable {
+    var id: String
+    var color: Color
+    /// Lower sorts first (closest to the notch).
+    var order: Int = 0
+}
+
 /// A tile on the home page — what the expanded island shows when nothing is
 /// running, or when its home tab is picked.
 struct HomeWidget: Identifiable {

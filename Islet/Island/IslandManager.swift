@@ -29,6 +29,24 @@ final class IslandManager {
             MainActor.assumeIsolated { self?.applyPreferences() }
         })
 
+        // After sleep, a lock or a fast user switch the panels can be gone from the
+        // screen even though nothing about the displays changed.
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.screensDidWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification,
+        ] {
+            observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleRebuild() }
+            })
+        }
+        observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleRebuild() }
+        })
+
         fullScreen.onChange = { [weak self] in self?.applyFullScreen() }
         fullScreen.start()
     }
