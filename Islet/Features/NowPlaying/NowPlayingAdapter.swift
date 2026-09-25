@@ -98,6 +98,9 @@ final class NowPlayingAdapter: @unchecked Sendable {
             self?.queue.async { self?.streamExited(generation: generation) }
         }
 
+        // Stamped before launching, so a launch that fails at once counts as an early
+        // exit and the backoff grows.
+        launchedAt = Date()
         do {
             try process.run()
         } catch {
@@ -105,7 +108,6 @@ final class NowPlayingAdapter: @unchecked Sendable {
             return
         }
         stream = process
-        launchedAt = Date()
 
         // Read on this queue with plain read(2): closing the pipe from here can then
         // never race a read in progress, which FileHandle turns into an exception.
@@ -192,6 +194,10 @@ final class NowPlayingAdapter: @unchecked Sendable {
         case .next: run(["send", "4"])
         case .previous: run(["send", "5"])
         case .seek(let seconds): run(["seek", String(Int64(max(0, seconds) * 1_000_000))])
+        case .jumpBack: run(["send", "12"])
+        case .jumpForward: run(["send", "13"])
+        case .shuffle(let mode): run(["shuffle", String(mode.rawValue)])
+        case .repeatMode(let mode): run(["repeat", String(mode.rawValue)])
         }
     }
 
@@ -268,10 +274,14 @@ struct NowPlayingStreamParser {
         let now = Date().timeIntervalSince1970 * 1_000_000
         let elapsed = number(state[Key.elapsed])
         let moved = elapsed != number(previous[Key.elapsed])
+        let sameItem = [Key.title, Key.artist, Key.album, Key.bundle, Key.parentBundle].allSatisfy {
+            state[$0] as? String == previous[$0] as? String
+        }
         if elapsed != nil, state[Key.timestamp] == nil {
             // A player that sends no timestamp: an unchanged position keeps the stamp
-            // it had, or a full re-send would snap it back to where it was reported.
-            state[Key.timestamp] = moved ? now : previous[Key.timestamp] ?? now
+            // it had, or a full re-send would snap it back to where it was reported —
+            // but only for the same item; a new track at the same position is new.
+            state[Key.timestamp] = moved || !sameItem ? now : previous[Key.timestamp] ?? now
         } else if moved, number(state[Key.timestamp]) == number(previous[Key.timestamp]) {
             // A new position without a new timestamp was true when it arrived.
             state[Key.timestamp] = now
@@ -309,17 +319,28 @@ struct NowPlayingStreamParser {
         }
 
         let reportedRate = number(state[Key.rate])
+        let bundleID = state[Key.parentBundle] as? String ?? state[Key.bundle] as? String
         return NowPlayingSnapshot(
             track: NowPlayingTrack(
                 title: title,
                 artist: state[Key.artist] as? String ?? "",
                 album: state[Key.album] as? String ?? "",
-                bundleID: state[Key.parentBundle] as? String ?? state[Key.bundle] as? String
+                bundleID: bundleID
             ),
             isPlaying: state[Key.playing] as? Bool ?? false,
             timing: Self.timing(from: state),
             speed: reportedRate.flatMap { $0 > 0 ? $0 : nil } ?? 1,
-            artwork: artwork
+            artwork: artwork,
+            isVideo: NowPlayingVideo.isVideo(
+                mediaType: state[Key.mediaType] as? String,
+                bundleID: bundleID,
+                artworkAspect: artwork?.aspectRatio
+            ),
+            // 0 is MediaRemote's "unknown", which gets no toggle either.
+            shuffle: integer(state[Key.shuffle]).flatMap(NowPlayingShuffle.init(rawValue:)),
+            repeatMode: integer(state[Key.repeatMode]).flatMap(NowPlayingRepeat.init(rawValue:)),
+            jumpsBack: state[Key.jumpsBack] as? Bool ?? false,
+            jumpsForward: state[Key.jumpsForward] as? Bool ?? false
         )
     }
 
@@ -350,9 +371,20 @@ struct NowPlayingStreamParser {
         static let timestamp = "timestampEpochMicros"
         static let duration = "durationMicros"
         static let artwork = "artworkData"
+        static let mediaType = "mediaType"
+        static let shuffle = "shuffleMode"
+        static let repeatMode = "repeatMode"
+        static let jumpsBack = "supportsRewind15Seconds"
+        static let jumpsForward = "supportsFastForward15Seconds"
     }
 }
 
 private func number(_ value: Any?) -> Double? {
     (value as? NSNumber)?.doubleValue
+}
+
+/// A whole number, or `nil`. `Int(_:)` would trap on a fraction or anything out of
+/// range, and a player can put whatever it likes in the payload.
+private func integer(_ value: Any?) -> Int? {
+    number(value).flatMap { Int(exactly: $0) }
 }

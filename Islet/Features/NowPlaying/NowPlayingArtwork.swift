@@ -12,13 +12,17 @@ struct NowPlayingArtwork: Equatable, @unchecked Sendable {
     let image: NSImage
     /// The cover's most characteristic colour, brightened to read on black.
     let tint: Color
+    /// Width over height: square for a cover, landscape for a video's thumbnail.
+    let aspectRatio: CGFloat
 
-    /// The largest artwork is 60 pt; this covers it at 2x with room to spare.
+    /// The largest artwork is a 60 pt cover or a 110 pt wide video thumbnail; this
+    /// covers both at 2x.
     private static let maxPixelSize = 256
 
     init(_ image: CGImage) {
         self.image = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         tint = Self.tint(of: image)
+        aspectRatio = image.height > 0 ? CGFloat(image.width) / CGFloat(image.height) : 1
     }
 
     static func == (a: Self, b: Self) -> Bool { a.id == b.id }
@@ -101,7 +105,65 @@ struct NowPlayingArtwork: Equatable, @unchecked Sendable {
         ground: (0.04, 0.12, 0.24), grid: nil
     )
 
+    /// Mountains over a lake at first light, 16:9, for the video preview.
+    static let sampleVideo: NowPlayingArtwork? = drawSampleVideo()
+
     private typealias Triple = (CGFloat, CGFloat, CGFloat)
+
+    private static func drawSampleVideo() -> NowPlayingArtwork? {
+        func colour(_ c: Triple, _ alpha: CGFloat = 1) -> CGColor {
+            CGColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: alpha)
+        }
+        let width = 256, height = 144
+        let w = CGFloat(width), h = CGFloat(height)
+        let shore: CGFloat = 52
+        let sky: [Triple] = [(0.98, 0.72, 0.52), (0.62, 0.55, 0.72), (0.18, 0.27, 0.48)]
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ),
+              let skyGradient = CGGradient(colorsSpace: space, colors: sky.map { colour($0) } as CFArray, locations: nil)
+        else { return nil }
+
+        context.drawLinearGradient(
+            skyGradient, start: CGPoint(x: 0, y: shore), end: CGPoint(x: 0, y: h), options: [.drawsBeforeStartLocation]
+        )
+        context.setFillColor(colour((1.0, 0.9, 0.7), 0.9))
+        context.fillEllipse(in: CGRect(x: 168, y: shore + 30, width: 26, height: 26))
+
+        // Three ridges, fading with distance, as (x, height) peaks.
+        let ridges: [(Triple, [(CGFloat, CGFloat)])] = [
+            ((0.42, 0.40, 0.58), [(0, 70), (40, 104), (78, 80), (122, 118), (170, 86), (214, 108), (256, 78)]),
+            ((0.25, 0.26, 0.42), [(0, 60), (30, 84), (66, 66), (104, 96), (150, 62), (196, 90), (236, 64), (256, 72)]),
+            ((0.11, 0.14, 0.25), [(0, 52), (22, 66), (58, 56), (92, 74), (128, 54), (172, 70), (212, 56), (256, 64)]),
+        ]
+        for (tone, peaks) in ridges {
+            context.move(to: CGPoint(x: 0, y: shore))
+            for (x, y) in peaks { context.addLine(to: CGPoint(x: x, y: y)) }
+            context.addLine(to: CGPoint(x: w, y: shore))
+            context.closePath()
+            context.setFillColor(colour(tone))
+            context.fillPath()
+        }
+
+        // The lake: the sky again, darker, with streaks of the sun on it.
+        context.saveGState()
+        context.clip(to: CGRect(x: 0, y: 0, width: w, height: shore))
+        context.drawLinearGradient(
+            skyGradient, start: CGPoint(x: 0, y: shore), end: CGPoint(x: 0, y: 0), options: [.drawsAfterEndLocation]
+        )
+        context.setFillColor(colour((0.05, 0.07, 0.16), 0.55))
+        context.fill(CGRect(x: 0, y: 0, width: w, height: shore))
+        for i in 0..<5 {
+            let length = CGFloat(40 - 7 * i)
+            context.setFillColor(colour((1.0, 0.86, 0.66), 0.65 - 0.1 * CGFloat(i)))
+            context.fill(CGRect(x: 181 - length / 2, y: shore - 6 - CGFloat(i) * 9, width: length, height: 2))
+        }
+        context.restoreGState()
+
+        return context.makeImage().map(NowPlayingArtwork.init)
+    }
 
     private static func drawSample(
         sky: [Triple], sun: [Triple], sunCentre: CGPoint, sunRadius: CGFloat, ground: Triple, grid: Triple?

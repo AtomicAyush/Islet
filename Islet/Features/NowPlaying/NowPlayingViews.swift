@@ -44,10 +44,9 @@ struct NowPlayingWaveform: View {
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
 
     var body: some View {
-        let colour = tinted ? (model.artwork?.tint ?? .white) : .white
         WaveformBars(
             playing: model.isPlaying,
-            colour: NSColor(colour),
+            colour: NSColor(model.tint(tinted)),
             bars: bars,
             barWidth: barWidth,
             spacing: spacing
@@ -326,13 +325,101 @@ enum NowPlayingClock {
     }
 }
 
-private extension NowPlayingModel {
+extension NowPlayingModel {
     var title: String { track?.title ?? "Not playing" }
 
-    /// The artist, or the album for media that names no artist.
+    /// The artist, or the album for media that names no artist. For a web video
+    /// this is usually the channel.
     var subtitle: String {
         guard let track else { return "" }
         return track.artist.isEmpty ? track.album : track.artist
+    }
+
+    /// The artwork's colour where the settings ask for it, else white.
+    func tint(_ tinted: Bool) -> Color {
+        tinted ? (artwork?.tint ?? .white) : .white
+    }
+}
+
+/// The icon of the app playing, tucked over the artwork's corner.
+struct NowPlayingAppBadge: View {
+    let model: NowPlayingModel
+    let size: CGFloat
+
+    var body: some View {
+        if let icon = model.appIcon {
+            Image(nsImage: icon)
+                .resizable()
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
+                .offset(x: size * 0.27, y: size * 0.27)
+        }
+    }
+}
+
+struct NowPlayingPlayButton: View {
+    let model: NowPlayingModel
+    var diameter: CGFloat = 38
+
+    var body: some View {
+        RoundButton(symbol: model.isPlaying ? "pause.fill" : "play.fill", tint: .white, diameter: diameter) {
+            model.togglePlayPause()
+        }
+        .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
+    }
+}
+
+/// Previous, play and next; for a video, 15 seconds back, play and 15 on.
+struct NowPlayingTransport: View {
+    let model: NowPlayingModel
+    let spacing: CGFloat
+    /// Diameter of the buttons either side of play.
+    let small: CGFloat
+    /// Diameter of play.
+    let large: CGFloat
+
+    var body: some View {
+        HStack(spacing: spacing) {
+            if model.isVideo {
+                jump(forward: false)
+            } else {
+                RoundButton(symbol: "backward.fill", tint: .white, diameter: small) { model.previous() }
+                    .accessibilityLabel("Previous")
+            }
+            NowPlayingPlayButton(model: model, diameter: large)
+            if model.isVideo {
+                jump(forward: true)
+            } else {
+                RoundButton(symbol: "forward.fill", tint: .white, diameter: small) { model.next() }
+                    .accessibilityLabel("Next")
+            }
+        }
+    }
+
+    private func jump(forward: Bool) -> some View {
+        let enabled = model.canJump(forward: forward)
+        return RoundButton(symbol: forward ? "goforward.15" : "gobackward.15", tint: .white, diameter: small) {
+            model.jump(forward: forward)
+        }
+        .opacity(enabled ? 1 : 0.35)
+        .allowsHitTesting(enabled)
+        .accessibilityLabel(forward ? "Forward 15 seconds" : "Back 15 seconds")
+    }
+}
+
+/// Shuffle or repeat: dim when off, lit in the tint colour when on.
+private struct ModeToggle: View {
+    let symbol: String
+    let isOn: Bool
+    let tint: Color
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        RoundButton(symbol: symbol, tint: isOn ? tint : .white.opacity(0.45), diameter: 26, action: action)
+            .accessibilityLabel(label)
+            .accessibilityValue(isOn ? "On" : "Off")
+            .animation(.easeOut(duration: 0.2), value: isOn)
     }
 }
 
@@ -342,33 +429,101 @@ struct NowPlayingCompactLeading: View {
     let model: NowPlayingModel
 
     var body: some View {
-        NowPlayingArtworkView(model: model, size: 20, radius: 5)
+        if !model.isVideo {
+            NowPlayingArtworkView(model: model, size: 20, radius: 5)
+        } else if model.artwork != nil {
+            NowPlayingThumbnail(model: model, width: 30, radius: 4)
+        } else {
+            Image(systemName: "play.rectangle.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+        }
     }
 }
 
+/// The waveform for music; for a video, a ring that fills as it plays.
 struct NowPlayingCompactTrailing: View {
     let model: NowPlayingModel
 
     var body: some View {
-        NowPlayingWaveform(model: model, bars: 5, barWidth: 2, spacing: 2, height: 14)
+        if model.isVideo {
+            NowPlayingProgressRing(model: model, lineWidth: 2.5)
+                .frame(width: 16, height: 16)
+        } else {
+            NowPlayingWaveform(model: model, bars: 5, barWidth: 2, spacing: 2, height: 14)
+        }
     }
 }
 
-/// The detached bubble: the cover as a disc, or the waveform when there is none.
+/// The detached bubble: the cover or thumbnail as a disc; without one, the waveform,
+/// or the ring for a video.
 struct NowPlayingMinimal: View {
     let model: NowPlayingModel
 
     var body: some View {
         if model.artwork != nil {
             NowPlayingArtworkView(model: model, size: 22, radius: 11)
+        } else if model.isVideo {
+            NowPlayingProgressRing(model: model, lineWidth: 2)
+                .frame(width: 15, height: 15)
         } else {
             NowPlayingWaveform(model: model, bars: 4, barWidth: 2, spacing: 1.5, height: 11)
         }
     }
 }
 
+/// The opened island: the player, a row of buttons for the playing app's library
+/// when it has one, and the library's panel below them when one is open. While the
+/// panel is open the player folds down to a single row, so the list has the room.
 struct NowPlayingExpanded: View {
     let model: NowPlayingModel
+    let library: NowPlayingLibraryModel
+
+    /// The card's height for what it is showing. The island body can be about 250 pt
+    /// at most (the island's window is 330 pt tall); the open panel takes it all.
+    static func height(isVideo: Bool, hasButtons: Bool, isPanelOpen: Bool) -> CGFloat {
+        if isPanelOpen { return 244 }
+        // 4 above the player; the artwork, then 10 + 14 of scrubber and 6 + 38 of
+        // controls; 8 + 24 for the library's buttons.
+        let player: CGFloat = 4 + (isVideo ? 62 : 60) + 24 + 44
+        return player + (hasButtons ? 32 : 0)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if library.panel != nil {
+                NowPlayingMiniPlayer(model: model)
+                    .transition(.opacity)
+            } else if model.isVideo {
+                NowPlayingVideoPlayer(model: model)
+                    .transition(.opacity)
+            } else {
+                NowPlayingMusicPlayer(model: model)
+                    .transition(.opacity)
+            }
+
+            if library.hasButtons {
+                NowPlayingLibraryButtons(model: model, library: library)
+                    .padding(.top, library.panel == nil ? 8 : 12)
+            }
+
+            if library.panel != nil {
+                NowPlayingLibraryPanel(model: model, library: library)
+                    .padding(.top, 8)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 4)
+        .frame(maxHeight: .infinity, alignment: .top)
+        // Closing the island, or turning to another tab, closes the panel.
+        .onDisappear { library.close() }
+    }
+}
+
+private struct NowPlayingMusicPlayer: View {
+    let model: NowPlayingModel
+    @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
 
     var body: some View {
         VStack(spacing: 0) {
@@ -393,22 +548,39 @@ struct NowPlayingExpanded: View {
             NowPlayingProgress(model: model)
                 .padding(.top, 10)
 
-            HStack(spacing: 26) {
-                RoundButton(symbol: "backward.fill", tint: .white, diameter: 30) { model.previous() }
-                    .accessibilityLabel("Previous")
-                RoundButton(symbol: model.isPlaying ? "pause.fill" : "play.fill", tint: .white) {
-                    model.togglePlayPause()
-                }
-                .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
-                RoundButton(symbol: "forward.fill", tint: .white, diameter: 30) { model.next() }
-                    .accessibilityLabel("Next")
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 6)
+            controls
+                .frame(maxWidth: .infinity)
+                .padding(.top, 6)
         }
-        .padding(.horizontal, 6)
-        .padding(.top, 4)
-        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// Shuffle and repeat either side of the transport, where the player reports
+    /// them. When it reports only one, the other's place is kept so play stays in
+    /// the middle.
+    private var controls: some View {
+        HStack(spacing: 22) {
+            let showsModes = model.shuffle != nil || model.repeatMode != nil
+            if showsModes {
+                if let shuffle = model.shuffle {
+                    ModeToggle(
+                        symbol: "shuffle", isOn: shuffle != .off, tint: model.tint(tinted), label: "Shuffle"
+                    ) { model.toggleShuffle() }
+                } else {
+                    Color.clear.frame(width: 26, height: 26)
+                }
+            }
+            NowPlayingTransport(model: model, spacing: 26, small: 30, large: 38)
+            if showsModes {
+                if let repeatMode = model.repeatMode {
+                    ModeToggle(
+                        symbol: repeatMode == .one ? "repeat.1" : "repeat", isOn: repeatMode != .off,
+                        tint: model.tint(tinted), label: "Repeat"
+                    ) { model.cycleRepeat() }
+                } else {
+                    Color.clear.frame(width: 26, height: 26)
+                }
+            }
+        }
     }
 
     /// The cover, badged with the app playing it; clicking it brings that app forward.
@@ -417,17 +589,43 @@ struct NowPlayingExpanded: View {
             model.openSourceApp()
         } label: {
             NowPlayingArtworkView(model: model, size: 60, radius: 12)
-                .overlay(alignment: .bottomTrailing) {
-                    if let icon = model.appIcon {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .frame(width: 22, height: 22)
-                            .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
-                            .offset(x: 6, y: 6)
-                    }
-                }
+                .overlay(alignment: .bottomTrailing) { NowPlayingAppBadge(model: model, size: 22) }
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The player in one row, above an open library panel: the artwork, what is
+/// playing, and the transport.
+private struct NowPlayingMiniPlayer: View {
+    let model: NowPlayingModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                model.openSourceApp()
+            } label: {
+                if model.isVideo {
+                    NowPlayingThumbnail(model: model, width: 78, radius: 8)
+                } else {
+                    NowPlayingArtworkView(model: model, size: 44, radius: 10)
+                }
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 2) {
+                NowPlayingMarquee(text: model.title, font: .system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(model.subtitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            NowPlayingTransport(model: model, spacing: 10, small: 28, large: 32)
+        }
+        .frame(height: 44)
     }
 }
 
@@ -454,9 +652,9 @@ struct NowPlayingHomeTile: View {
             Spacer(minLength: 6)
 
             ViewThatFits(in: .horizontal) {
-                controls(spacing: 10, small: 26, large: 30)
-                controls(spacing: 3, small: 24, large: 28)
-                playPause(diameter: 28)
+                NowPlayingTransport(model: model, spacing: 10, small: 26, large: 30)
+                NowPlayingTransport(model: model, spacing: 3, small: 24, large: 28)
+                NowPlayingPlayButton(model: model, diameter: 28)
             }
             .frame(maxWidth: .infinity)
         }
@@ -466,7 +664,11 @@ struct NowPlayingHomeTile: View {
         Button {
             model.openSourceApp()
         } label: {
-            NowPlayingArtworkView(model: model, size: 44, radius: 9)
+            if model.isVideo {
+                NowPlayingThumbnail(model: model, width: 64, radius: 8)
+            } else {
+                NowPlayingArtworkView(model: model, size: 44, radius: 9)
+            }
         }
         .buttonStyle(.plain)
     }
@@ -481,23 +683,6 @@ struct NowPlayingHomeTile: View {
                 .foregroundStyle(.white.opacity(0.55))
         }
         .lineLimit(1)
-    }
-
-    private func controls(spacing: CGFloat, small: CGFloat, large: CGFloat) -> some View {
-        HStack(spacing: spacing) {
-            RoundButton(symbol: "backward.fill", tint: .white, diameter: small) { model.previous() }
-                .accessibilityLabel("Previous")
-            playPause(diameter: large)
-            RoundButton(symbol: "forward.fill", tint: .white, diameter: small) { model.next() }
-                .accessibilityLabel("Next")
-        }
-    }
-
-    private func playPause(diameter: CGFloat) -> some View {
-        RoundButton(symbol: model.isPlaying ? "pause.fill" : "play.fill", tint: .white, diameter: diameter) {
-            model.togglePlayPause()
-        }
-        .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
     }
 }
 
@@ -539,5 +724,13 @@ struct NowPlayingSettings: View {
         .onChange(of: hideAfterPause) { onHideAfterPauseChange() }
         Toggle("Tint the waveform with the artwork's colour", isOn: $tinted)
         Toggle("Show song changes", isOn: $songChanges)
+
+        // What each music app's library needs: a sign-in, a permission.
+        Section("Spotify") {
+            SpotifySettingsView()
+        }
+        Section("Music") {
+            AppleMusicSettingsView()
+        }
     }
 }
