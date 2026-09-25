@@ -30,8 +30,11 @@ final class BluetoothAudioWatcher {
 
     /// CoreAudio calls can stall while a Bluetooth device is still being set up, which is
     /// exactly when these run, so they stay off the main thread.
-    private let queue = DispatchQueue(label: "com.ayush.Islet.bluetooth-audio", qos: .utility)
-    private var listener: AudioObjectPropertyListenerBlock?
+    fileprivate let queue = DispatchQueue(label: "com.ayush.Islet.bluetooth-audio", qos: .utility)
+    /// What CoreAudio's listener is handed. A C-function listener with a retained
+    /// context, not a block: Swift wraps a closure in a new block on every call, so a
+    /// block listener can never be removed again (CoreAudio matches it by identity).
+    private var box: Unmanaged<ListenerBox>?
     // These two are touched only on `queue`.
     private var scanScheduled = false
     private var lastSnapshot: Snapshot?
@@ -41,24 +44,21 @@ final class BluetoothAudioWatcher {
     /// Starts listening. `deliver` runs on the main thread: once straight away with the
     /// devices already present (`isInitial`), then whenever they or the output change.
     func start(deliver: @escaping @MainActor (Snapshot, _ isInitial: Bool) -> Void) {
-        guard listener == nil else { return }
+        guard box == nil else { return }
 
         let send: (Snapshot, Bool) -> Void = { snapshot, isInitial in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { deliver(snapshot, isInitial) }
             }
         }
-        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            self?.scheduleScan(send)
-        }
-        self.listener = listener
+        let box = Unmanaged.passRetained(ListenerBox(watcher: self, send: send))
+        self.box = box
 
         // The first CoreAudio call in a process sets up the audio system, which takes a
         // few hundred milliseconds, so even registering stays off the main thread.
         // Listening before the first scan means no change can slip in between the two.
-        let queue = self.queue
         queue.async { [weak self] in
-            Self.setListening(true, listener: listener, queue: queue)
+            Self.setListening(true, context: box.toOpaque())
             let snapshot = Self.scan()
             self?.lastSnapshot = snapshot
             send(snapshot, true)
@@ -66,16 +66,19 @@ final class BluetoothAudioWatcher {
     }
 
     func stop() {
-        guard let listener else { return }
-        self.listener = nil
-        // On the queue, so it always follows the registration, even when stopped at once.
-        let queue = self.queue
-        queue.async { Self.setListening(false, listener: listener, queue: queue) }
+        guard let box else { return }
+        self.box = nil
+        // On the queue, so it always follows the registration, even when stopped at
+        // once; the context is released only after CoreAudio has let go of it.
+        queue.async {
+            Self.setListening(false, context: box.toOpaque())
+            box.release()
+        }
     }
 
     /// Connecting AirPods changes the device list two or three times in quick succession
     /// (output, input, then the default output); one scan after the burst is enough.
-    private func scheduleScan(_ send: @escaping (Snapshot, Bool) -> Void) {
+    fileprivate func scheduleScan(_ send: @escaping (Snapshot, Bool) -> Void) {
         guard !scanScheduled else { return }
         scanScheduled = true
         queue.asyncAfter(deadline: .now() + 0.25) { [weak self] in
@@ -90,18 +93,14 @@ final class BluetoothAudioWatcher {
 
     // MARK: CoreAudio
 
-    private static func setListening(
-        _ isOn: Bool,
-        listener: @escaping AudioObjectPropertyListenerBlock,
-        queue: DispatchQueue
-    ) {
+    private static func setListening(_ isOn: Bool, context: UnsafeMutableRawPointer) {
         let system = AudioObjectID(kAudioObjectSystemObject)
         for selector in selectors {
             var address = propertyAddress(selector)
             if isOn {
-                AudioObjectAddPropertyListenerBlock(system, &address, queue, listener)
+                AudioObjectAddPropertyListener(system, &address, audioDevicesChanged, context)
             } else {
-                AudioObjectRemovePropertyListenerBlock(system, &address, queue, listener)
+                AudioObjectRemovePropertyListener(system, &address, audioDevicesChanged, context)
             }
         }
     }
@@ -206,4 +205,31 @@ final class BluetoothAudioWatcher {
         var size: UInt32 = 0
         return AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr && size > 0
     }
+}
+
+/// The listener's context: the watcher (weakly — it may be gone by the time a late
+/// callback arrives) and where snapshots go.
+private final class ListenerBox {
+    weak var watcher: BluetoothAudioWatcher?
+    let send: (BluetoothAudioWatcher.Snapshot, Bool) -> Void
+
+    init(watcher: BluetoothAudioWatcher, send: @escaping (BluetoothAudioWatcher.Snapshot, Bool) -> Void) {
+        self.watcher = watcher
+        self.send = send
+    }
+}
+
+/// Runs on a CoreAudio thread; hops to the watcher's queue, which owns the scan state.
+private func audioDevicesChanged(
+    _: AudioObjectID,
+    _: UInt32,
+    _: UnsafePointer<AudioObjectPropertyAddress>,
+    _ context: UnsafeMutableRawPointer?
+) -> OSStatus {
+    guard let context else { return noErr }
+    let box = Unmanaged<ListenerBox>.fromOpaque(context).takeUnretainedValue()
+    guard let watcher = box.watcher else { return noErr }
+    let send = box.send
+    watcher.queue.async { [weak watcher] in watcher?.scheduleScan(send) }
+    return noErr
 }

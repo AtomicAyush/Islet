@@ -29,6 +29,14 @@ final class BluetoothLevels: NSObject {
         super.init()
     }
 
+    /// Re-reads the status, which can change in System Settings without telling the app.
+    func refreshAuthorization() {
+        let current = CBManager.authorization
+        guard current != authorization else { return }
+        authorization = current
+        if isAuthorized { onAuthorized() }
+    }
+
     /// Asks macOS for Bluetooth access. Only ever called from a button.
     func requestAccess() {
         authorization = CBManager.authorization

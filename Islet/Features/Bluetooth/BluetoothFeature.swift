@@ -210,9 +210,13 @@ private struct HeadphonesSettings: View {
                 Text(profileError).foregroundStyle(.red)
             }
         }
-        .onAppear { profile.refresh() }
+        .onAppear {
+            profile.refresh()
+            levels.refreshAuthorization()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             profile.refresh()
+            levels.refreshAuthorization()
         }
     }
 }
