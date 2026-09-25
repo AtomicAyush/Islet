@@ -2,18 +2,32 @@ import AppKit
 import CoreAudio
 import Darwin
 
-/// Watches Core Audio for processes recording from any input device, and names the
-/// apps they belong to. Like the camera watcher it only observes: it never opens a
+/// Watches Core Audio for processes recording from a microphone, and names the apps
+/// they belong to. Like the camera watcher it only observes: it never opens a
 /// device, so it needs no microphone permission.
 ///
-/// Input devices are always watched; there are few and they are cheap to ask. Only
+/// A microphone is a device with input streams of its own: built in, USB, Bluetooth,
+/// Continuity or virtual. An aggregate device is not one in itself; a process
+/// recording through it records from whichever of its sub-devices are. So a device
+/// whose only input is a process tap never counts: that records what the Mac plays,
+/// which macOS marks with a purple dot, not the microphone. The Sound Mixer's own
+/// devices, which only Islet can see, are left out altogether.
+///
+/// Microphones are always watched; there are few and they are cheap to ask. Only
 /// while one of them is running, and only on macOS 14.2 and later, are the HAL's
-/// client processes followed too, to see which are recording. Asking a process
-/// whether it records costs a round trip to the audio server of a few milliseconds,
-/// so processes are first narrowed to those using an input device at all, which is
-/// cheap. The HAL never notifies a change of a process's IsRunningInput, only of the
-/// devices it uses, so that is what each process is watched for. Before 14.2 a
-/// running input device is all there is to go on, and no app is named.
+/// client processes followed too, to see which are recording from it. Asking a
+/// process whether it records costs a round trip to the audio server of a few
+/// milliseconds, so processes are first narrowed to those using an input device at
+/// all, which is cheap. The HAL never notifies a change of a process's
+/// IsRunningInput, only of the devices it uses, so that is what each process is
+/// watched for. Before 14.2 a running microphone is all there is to go on, and no
+/// app is named.
+///
+/// One thing the HAL does not show is which of a device's streams another process
+/// has turned on. So an app whose aggregate device follows a headset's output, to
+/// record what the Mac plays, counts as recording the headset's microphone: by
+/// default such a device does open it, and one that turns it off, as the Sound
+/// Mixer does, cannot be told apart.
 ///
 /// Threading and listener lifetime work as in `PrivacyCameraWatcher`.
 final class PrivacyMicrophoneWatcher: @unchecked Sendable {
@@ -21,6 +35,45 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
         var inUse = false
         var apps: [PrivacyApp] = []
     }
+
+    /// What `reading` needs to know of a device, read afresh on every refresh.
+    struct Device: Equatable, Sendable {
+        var id: AudioObjectID
+        /// One of the Sound Mixer's devices. They are private to Islet, so only Islet
+        /// ever sees them.
+        var isOwn = false
+        var isAggregate = false
+        /// The devices an aggregate device is using, its taps not among them.
+        var subdevices: [AudioObjectID] = []
+        /// Input streams of its own. An aggregate device's come from its sub-devices
+        /// and taps, so it is not asked.
+        var hasInput = false
+        /// Output streams too, as on a USB headset or an audio interface, which then
+        /// runs whenever it plays.
+        var hasOutput = false
+        /// Running for some process. Asked only of microphones.
+        var isRunning = false
+
+        var isMicrophone: Bool { hasInput && !isAggregate && !isOwn }
+    }
+
+    /// What `reading` needs to know of a client process that uses an input device.
+    struct Client: Equatable, Sendable {
+        var pid: pid_t
+        /// Doing input on some device, a microphone or not.
+        var isRecording = false
+        /// The devices it does input on. A device private to another process is listed
+        /// as unknown.
+        var inputDevices: [AudioObjectID] = []
+        /// The outermost app bundle it lives in, looked up only while it is recording.
+        var bundlePath: String?
+        /// Its own bundle identifier, which a daemon has too, looked up only while it
+        /// is recording.
+        var bundleID: String?
+    }
+
+    /// corespeechd, which listens for "Hey Siri".
+    static let siriListener = "com.apple.CoreSpeech"
 
     typealias Report = @MainActor @Sendable (Reading) -> Void
 
@@ -33,8 +86,8 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
 
     // Confined to `queue`.
     private var report: Report?
-    private var devices: [AudioObjectID] = []
-    /// Client processes being watched; none unless an input device is running.
+    private var microphones: [AudioObjectID] = []
+    /// Client processes being watched; none unless a microphone is running.
     private var processes: [AudioObjectID] = []
     private var watchesProcessList = false
     private var lastReported: Reading?
@@ -56,7 +109,7 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
             guard report != nil else { return }
             report = nil
             unlisten(from: Self.system, Self.deviceList)
-            sync(&devices, to: [], Self.deviceRunning)
+            sync(&microphones, to: [], Self.deviceRunning)
             stopWatchingProcesses()
         }
     }
@@ -114,22 +167,26 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
 
     private func refresh() {
         guard let report else { return }
-        sync(&devices, to: Self.objects(Self.deviceList).filter(Self.hasInput), Self.deviceRunning)
-        let deviceRunning = devices.contains { Self.flag(Self.deviceRunning, of: $0) }
+        let devices = Self.objects(Self.deviceList).map(Self.device)
+        sync(&microphones, to: devices.filter(\.isMicrophone).map(\.id), Self.deviceRunning)
+        let microphoneRunning = devices.contains { $0.isMicrophone && $0.isRunning }
 
-        let reading: Reading
-        if perProcess, deviceRunning {
+        let clients: [Client]?
+        if perProcess, microphoneRunning {
             if !watchesProcessList {
                 watchesProcessList = true
                 listen(to: Self.system, Self.processList)
             }
-            sync(&processes, to: Self.objects(Self.processList), Self.processInputDevices)
-            reading = processReading()
+            let current = Self.objects(Self.processList)
+            sync(&processes, to: current, Self.processInputDevices)
+            clients = current.compactMap(Self.client)
         } else {
             stopWatchingProcesses()
-            reading = Reading(inUse: deviceRunning)
+            // Before 14.2 there are no processes to ask; after, none need asking.
+            clients = perProcess ? [] : nil
         }
 
+        let reading = Self.reading(devices: devices, clients: clients, ownPID: getpid(), ownBundlePath: Bundle.main.bundlePath)
         guard reading != lastReported else { return }
         lastReported = reading
         DispatchQueue.main.async {
@@ -137,29 +194,66 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
         }
     }
 
-    /// Every process but Islet that is recording, and the apps they belong to.
-    private func processReading() -> Reading {
-        var candidates = processes.filter(Self.usesInputDevice)
-        // An input device is running, yet no process lists one: a headset may only be
-        // playing, or a recorder may not have shown up. Asking everyone, slow as that
-        // is, tells the two apart.
-        if candidates.isEmpty { candidates = processes }
+    /// What the dot shows, given every device and every process using an input
+    /// device, or `nil` for the processes before macOS 14.2, when they cannot be asked.
+    ///
+    /// Nothing counts unless a microphone is running. A process counts as recording
+    /// only when it is doing input and lists a running microphone, itself or through
+    /// an aggregate device. Doing input is not enough: the Siri listener does input
+    /// from a trigger microphone private to it, and while the Mac plays it lists the
+    /// device playing among its inputs too, to hear past it. So beside that private
+    /// device, a device it lists that has outputs is taken to be what is playing,
+    /// and only its input-only microphones count.
+    ///
+    /// A running microphone no process can be matched to still counts, unnamed,
+    /// since the hardware is on; unless it has outputs too, as a headset runs just
+    /// the same when it only plays. Before macOS 14.2 no process can be matched, so
+    /// that rule is all there is. Islet's own recording never counts, nor does a
+    /// microphone that only Islet is running.
+    static func reading(devices: [Device], clients: [Client]?, ownPID: pid_t, ownBundlePath: String?) -> Reading {
+        let running = Set(devices.filter { $0.isMicrophone && $0.isRunning }.map(\.id))
+        guard !running.isEmpty else { return Reading() }
 
-        let own = getpid()
-        var recording: [pid_t] = []
-        for process in candidates where Self.flag(Self.processRecording, of: process) {
-            guard let pid = Self.pid(of: process), pid != own, !recording.contains(pid) else { continue }
-            recording.append(pid)
-        }
-
+        let byID = Dictionary(devices.map { ($0.id, $0) }) { first, _ in first }
+        var matched: Set<AudioObjectID> = []
+        var recording = false
         var apps: [PrivacyApp] = []
-        for pid in recording {
-            if let app = Self.app(owning: pid), app.bundlePath != Bundle.main.bundlePath, !apps.contains(app) {
-                apps.append(app)
+        for client in clients ?? [] where client.isRecording {
+            var using = microphones(behind: client.inputDevices, in: byID).intersection(running)
+            if client.bundleID == siriListener, client.inputDevices.contains(where: { byID[$0] == nil }) {
+                using = using.filter { byID[$0]?.hasOutput == false }
+            }
+            guard !using.isEmpty else { continue }
+            matched.formUnion(using)
+            guard client.pid != ownPID else { continue }
+            recording = true
+            if let path = client.bundlePath, path != ownBundlePath, !apps.contains(where: { $0.bundlePath == path }) {
+                apps.append(PrivacyApp(bundlePath: path))
             }
         }
+
+        let unmatched = devices.contains { running.contains($0.id) && !matched.contains($0.id) && !$0.hasOutput }
         apps.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        return Reading(inUse: !recording.isEmpty, apps: apps)
+        return Reading(inUse: recording || unmatched, apps: apps)
+    }
+
+    /// The microphones a list of devices stands for: each microphone itself, and each
+    /// aggregate device's sub-devices that are microphones. Anything else stands for
+    /// none: outputs, the mixer's devices, and devices private to another process,
+    /// which are not in `devices`.
+    private static func microphones(behind ids: [AudioObjectID], in devices: [AudioObjectID: Device]) -> Set<AudioObjectID> {
+        var found: Set<AudioObjectID> = []
+        var seen: Set<AudioObjectID> = []
+        var pending = ids
+        while let id = pending.popLast() {
+            guard seen.insert(id).inserted, let device = devices[id], !device.isOwn else { continue }
+            if device.isAggregate {
+                pending += device.subdevices
+            } else if device.hasInput {
+                found.insert(id)
+            }
+        }
+        return found
     }
 
     // MARK: Attribution
@@ -167,13 +261,13 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
     /// The outermost app bundle a process lives in, so a helper, an XPC service or an
     /// extension counts as its app. Daemons, and WebKit's shared media process, have
     /// none and stay unnamed.
-    private static func app(owning pid: pid_t) -> PrivacyApp? {
+    private static func appBundle(owning pid: pid_t) -> String? {
         let paths = [
             NSRunningApplication(processIdentifier: pid)?.bundleURL?.path,
             executablePath(of: pid),
         ]
         for case let path? in paths {
-            if let bundle = outermostAppBundle(in: path) { return PrivacyApp(bundlePath: bundle) }
+            if let bundle = outermostAppBundle(in: path) { return bundle }
         }
         return nil
     }
@@ -211,16 +305,49 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
         AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
     }
 
-    /// The system object's list of devices or processes.
-    private static func objects(_ list: AudioObjectPropertyAddress) -> [AudioObjectID] {
+    /// Asks a device only what `reading` needs: whether it is running matters only
+    /// for a microphone, and an aggregate device's streams not at all. The mixer's
+    /// devices are known by their UID, whatever else they seem.
+    private static func device(_ id: AudioObjectID) -> Device {
+        var device = Device(id: id)
+        if string(kAudioDevicePropertyDeviceUID, of: id)?.hasPrefix(VolumeTap.deviceUIDPrefix) == true {
+            device.isOwn = true
+        } else if classID(of: id) == kAudioAggregateDeviceClassID {
+            device.isAggregate = true
+            device.subdevices = objects(address(kAudioAggregateDevicePropertyActiveSubDeviceList), of: id)
+        } else if hasStreams(id, scope: kAudioObjectPropertyScopeInput) {
+            device.hasInput = true
+            device.hasOutput = hasStreams(id, scope: kAudioObjectPropertyScopeOutput)
+            device.isRunning = flag(deviceRunning, of: id)
+        }
+        return device
+    }
+
+    /// A process that uses an input device; `nil` for one that uses none, or has gone.
+    private static func client(_ process: AudioObjectID) -> Client? {
+        let inputs = objects(processInputDevices, of: process)
+        guard !inputs.isEmpty, let pid = pid(of: process) else { return nil }
+        guard flag(processRecording, of: process) else { return Client(pid: pid, inputDevices: inputs) }
+        return Client(
+            pid: pid,
+            isRecording: true,
+            inputDevices: inputs,
+            bundlePath: appBundle(owning: pid),
+            bundleID: string(kAudioProcessPropertyBundleID, of: process)
+        )
+    }
+
+    /// A list of objects: the system's devices or processes, the devices a process
+    /// uses, an aggregate device's sub-devices.
+    private static func objects(_ list: AudioObjectPropertyAddress, of object: AudioObjectID = system) -> [AudioObjectID] {
         var address = list
         var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+        guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
         let stride = MemoryLayout<AudioObjectID>.stride
         var ids = [AudioObjectID](repeating: 0, count: Int(size) / stride)
         let status = ids.withUnsafeMutableBytes { buffer -> OSStatus in
             guard let base = buffer.baseAddress else { return kAudioHardwareBadPropertySizeError }
-            return AudioObjectGetPropertyData(system, &address, 0, nil, &size, base)
+            return AudioObjectGetPropertyData(object, &address, 0, nil, &size, base)
         }
         guard status == noErr else { return [] }
         return Array(ids.prefix(Int(size) / stride))
@@ -235,6 +362,22 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
         return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr && value != 0
     }
 
+    private static func classID(of object: AudioObjectID) -> AudioClassID? {
+        var address = address(kAudioObjectPropertyClass)
+        var value = AudioClassID(0)
+        var size = UInt32(MemoryLayout<AudioClassID>.size)
+        guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return value
+    }
+
+    private static func string(_ selector: AudioObjectPropertySelector, of object: AudioObjectID) -> String? {
+        var address = address(selector)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return value?.takeRetainedValue() as String?
+    }
+
     private static func pid(of process: AudioObjectID) -> pid_t? {
         var address = address(kAudioProcessPropertyPID)
         var value: pid_t = 0
@@ -243,15 +386,9 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
         return value
     }
 
-    private static func hasInput(_ device: AudioObjectID) -> Bool {
-        var address = address(kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeInput)
+    private static func hasStreams(_ device: AudioObjectID, scope: AudioObjectPropertyScope) -> Bool {
+        var address = address(kAudioDevicePropertyStreams, scope: scope)
         var size: UInt32 = 0
         return AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr && size > 0
-    }
-
-    private static func usesInputDevice(_ process: AudioObjectID) -> Bool {
-        var address = processInputDevices
-        var size: UInt32 = 0
-        return AudioObjectGetPropertyDataSize(process, &address, 0, nil, &size) == noErr && size > 0
     }
 }

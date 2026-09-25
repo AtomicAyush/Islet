@@ -30,6 +30,10 @@ final class VolumeTap {
         case status(OSStatus)
     }
 
+    /// How the UID of every aggregate device a tap makes begins, so the microphone
+    /// watcher can tell the mixer's devices, whose input is a tap, from microphones.
+    static let deviceUIDPrefix = "\(Bundle.main.bundleIdentifier ?? "Islet").mixer."
+
     let signature: Signature
     private(set) var isRunning = false
     private let tap: AudioObjectID
@@ -124,10 +128,9 @@ final class VolumeTap {
     /// Private, so it never shows in Sound settings and goes when Islet does; timed by
     /// the output, with the tap resampled to follow it.
     private static func composition(name: String, tapUID: String, output: MixerOutputDevice) -> [String: Any] {
-        let owner = Bundle.main.bundleIdentifier ?? "Islet"
-        return [
+        [
             kAudioAggregateDeviceNameKey: "Islet – \(name)",
-            kAudioAggregateDeviceUIDKey: "\(owner).mixer.\(UUID().uuidString)",
+            kAudioAggregateDeviceUIDKey: deviceUIDPrefix + UUID().uuidString,
             kAudioAggregateDeviceMainSubDeviceKey: output.uid,
             kAudioAggregateDeviceIsPrivateKey: 1,
             kAudioAggregateDeviceIsStackedKey: 0,
