@@ -65,7 +65,7 @@ enum NowPlayingRepeat: Int, Sendable {
     case all = 3
 }
 
-enum NowPlayingCommand: Equatable {
+enum NowPlayingCommand: Equatable, Sendable {
     case togglePlayPause
     case next
     case previous
@@ -115,8 +115,57 @@ enum NowPlayingVideo {
     }
 }
 
+/// Where the session on show comes from, and so where its controls go.
+enum NowPlayingSource: Equatable, Sendable {
+    /// MediaRemote's now-playing session, through the adapter.
+    case system
+    /// A player's own notifications.
+    case player(NowPlayingBroadcastPlayer)
+
+    var player: NowPlayingBroadcastPlayer? {
+        if case .player(let player) = self { return player }
+        return nil
+    }
+}
+
+/// A source's report, picked to be shown.
+struct NowPlayingChoice {
+    var source: NowPlayingSource
+    /// `nil` when nothing is reporting.
+    var snapshot: NowPlayingSnapshot?
+}
+
+/// The latest report from each source the island can follow.
+struct NowPlayingReports {
+    /// `nil` while MediaRemote reports nothing.
+    var system: NowPlayingSnapshot?
+    /// Players that are playing or paused; one that stopped or quit has none.
+    var players: [NowPlayingBroadcastPlayer: NowPlayingSnapshot] = [:]
+
+    /// What the island follows: MediaRemote's session while it plays; else a player
+    /// that says it is playing, even though MediaRemote reports another app's paused
+    /// session; else the player already followed, now paused, rather than turn to
+    /// something paused before it; else MediaRemote's session, paused or gone.
+    ///
+    /// A player MediaRemote is itself reporting is left to MediaRemote, which has its
+    /// exact position and artwork.
+    func choice(following followed: NowPlayingBroadcastPlayer?) -> NowPlayingChoice {
+        if let system, system.isPlaying { return NowPlayingChoice(source: .system, snapshot: system) }
+        let others = NowPlayingBroadcastPlayer.allCases.filter { $0.bundleID != system?.track.bundleID }
+        if let playing = others.first(where: { players[$0]?.isPlaying == true }) {
+            return NowPlayingChoice(source: .player(playing), snapshot: players[playing])
+        }
+        if let followed, others.contains(followed), let paused = players[followed] {
+            return NowPlayingChoice(source: .player(followed), snapshot: paused)
+        }
+        return NowPlayingChoice(source: .system, snapshot: system)
+    }
+}
+
 /// The system's now-playing session, as the island shows it: the current track, or
-/// the last one after its player went away.
+/// the last one after its player went away. MediaRemote names a single app, so
+/// Spotify's and Music's own notifications are weighed against it, and the island
+/// follows whichever is really playing (see `NowPlayingReports`).
 ///
 /// Controls act optimistically: a command changes what is shown at once, and the
 /// player's own report confirms or corrects it a moment later.
@@ -142,18 +191,25 @@ final class NowPlayingModel {
     private(set) var jumpsBack = false
     private(set) var jumpsForward = false
 
-    /// Carries a command to the player. Never called while a preview is shown.
-    @ObservationIgnored var send: (NowPlayingCommand) -> Void = { _ in }
+    /// Carries a command to the source on show. Never called while a preview is shown.
+    @ObservationIgnored var send: (NowPlayingCommand, NowPlayingSource) -> Void = { _, _ in }
     /// Called after every change that could show or end the activity.
     @ObservationIgnored var onChange: () -> Void = {}
     /// Called when a playing session moves on to a different track.
     @ObservationIgnored var onTrackChange: () -> Void = {}
 
-    /// Sample data is on screen; the player's reports are kept but not shown.
-    @ObservationIgnored private(set) var isPreviewing = false
+    /// Sample data is on screen; the players' reports are kept but not shown.
+    var isPreviewing: Bool { previewReports != nil }
 
-    @ObservationIgnored private var latest: NowPlayingSnapshot?
-    @ObservationIgnored private var lastSeen: NowPlayingSnapshot?
+    @ObservationIgnored private var reports = NowPlayingReports()
+    /// A preview's made-up reports, chosen between as real ones are.
+    @ObservationIgnored private var previewReports: NowPlayingReports?
+    /// The player the island last followed, so its pause does not hand the island
+    /// back to a session paused before it.
+    @ObservationIgnored private var followed: NowPlayingBroadcastPlayer?
+    @ObservationIgnored private var lastSeen: NowPlayingChoice?
+    /// Where what is shown came from, so its controls go there too.
+    @ObservationIgnored private var source: NowPlayingSource = .system
     @ObservationIgnored private var speed: Double = 1
     @ObservationIgnored private var expectation: Expectation?
     @ObservationIgnored private var expectationWork: DispatchWorkItem?
@@ -162,6 +218,13 @@ final class NowPlayingModel {
     /// A track change seen while paused. Some players stop for a moment between
     /// tracks, so if playback follows straight away it is announced after all.
     @ObservationIgnored private var quietChangeAt: Date?
+
+    /// A source's new report, with the track it reported before: moving to a player
+    /// is only a song change if that player has itself just moved on.
+    private struct Update {
+        let source: NowPlayingSource
+        let previousTrack: NowPlayingTrack?
+    }
 
     /// What a command should lead to, shown until the player confirms it.
     private struct Expectation {
@@ -193,41 +256,64 @@ final class NowPlayingModel {
 
     // MARK: Player reports
 
-    /// A new reading from the player, or `nil` when nothing is playing.
+    /// A new reading from MediaRemote, or `nil` when nothing is playing.
     func ingest(_ snapshot: NowPlayingSnapshot?) {
-        latest = snapshot
-        if let snapshot { lastSeen = snapshot }
-        guard !isPreviewing else { return }
-        show(snapshot, announce: true)
+        let before = reports.system?.track
+        reports.system = snapshot
+        refresh(announce: true, update: Update(source: .system, previousTrack: before))
+    }
+
+    /// A player's own report, or `nil` once it has stopped or quit.
+    func ingest(_ snapshot: NowPlayingSnapshot?, from player: NowPlayingBroadcastPlayer) {
+        let before = reports.players[player]?.track
+        reports.players[player] = snapshot
+        refresh(announce: true, update: Update(source: .player(player), previousTrack: before))
     }
 
     /// Forgets everything, as if no player had ever reported.
     func reset() {
-        latest = nil
+        reports = NowPlayingReports()
+        previewReports = nil
+        followed = nil
         lastSeen = nil
         quietChangeAt = nil
-        isPreviewing = false
         clearExpectation()
         clearModeExpectation()
-        show(nil, announce: false)
+        show(NowPlayingChoice(source: .system), announce: false)
     }
 
     // MARK: Previews
 
-    /// Shows sample data, holding back the player's reports until `endPreview()`.
-    func beginPreview(_ sample: NowPlayingSnapshot) {
-        isPreviewing = true
+    /// Shows sample data, holding back the players' reports until `endPreview()`.
+    /// `players` are made-up notifications from Spotify or Music, for the island to
+    /// choose between as it would between real ones.
+    func beginPreview(_ sample: NowPlayingSnapshot, players: [NowPlayingBroadcastPlayer: NowPlayingSnapshot] = [:]) {
+        let reports = NowPlayingReports(system: sample, players: players)
+        previewReports = reports
         clearExpectation()
         clearModeExpectation()
-        show(sample, announce: false)
+        show(reports.choice(following: nil), announce: false)
+    }
+
+    /// A new made-up reading from the preview's MediaRemote session, followed and
+    /// announced as a real one would be.
+    func previewReport(_ sample: NowPlayingSnapshot?) {
+        guard var reports = previewReports else { return }
+        let before = reports.system?.track
+        reports.system = sample
+        previewReports = reports
+        show(
+            reports.choice(following: source.player), announce: true,
+            update: Update(source: .system, previousTrack: before)
+        )
     }
 
     func endPreview() {
         guard isPreviewing else { return }
-        isPreviewing = false
+        previewReports = nil
         clearExpectation()
         clearModeExpectation()
-        show(latest, announce: false)
+        refresh(announce: false)
     }
 
     // MARK: Controls
@@ -317,7 +403,16 @@ final class NowPlayingModel {
 
     private func issue(_ command: NowPlayingCommand) {
         guard !isPreviewing else { return }
-        send(command)
+        send(command, source)
+    }
+
+    /// The player turned down a command sent at `sent`, or never got it (it quit, or
+    /// Islet may not control it), so show what it last reported now rather than after
+    /// the grace. A command issued since has its own result on screen, which stays.
+    func commandFailed(sentAt sent: Date) {
+        guard let expectation, expectation.issued <= sent else { return }
+        clearExpectation()
+        refresh(announce: false)
     }
 
     /// Shows a command's result straight away. A preview has no player to confirm
@@ -342,7 +437,7 @@ final class NowPlayingModel {
         expectationWork = nil
         guard expectation != nil else { return }
         expectation = nil
-        show(latest, announce: false)
+        refresh(announce: false)
     }
 
     private func clearExpectation() {
@@ -376,7 +471,7 @@ final class NowPlayingModel {
         modeExpectationWork = nil
         guard modeExpectation != nil else { return }
         modeExpectation = nil
-        show(latest, announce: false)
+        refresh(announce: false)
     }
 
     private func clearModeExpectation() {
@@ -387,8 +482,22 @@ final class NowPlayingModel {
 
     // MARK: Display
 
-    private func show(_ snapshot: NowPlayingSnapshot?, announce: Bool) {
-        let shown = snapshot ?? (isPreviewing ? nil : lastSeen)
+    /// Chooses what to follow from the latest reports, and shows it unless a preview
+    /// is on screen.
+    private func refresh(announce: Bool, update: Update? = nil) {
+        let choice = reports.choice(following: followed)
+        followed = choice.source.player
+        if choice.snapshot != nil { lastSeen = choice }
+        guard !isPreviewing else { return }
+        show(choice, announce: announce, update: update)
+    }
+
+    private func show(_ choice: NowPlayingChoice, announce: Bool, update: Update? = nil) {
+        let snapshot = choice.snapshot
+        let kept = snapshot == nil && !isPreviewing ? lastSeen : nil
+        let shown = snapshot ?? kept?.snapshot
+        let newSource = kept?.source ?? choice.source
+        let previousSource = source
         let previousTrack = track
         var playing = snapshot?.isPlaying ?? false
         var timing = shown?.timing ?? NowPlayingTiming()
@@ -449,12 +558,23 @@ final class NowPlayingModel {
         if jumpsBack != back { jumpsBack = back }
         if jumpsForward != forward { jumpsForward = forward }
         speed = shown?.speed ?? 1
+        source = newSource
         setPlayback(playing: playing, timing: timing)
 
         if announce {
-            let changed = previousTrack != nil && newTrack != nil && previousTrack != newTrack
+            // Turning to another player's song, which was playing all along, is not
+            // a song change; that player moving on to a new one is. Nor is MediaRemote
+            // taking over a song from the player's own notifications, however
+            // differently the two word its artist or album.
+            let sameSource = newSource == previousSource
+            let moved = previousTrack != nil && newTrack != nil && previousTrack != newTrack
+            let handedOver = previousTrack?.bundleID == newTrack?.bundleID && previousTrack?.title == newTrack?.title
+            let changed = moved && (sameSource || !handedOver && update.map {
+                $0.source == newSource && $0.previousTrack != nil && $0.previousTrack != newTrack
+            } == true)
             if playing {
-                let followsQuietChange = quietChangeAt.map { Date().timeIntervalSince($0) < Self.quietChangeWindow } ?? false
+                let followsQuietChange = sameSource
+                    && quietChangeAt.map { Date().timeIntervalSince($0) < Self.quietChangeWindow } ?? false
                 if changed || followsQuietChange { onTrackChange() }
                 quietChangeAt = nil
             } else if changed {

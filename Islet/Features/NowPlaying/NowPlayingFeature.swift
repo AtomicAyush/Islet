@@ -25,14 +25,19 @@ final class NowPlayingFeature: Feature {
     private let model = NowPlayingModel()
     private let library = NowPlayingLibraryModel()
     private lazy var activity = NowPlayingActivity(model: model, library: library)
-    /// `nil` when the adapter is missing from the bundle; then only previews work.
+    /// `nil` when the adapter is missing from the bundle; then only previews and the
+    /// players' own notifications work.
     private let adapter = NowPlayingAdapter()
+    /// Spotify's and Music's own word on what they are playing, and their controls.
+    private let broadcasts = NowPlayingBroadcasts()
     private var isRunning = false
     /// Tells the current stream's updates from any still queued from a stopped one.
     private var streamToken = 0
     private var homeWidgetShown = false
     private var hideWork: DispatchWorkItem?
     private var previewWork: DispatchWorkItem?
+    /// The moment within a preview when its made-up session changes.
+    private var previewStepWork: DispatchWorkItem?
     /// The sample library a preview shows in place of the playing app's.
     private var previewLibrary: (any MediaLibrary)?
     /// The card height the island last took from the activity.
@@ -48,15 +53,19 @@ final class NowPlayingFeature: Feature {
     private static let previewLength: TimeInterval = 10
     /// Long enough to try the panel's lists.
     private static let libraryPreviewLength: TimeInterval = 20
+    /// How long the video plays in the preview of another player playing on.
+    private static let videoPauseDelay: TimeInterval = 4
     /// The shortest hold after a pause. Players pause for a moment between tracks,
     /// and the activity should not blink out and back for that.
     private static let pauseGrace: TimeInterval = 1.5
 
     init() {
-        model.send = { [weak self] command in self?.adapter?.perform(command) }
+        model.send = { [weak self] command, source in self?.send(command, to: source) }
         model.onChange = { [weak self] in self?.sync() }
         model.onTrackChange = { [weak self] in self?.trackChanged() }
         library.onPanelChange = { [weak self] in self?.republishIfResized() }
+        broadcasts.onUpdate = { [weak self] player, snapshot in self?.model.ingest(snapshot, from: player) }
+        broadcasts.onCommandFailed = { [weak self] sent in self?.model.commandFailed(sentAt: sent) }
     }
 
     func start() {
@@ -66,14 +75,18 @@ final class NowPlayingFeature: Feature {
         adapter?.startStream { [weak self] snapshot in
             MainActor.assumeIsolated { self?.receive(snapshot, token: token) }
         }
+        broadcasts.start()
         sync()
     }
 
     func stop() {
         isRunning = false
         adapter?.stop()
+        broadcasts.stop()
         previewWork?.cancel()
         previewWork = nil
+        previewStepWork?.cancel()
+        previewStepWork = nil
         previewLibrary = nil
         cancelHide()
         model.reset()
@@ -109,6 +122,9 @@ final class NowPlayingFeature: Feature {
             FeaturePreview(title: "Sample video (playing)") { [weak self] in
                 self?.preview(.dolomites(playing: true))
             },
+            FeaturePreview(title: "Another player keeps playing") { [weak self] in
+                self?.previewAnotherPlayer()
+            },
             FeaturePreview(title: "Up Next and playlists") { [weak self] in
                 self?.previewLibraryPanel()
             },
@@ -133,6 +149,15 @@ final class NowPlayingFeature: Feature {
     private func receive(_ snapshot: NowPlayingSnapshot?, token: Int) {
         guard isRunning, token == streamToken else { return }
         model.ingest(snapshot)
+    }
+
+    /// A control goes to whoever the island is showing: MediaRemote's app, or the
+    /// player the island followed instead of it.
+    private func send(_ command: NowPlayingCommand, to source: NowPlayingSource) {
+        switch source {
+        case .system: adapter?.perform(command)
+        case .player(let player): broadcasts.perform(command, on: player)
+        }
     }
 
     /// Puts up or takes down the activity and the home tile to match the model.
@@ -265,17 +290,36 @@ final class NowPlayingFeature: Feature {
     // MARK: Previews
 
     private func preview(
-        _ sample: NowPlayingSnapshot, library sampleLibrary: (any MediaLibrary)? = nil,
-        for length: TimeInterval? = nil
+        _ sample: NowPlayingSnapshot, players: [NowPlayingBroadcastPlayer: NowPlayingSnapshot] = [:],
+        library sampleLibrary: (any MediaLibrary)? = nil, for length: TimeInterval? = nil
     ) {
         previewWork?.cancel()
+        previewStepWork?.cancel()
+        previewStepWork = nil
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.endPreview() }
         }
         previewWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + (length ?? Self.previewLength), execute: work)
         previewLibrary = sampleLibrary
-        model.beginPreview(sample)
+        model.beginPreview(sample, players: players)
+    }
+
+    /// A video in Safari plays while Spotify, heard only through its own
+    /// notifications, plays a song too. When the video pauses, the island turns to the
+    /// song, which never stopped: the activity stays up, and there is no song banner,
+    /// since the song is not new.
+    private func previewAnotherPlayer() {
+        let video = NowPlayingSnapshot.dolomites(playing: true)
+        preview(video, players: [.spotify: .midnightDrive(playing: true, in: NowPlayingBroadcastPlayer.spotify.bundleID)])
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.previewStepWork = nil
+                self?.model.previewReport(video.paused(at: Date()))
+            }
+        }
+        previewStepWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.videoPauseDelay, execute: work)
     }
 
     /// Opens the island on the sample song with its Up Next panel showing, as
@@ -291,6 +335,8 @@ final class NowPlayingFeature: Feature {
 
     private func endPreview() {
         previewWork = nil
+        previewStepWork?.cancel()
+        previewStepWork = nil
         previewLibrary = nil
         ActivityCenter.shared.dismissBanner(id: Self.songBannerID)
         model.endPreview()
@@ -361,6 +407,14 @@ private extension NowPlayingSnapshot {
         )
         snapshot.isVideo = true
         return snapshot
+    }
+
+    /// The same session, paused where it had got to.
+    func paused(at date: Date) -> NowPlayingSnapshot {
+        var paused = self
+        paused.isPlaying = false
+        paused.timing = timing.anchored(at: date, rate: 0)
+        return paused
     }
 
     private static func sample(

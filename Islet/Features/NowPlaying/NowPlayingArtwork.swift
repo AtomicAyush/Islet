@@ -29,9 +29,13 @@ struct NowPlayingArtwork: Equatable, @unchecked Sendable {
 
     /// Decodes the adapter's base64 image data. Slow: call it off the main thread.
     static func decode(base64: String) -> NowPlayingArtwork? {
-        guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
-              let source = CGImageSourceCreateWithData(data as CFData, nil)
-        else { return nil }
+        Data(base64Encoded: base64, options: .ignoreUnknownCharacters).flatMap(decode(data:))
+    }
+
+    /// Decodes an image file's bytes, such as a downloaded cover. Slow: call it off
+    /// the main thread.
+    static func decode(data: Data) -> NowPlayingArtwork? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
