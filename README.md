@@ -56,10 +56,10 @@ starts, with a Join button when there is a Zoom, Meet, Teams, Webex or FaceTime 
 **Camera & Microphone.** A green dot beside the notch while the camera is in use, an orange
 one while only the microphone is — as on the iPhone.
 
-**Focus.** Do Not Disturb, Sleep, Work or a Focus of your own gets a moment in the island as
-it turns on or off, as on the iPhone — its symbol and name left of the camera, "On" in its
-colour on the right — and while it is on, its symbol stays beside the notch and song changes
-go unannounced. macOS keeps which Focus is on in a database only apps with Full Disk Access
+**Focus.** While Do Not Disturb, Sleep, Work or a Focus of your own is on, its symbol stays
+beside the notch in its colour, the home tile says which and until when, and song changes go
+unannounced. macOS shows a banner of its own for every Focus change, so Islet's iPhone-style
+"On" and "Off" banner is off unless you turn it on in Settings. macOS keeps which Focus is on in a database only apps with Full Disk Access
 may read, so this needs Full Disk Access; until it has it, the home tile says so. Nor can
 other apps turn Focus on or off, so clicking the tile runs a shortcut of yours: make one with
 the Set Focus action set to toggle Do Not Disturb, and pick it in Settings.

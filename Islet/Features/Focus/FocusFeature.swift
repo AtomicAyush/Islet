@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Focus — Do Not Disturb, Sleep, Work and the person's own — the way the iPhone's
-/// island shows it: a word as a Focus turns on or off, and, while one is on, its
-/// symbol beside the notch. The home page shows which is on and turns it on or off
+/// island shows it: while one is on, its symbol beside the notch, and, if asked for,
+/// a word as a Focus turns on or off. The home page shows which is on and turns it on or off
 /// through a shortcut, and a Focus can ask the island to keep minor alerts to itself.
 ///
 /// macOS only says which Focus is on in its Focus database, behind Full Disk Access.
@@ -13,7 +13,7 @@ final class FocusFeature: Feature {
     let id = "focus"
     let title = "Focus"
     let symbol = "moon.fill"
-    let summary = "Announces Focus changes, and shows the Focus that is on beside the notch."
+    let summary = "Shows the Focus that is on beside the notch."
 
     /// Turning on, turning off and switching share one id, so a quick change of mind
     /// updates the banner already up rather than stacking another.
@@ -96,7 +96,9 @@ final class FocusFeature: Feature {
 
     private func changed(_ change: FocusModel.Change?) {
         render()
-        guard let change, isRunning, FocusPrefs.bool(FocusPrefs.announce, default: true) else { return }
+        // Off unless asked for: macOS shows a banner of its own for every Focus change,
+        // however it was made, and there is no way to stop it.
+        guard let change, isRunning, FocusPrefs.bool(FocusPrefs.announce, default: false) else { return }
         // Straight from one Focus to another announces the new one.
         if let mode = change.to.mode {
             present(.focus(mode, isOn: true))

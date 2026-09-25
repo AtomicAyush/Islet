@@ -272,7 +272,7 @@ struct FocusBadge: View {
 struct FocusSettingsView: View {
     let model: FocusModel
     let shortcuts: FocusShortcutList
-    @AppStorage(FocusPrefs.announce) private var announce = true
+    @AppStorage(FocusPrefs.announce) private var announce = false
     @AppStorage(FocusPrefs.showIndicator) private var showIndicator = true
     @AppStorage(FocusPrefs.quietMinorAlerts) private var quietMinorAlerts = true
     @AppStorage(FocusPrefs.shortcut) private var shortcut = ""
@@ -280,7 +280,10 @@ struct FocusSettingsView: View {
     var body: some View {
         FocusAccessRow(model: model)
 
-        Toggle("Announce Focus changes", isOn: $announce)
+        Toggle(isOn: $announce) {
+            Text("Announce Focus changes")
+            Text("macOS already shows its own banner for every Focus change, so this doubles it.")
+        }
         Toggle(isOn: $showIndicator) {
             Text("Show while on")
             Text("The Focus's symbol beside the notch, in its colour.")
