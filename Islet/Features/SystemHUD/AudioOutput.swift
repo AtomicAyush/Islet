@@ -15,6 +15,8 @@ final class AudioOutput {
         /// 0...1. While muted, the level sound will come back at.
         let level: Double
         let isMuted: Bool
+        /// The output's name as macOS shows it ("AirPods Max", "MacBook Pro Speakers").
+        var deviceName: String?
     }
 
     /// Whether the default output has a volume the Mac can set, as last looked up.
@@ -123,7 +125,7 @@ private final class VolumeWorker: @unchecked Sendable {
         let device = AudioDevice.defaultOutput
         guard let current = device.volume else { return nil }
         let restored = softMutedLevel(of: device, current: current)
-        return .init(level: restored ?? current, isMuted: device.isMuted == true || restored != nil)
+        return .init(level: restored ?? current, isMuted: device.isMuted == true || restored != nil, deviceName: device.name)
     }
 
     /// Unmutes on the way unless the step reaches zero, which mutes, as macOS does.
@@ -136,7 +138,7 @@ private final class VolumeWorker: @unchecked Sendable {
         if let muted = device.isMuted, muted != (next == 0) {
             _ = device.setMuted(next == 0)
         }
-        return .init(level: next, isMuted: next == 0)
+        return .init(level: next, isMuted: next == 0, deviceName: device.name)
     }
 
     func toggleMute() -> AudioOutput.Reading? {
@@ -144,18 +146,18 @@ private final class VolumeWorker: @unchecked Sendable {
         if let muted = device.isMuted, device.canSetMute {
             guard device.setMuted(!muted) else { return nil }
             // An output with a mute but no volume plays at its one fixed level.
-            return .init(level: device.volume ?? 1, isMuted: !muted)
+            return .init(level: device.volume ?? 1, isMuted: !muted, deviceName: device.name)
         }
 
         guard let current = device.volume else { return nil }
         if let restored = softMutedLevel(of: device, current: current) {
             guard device.setVolume(restored) else { return nil }
             softMuted[device.id] = nil
-            return .init(level: restored, isMuted: false)
+            return .init(level: restored, isMuted: false, deviceName: device.name)
         }
         guard device.setVolume(0) else { return nil }
         softMuted[device.id] = current
-        return .init(level: current, isMuted: true)
+        return .init(level: current, isMuted: true, deviceName: device.name)
     }
 
     /// The level a device muted by zeroing had. Forgotten once it has been turned up
@@ -215,6 +217,22 @@ private struct AudioDevice {
     }
 
     var canSetMute: Bool { Self.isSettable(Self.muteAddress, of: id) }
+
+    /// The name macOS gives the device, as in the Sound menu.
+    var name: String? {
+        guard id != kAudioObjectUnknown else { return nil }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &name) == noErr,
+              let value = name?.takeRetainedValue() as String?, !value.isEmpty
+        else { return nil }
+        return value
+    }
 
     func setMuted(_ muted: Bool) -> Bool {
         Self.write(UInt32(muted ? 1 : 0), at: Self.muteAddress, of: id)

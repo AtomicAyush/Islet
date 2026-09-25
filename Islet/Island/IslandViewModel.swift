@@ -35,6 +35,8 @@ final class IslandViewModel {
     private(set) var isDraggingFile = false
     /// The tab picked in the expanded island; `nil` follows the primary activity.
     var focus: String?
+    /// Which page of home tiles is showing, when they need more than one.
+    var homePage = 0
 
     #if DEBUG
     /// Keeps the island open whatever the pointer does, for screenshots
@@ -147,6 +149,7 @@ final class IslandViewModel {
             isExpanded = false
             focus = nil
         }
+        homePage = 0
     }
 
     func select(focus: String) {

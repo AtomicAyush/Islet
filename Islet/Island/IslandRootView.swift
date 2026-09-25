@@ -70,6 +70,16 @@ private struct IslandSurface: View {
         }
         .shadow(color: .black.opacity(layout.showsShadow ? 0.5 : 0), radius: 18, y: 8)
         .onTapGesture { model.tap() }
+        // Always a drop target for files, even at rest. The hosting view only tells
+        // the window server it takes drags once some view asks for them, and the drop
+        // page appears mid-drag — too late for the drag already under way, which
+        // then slides back. Being a target from launch also means a file dragged
+        // onto the notch opens the drop page directly. Drops land on the page's own
+        // targets; anywhere else on the island they are declined.
+        .onDrop(of: [.fileURL], isTargeted: Binding(
+            get: { false },
+            set: { isTargeted in if isTargeted { model.fileDragApproached() } }
+        )) { _ in false }
         .opacity(model.mode == .hidden ? 0 : 1)
     }
 
@@ -285,7 +295,10 @@ private struct ExpandedIsland: View {
         if focus == IslandViewModel.dropFocus, let target = model.center.dropTarget {
             target.view()
         } else if focus == IslandViewModel.homeFocus {
-            HomeView(widgets: model.center.homeWidgets)
+            HomeView(
+                widgets: model.center.homeWidgets,
+                page: Binding(get: { model.homePage }, set: { model.homePage = $0 })
+            )
         } else if let activity = model.center.activity(id: focus) {
             activity.expanded()
         }

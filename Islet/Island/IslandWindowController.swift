@@ -19,6 +19,8 @@ final class IslandWindowController {
     /// Vertical travel of the current two-finger swipe over the island, in the
     /// direction the fingers moved (positive = down).
     private var swipeTravel: CGFloat = 0
+    /// Sideways travel of the same swipe (positive = right), for turning home pages.
+    private var swipeTravelX: CGFloat = 0
     private var swipeHandled = false
 
     init(screen: NSScreen) {
@@ -104,14 +106,23 @@ final class IslandWindowController {
         guard event.hasPreciseScrollingDeltas, event.window === panel else { return }
         if event.phase == .began {
             swipeTravel = 0
+            swipeTravelX = 0
             swipeHandled = false
         }
         guard event.phase == .changed || event.phase == .began, !swipeHandled else { return }
 
-        let delta = event.scrollingDeltaY
-        swipeTravel += event.isDirectionInvertedFromDevice ? delta : -delta
-        // Ignore mostly-sideways swipes; pages inside the island may use them.
-        guard abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) else { return }
+        let inverted = event.isDirectionInvertedFromDevice
+        swipeTravel += inverted ? event.scrollingDeltaY : -event.scrollingDeltaY
+        swipeTravelX += inverted ? event.scrollingDeltaX : -event.scrollingDeltaX
+
+        // Sideways on the open home page turns its pages: fingers left, next page.
+        if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
+            guard model.isExpanded, model.resolvedFocus == IslandViewModel.homeFocus,
+                  abs(swipeTravelX) > 30 else { return }
+            swipeHandled = true
+            model.homePage = max(0, model.homePage + (swipeTravelX < 0 ? 1 : -1))
+            return
+        }
 
         if swipeTravel > 24, !model.isExpanded {
             swipeHandled = true

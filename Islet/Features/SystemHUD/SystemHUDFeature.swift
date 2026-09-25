@@ -19,6 +19,7 @@ final class SystemHUDFeature: Feature {
         static let volume = "systemHUD.volume"
         static let brightness = "systemHUD.brightness"
         static let showPercentage = "systemHUD.showPercentage"
+        static let showName = "systemHUD.showName"
     }
 
     /// One id for volume and brightness alike, so held or alternating keys update
@@ -37,6 +38,7 @@ final class SystemHUDFeature: Feature {
     @AppStorage(Key.volume) private var handlesVolume = true
     @AppStorage(Key.brightness) private var handlesBrightness = true
     @AppStorage(Key.showPercentage) private var showsPercentage = false
+    @AppStorage(Key.showName) private var showsName = true
 
     init() {
         tap.onKeyDown = { [weak self] key, event in
@@ -89,13 +91,13 @@ final class SystemHUDFeature: Feature {
     var previews: [FeaturePreview] {
         [
             FeaturePreview(title: "Volume") { [weak self] in
-                self?.playPreview((6...10).map { (.volume, Double($0) / 16, false) })
+                self?.playPreview((6...10).map { (.volume, Double($0) / 16, false) }, device: "AirPods Max")
             },
             FeaturePreview(title: "Brightness") { [weak self] in
-                self?.playPreview((5...10).map { (.brightness, Double($0) / 16, false) })
+                self?.playPreview((5...10).map { (.brightness, Double($0) / 16, false) }, device: "Built-in Retina Display")
             },
             FeaturePreview(title: "Mute") { [weak self] in
-                self?.playPreview([(.volume, 0.5, false), (.volume, 0.5, true)], interval: 0.7)
+                self?.playPreview([(.volume, 0.5, false), (.volume, 0.5, true)], interval: 0.7, device: "MacBook Pro Speakers")
             },
         ]
     }
@@ -165,26 +167,32 @@ final class SystemHUDFeature: Feature {
 
     private func presentHUD() {
         let showsPercentage = showsPercentage
+        let showsName = showsName
+        let name = showsName ? model.deviceName : nil
         ActivityCenter.shared.present(IslandBanner(
             id: Self.bannerID,
-            style: .compact(leading: 40, trailing: SystemHUDLevel.wingWidth(showsPercentage: showsPercentage)),
+            style: .compact(
+                leading: 40,
+                trailing: SystemHUDLevel.wingWidth(showsPercentage: showsPercentage, name: name)
+            ),
             duration: 1.6,
             haptic: false,
             leading: AnyView(SystemHUDIcon(model: model)),
-            trailing: AnyView(SystemHUDLevel(model: model, showsPercentage: showsPercentage))
+            trailing: AnyView(SystemHUDLevel(model: model, showsPercentage: showsPercentage, showsName: showsName))
         ))
     }
 
     private func playPreview(
         _ frames: [(kind: SystemHUDModel.Kind, level: Double, muted: Bool)],
-        interval: TimeInterval = 0.3
+        interval: TimeInterval = 0.3,
+        device: String
     ) {
         previewTask?.cancel()
         previewTask = Task { [weak self] in
             for (index, frame) in frames.enumerated() {
                 if index > 0 { try? await Task.sleep(for: .seconds(interval)) }
                 guard let self, !Task.isCancelled else { return }
-                self.model.display(frame.kind, level: frame.level, muted: frame.muted)
+                self.model.display(frame.kind, level: frame.level, muted: frame.muted, device: device)
                 self.presentHUD()
             }
         }

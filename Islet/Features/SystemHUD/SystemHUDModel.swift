@@ -16,6 +16,8 @@ final class SystemHUDModel {
     private(set) var level: Double = 0
     /// Volume only.
     private(set) var isMuted = false
+    /// What is being changed: the output device, or the display.
+    private(set) var deviceName: String?
 
     /// Called after a real change (or reading) lands in `kind`, `level` and `isMuted`.
     @ObservationIgnored var onChange: () -> Void = {}
@@ -48,10 +50,11 @@ final class SystemHUDModel {
     }
 
     /// Sets what the HUD shows without touching any hardware (previews use it).
-    func display(_ kind: Kind, level: Double, muted: Bool = false) {
+    func display(_ kind: Kind, level: Double, muted: Bool = false, device: String? = nil) {
         self.kind = kind
         self.level = min(max(level, 0), 1)
         isMuted = muted
+        deviceName = device
     }
 
     // MARK: Volume
@@ -88,7 +91,7 @@ final class SystemHUDModel {
         let issued = generation
         return { [weak self] reading in
             guard let self, let reading, self.generation == issued else { return }
-            self.display(.volume, level: reading.level, muted: reading.isMuted)
+            self.display(.volume, level: reading.level, muted: reading.isMuted, device: reading.deviceName)
             self.onChange()
             then(reading)
         }
@@ -105,7 +108,7 @@ final class SystemHUDModel {
         let next = Self.stepped(pending ?? current, by: delta)
         guard DisplayBrightness.setLevel(next, of: panel) else { return false }
         pendingBrightness = (next, Date())
-        display(.brightness, level: next)
+        display(.brightness, level: next, device: Self.displayName(of: panel))
         onChange()
         return true
     }
@@ -114,8 +117,13 @@ final class SystemHUDModel {
     func showBrightness() {
         guard let panel = DisplayBrightness.builtIn,
               let current = DisplayBrightness.level(of: panel) else { return }
-        display(.brightness, level: current)
+        display(.brightness, level: current, device: Self.displayName(of: panel))
         onChange()
+    }
+
+    /// "Built-in Retina Display", as System Settings calls it.
+    private static func displayName(of display: CGDirectDisplayID) -> String {
+        NSScreen.screens.first { $0.displayID == display }?.localizedName ?? "Built-in Display"
     }
 
     /// One step from `level`, landing on the step grid the way macOS does, so a
