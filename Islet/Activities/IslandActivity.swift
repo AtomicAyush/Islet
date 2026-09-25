@@ -45,6 +45,16 @@ protocol IslandActivity: AnyObject {
     /// The app this activity is about, when it is about one (the player Now Playing
     /// shows), so other activities can avoid showing the same app twice.
     var appBundleIdentifier: String? { get }
+    /// A two-finger swipe sideways over the island while it shows this activity.
+    /// Returns whether the activity did something with it.
+    func swipe(_ direction: ActivitySwipe) -> Bool
+}
+
+enum ActivitySwipe {
+    /// Fingers moved left.
+    case next
+    /// Fingers moved right.
+    case previous
 }
 
 extension IslandActivity {
@@ -54,6 +64,7 @@ extension IslandActivity {
     var expandedHeight: CGFloat { 110 }
     func minimal() -> AnyView { compactLeading() }
     var appBundleIdentifier: String? { nil }
+    func swipe(_ direction: ActivitySwipe) -> Bool { false }
 }
 
 /// A transient alert that takes over the island for a moment, the way plugging in a

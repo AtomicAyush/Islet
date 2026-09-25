@@ -91,6 +91,15 @@ final class IslandViewModel {
         }
     }
 
+    /// The activity a sideways swipe goes to: the one the compact island shows, or
+    /// the page the opened island is on.
+    var swipeTarget: (any IslandActivity)? {
+        switch mode {
+        case .compact(let id), .expanded(focus: let id): center.activity(id: id)
+        default: nil
+        }
+    }
+
     /// The activity in the detached bubble: the runner-up, while the island is
     /// compact. Banners and the opened island absorb it.
     var bubbleActivity: (any IslandActivity)? {

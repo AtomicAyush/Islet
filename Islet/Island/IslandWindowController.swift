@@ -131,13 +131,20 @@ final class IslandWindowController {
         case .undecided:
             return
         case .horizontal:
-            // Sideways on the open home page turns its pages: fingers left, next page.
-            // In the scrolling layout the row takes the swipe itself.
-            guard Prefs.homeLayout == .pages, model.isExpanded,
-                  model.resolvedFocus == IslandViewModel.homeFocus,
-                  abs(swipeTravelX) > 30 else { return }
-            swipeHandled = true
-            model.homePage = max(0, model.homePage + (swipeTravelX < 0 ? 1 : -1))
+            guard abs(swipeTravelX) > 30 else { return }
+            // Fingers left means "next", as when paging on a trackpad.
+            let direction: ActivitySwipe = swipeTravelX < 0 ? .next : .previous
+            if model.isExpanded, model.resolvedFocus == IslandViewModel.homeFocus {
+                // The open home page turns its pages; in the scrolling layout the row
+                // takes the swipe itself.
+                guard Prefs.homeLayout == .pages else { return }
+                swipeHandled = true
+                model.homePage = max(0, model.homePage + (direction == .next ? 1 : -1))
+            } else if let activity = model.swipeTarget, activity.swipe(direction) {
+                // The activity shown takes it (Now Playing switches player).
+                swipeHandled = true
+                Haptics.tap(.alignment)
+            }
             return
         case .vertical:
             if swipeOverList { return }
