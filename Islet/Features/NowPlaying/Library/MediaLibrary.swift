@@ -25,7 +25,9 @@ protocol MediaLibrary: AnyObject {
     func play(_ playlist: MediaPlaylist) async throws
     /// Jumps ahead to an item from `upNext()`, at its position in `MediaQueue.all`.
     func playFromQueue(_ item: MediaItem, at index: Int) async throws
-    /// Puts an item at the front of the queue, to play after the current track.
+    /// Queues an item to play after the current track and anything already queued
+    /// (Spotify can only add to the end of what was queued), returning once the app
+    /// lists it.
     func playNext(_ item: MediaItem) async throws
     /// Opens the app's listen-together feature (Spotify's Jam), as far as it allows.
     func openListeningTogether()

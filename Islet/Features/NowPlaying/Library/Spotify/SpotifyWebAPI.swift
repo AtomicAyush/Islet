@@ -15,6 +15,21 @@ actor SpotifyWebAPI {
         var detail: String?
     }
 
+    /// The Web API answered with something other than success; `message` says it
+    /// the way the island shows it.
+    private struct APIError: LocalizedError {
+        var status: Int
+        var message: String
+        var errorDescription: String? { message }
+
+        /// Asking again would get the same answer: not a stale token, a timeout or
+        /// a rate limit, and not Spotify having a bad moment.
+        var isRefusal: Bool { (400..<500).contains(status) && ![401, 408, 429].contains(status) }
+    }
+
+    /// Spotify will not list a playlist or album for Up Next's split.
+    private struct Unlisted: Error {}
+
     private static let apiBase = "https://api.spotify.com/v1/"
     private static let tokenEndpoint = "https://accounts.spotify.com/api/token"
     /// A 429 asking for longer than this is not waited out with someone watching.
@@ -33,6 +48,12 @@ actor SpotifyWebAPI {
     /// Bumped by every sign-in and sign-out, so a renewal that finishes after one
     /// does not bring the old sign-in back.
     private var generation = 0
+
+    /// What has been read of each playlist or album played, by context URI.
+    private var listings: [String: SpotifyTrackListing] = [:]
+    /// Songs queued from Islet, which tell queued songs apart when the playlist
+    /// cannot.
+    private var hints = SpotifyQueueHints()
 
     init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -81,13 +102,11 @@ actor SpotifyWebAPI {
         renewal = nil
         tokens = nil
         hasLoadedTokens = true
+        listings = [:]
+        hints = SpotifyQueueHints()
     }
 
     // MARK: Library
-
-    func upNext() async throws -> [MediaItem] {
-        try await queue().upNext
-    }
 
     /// The first 50 playlists, marking the one playing now. What is playing is
     /// asked for alongside, and not knowing it is no reason to fail.
@@ -120,6 +139,13 @@ actor SpotifyWebAPI {
         }
     }
 
+    /// Adds a song to the queue. Spotify puts it after any songs already queued;
+    /// its API has no way to put one first.
+    func addToQueue(_ uri: String) async throws {
+        _ = try await send("POST", "me/player/queue?" + SpotifyAuthorization.formEncoded([("uri", uri)]))
+        hints.add(uri)
+    }
+
     private func queue() async throws -> SpotifyQueue {
         try await get("me/player/queue") ?? SpotifyQueue()
     }
@@ -127,6 +153,136 @@ actor SpotifyWebAPI {
     private func playingContextURI() async -> String? {
         let playback: SpotifyPlayback? = try? await get("me/player")
         return playback?.context?.uri
+    }
+
+    // MARK: Up Next
+
+    /// What is coming up, split the way Spotify shows it. Not being able to split
+    /// it never fails Up Next: the queue is then shown whole.
+    func upNext() async throws -> MediaQueue {
+        async let playing: SpotifyPlayback? = try? get("me/player")
+        let queue = try await queue()
+        let uris = queue.queue.map(\.uri)
+        hints.notePlaying(queue.currentlyPlaying?.uri)
+        let split = SpotifyQueueSplit(queue: uris, current: queue.currentlyPlaying?.uri, hinted: hints.uris)
+        var queued = split.byHints
+        var source: String?
+        if let playback = await playing, !uris.isEmpty,
+           let contextURI = playback.context?.uri, let origin = SpotifyTrackSource(contextURI: contextURI) {
+            (queued, source) = try await splitByContext(split, origin: origin, contextURI: contextURI, order: playback.queueOrder)
+        }
+        hints.keep(queued: uris.prefix(queued ?? 0))
+
+        let items = queue.upNext
+        guard let queued else { return MediaQueue(upcoming: items, sourceName: source) }
+        return MediaQueue(
+            queued: Array(items.prefix(queued)),
+            upcoming: Array(items.dropFirst(queued)),
+            sourceName: source,
+            isSplit: true
+        )
+    }
+
+    /// Splits the queue by the playlist or album playing, reading only as much of
+    /// it as that takes, and names it.
+    private func splitByContext(
+        _ split: SpotifyQueueSplit, origin: SpotifyTrackSource, contextURI: String, order: SpotifyQueueSplit.Order?
+    ) async throws -> (queued: Int?, source: String?) {
+        // Smart shuffle goes by the hints alone, and without them is shown whole,
+        // with no name to show, so there is nothing to ask for.
+        if order == nil, split.byHints == nil { return (nil, nil) }
+        guard var listing = try await listing(of: origin, contextURI: contextURI) else { return (split.byHints, nil) }
+        defer { listings[contextURI] = listing }
+        guard listing.isReadable, let order else { return (split.byHints, listing.name) }
+        while true {
+            let outcome = split.split(by: listing.tracks, isComplete: listing.isComplete, order: order)
+            // Shuffled, only all of it will do, so one too long to read whole is left.
+            let isWorthReading = order != .shuffled || listing.fitsWhole
+            guard outcome.reading != .enough, listing.canReadMore, isWorthReading,
+                  try await readMore(of: origin, into: &listing, pages: outcome.reading == .next ? 1 : 4)
+            else { return (outcome.queued, listing.name) }
+        }
+    }
+
+    /// What is known of the playlist or album: kept from before while the playlist
+    /// is unchanged, else started afresh. nil when Spotify could not be asked.
+    private func listing(of origin: SpotifyTrackSource, contextURI: String) async throws -> SpotifyTrackListing? {
+        let kept = listings[contextURI]
+        if let kept, !kept.isReadable { return kept }
+        do {
+            switch origin {
+            case .album(let id):
+                if let kept { return kept }
+                guard let album: SpotifyAlbum = try await readForSplit("albums/\(id)?market=from_token") else { return nil }
+                var listing = SpotifyTrackListing(name: album.name)
+                _ = listing.add(album.tracks.page)
+                return listing
+            case .playlist(let id):
+                // A cheap look at the version, so an unchanged playlist is not read again.
+                guard let version: SpotifyPlaylistVersion = try await readForSplit("playlists/\(id)?fields=name,snapshot_id")
+                else { return kept }
+                if var kept, kept.snapshot == version.snapshotId {
+                    kept.name = version.name
+                    return kept
+                }
+                return SpotifyTrackListing(name: version.name, snapshot: version.snapshotId)
+            }
+        } catch is Unlisted {
+            return SpotifyTrackListing(name: nil, isReadable: false)
+        }
+    }
+
+    /// Reads the next pages of `listing`, together when there are several. False
+    /// when Spotify did not answer, which leaves the rest for another time.
+    private func readMore(of origin: SpotifyTrackSource, into listing: inout SpotifyTrackListing, pages: Int) async throws -> Bool {
+        let offsets = listing.nextPages(pages)
+        let read: [SpotifyTrackListing.Page]
+        do {
+            read = try await withThrowingTaskGroup(of: SpotifyTrackListing.Page?.self) { group in
+                for offset in offsets {
+                    group.addTask { try await self.page(of: origin, at: offset) }
+                }
+                return try await group.reduce(into: []) { pages, page in
+                    if let page { pages.append(page) }
+                }
+            }
+        } catch is Unlisted {
+            listing.isReadable = false
+            return false
+        }
+        var added = 0
+        for page in read.sorted(by: { $0.offset < $1.offset }) {
+            guard listing.add(page) else { break }
+            added += 1
+        }
+        return added == offsets.count
+    }
+
+    private func page(of origin: SpotifyTrackSource, at offset: Int) async throws -> SpotifyTrackListing.Page? {
+        let size = SpotifyTrackListing.pageSize
+        let path = switch origin {
+        case .playlist(let id):
+            "playlists/\(id)/items?offset=\(offset)&limit=\(size)&market=from_token&additional_types=track,episode"
+        case .album(let id):
+            "albums/\(id)/tracks?offset=\(offset)&limit=\(size)&market=from_token"
+        }
+        let page: SpotifyTrackPage? = try await readForSplit(path)
+        return page?.page
+    }
+
+    /// A read for the split, which must never fail Up Next: nil when Spotify could
+    /// not be reached or replied oddly, to be tried again next time, and `Unlisted`
+    /// when it turned the request down, which is remembered.
+    private func readForSplit<T: Decodable>(_ path: String) async throws -> T? {
+        do {
+            return try await get(path)
+        } catch let error as APIError where error.isRefusal {
+            throw Unlisted()
+        } catch let error where error is SignedOut || error is CancellationError {
+            throw error
+        } catch {
+            return nil
+        }
     }
 
     // MARK: Requests
@@ -212,7 +368,7 @@ actor SpotifyWebAPI {
     }
 
     /// Spotify's refusals, as the island says them.
-    private func failure(status: Int, data: Data) -> MediaLibraryError {
+    private func failure(status: Int, data: Data) -> APIError {
         let body = try? decoder.decode(SpotifyErrorBody.self, from: data)
         let reason = body?.reason ?? ""
         let message = body?.message?.lowercased() ?? ""
@@ -235,7 +391,7 @@ actor SpotifyWebAPI {
         default:
             "Spotify couldn't do that"
         }
-        return MediaLibraryError(message: text)
+        return APIError(status: status, message: text)
     }
 
     // MARK: Tokens

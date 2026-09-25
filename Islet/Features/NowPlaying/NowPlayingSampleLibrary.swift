@@ -4,16 +4,17 @@ import UniformTypeIdentifiers
 
 /// The library the previews show: made-up songs and playlists, handed over after a
 /// moment as a real library's would be. It speaks for no app and never talks to
-/// one; playing something only changes its own lists.
+/// one; playing or queueing something only changes its own lists.
 @MainActor
 final class NowPlayingSampleLibrary: MediaLibrary {
     let bundleIdentifiers: Set<String> = []
     let displayName = "Sample"
     let state = MediaLibraryState.ready
-    let capabilities: MediaLibraryCapabilities = [.upNext, .playFromQueue, .playlists, .listeningTogether]
+    let capabilities: MediaLibraryCapabilities = [.upNext, .playFromQueue, .playNext, .playlists, .listeningTogether]
 
     /// Each preview starts from the full lists.
-    private var queue = NowPlayingSampleLibrary.sampleQueue
+    private var queued = NowPlayingSampleLibrary.sampleQueued
+    private var upcoming = NowPlayingSampleLibrary.sampleUpcoming
     private var lists = NowPlayingSampleLibrary.samplePlaylists
 
     /// Long enough to see the panel load.
@@ -23,7 +24,11 @@ final class NowPlayingSampleLibrary: MediaLibrary {
 
     func upNext() async throws -> MediaQueue {
         try await Task.sleep(for: Self.delay)
-        return MediaQueue(upcoming: queue)
+        // As if playing the current playlist, with a couple of songs queued.
+        return MediaQueue(
+            queued: queued, upcoming: upcoming,
+            sourceName: lists.first(where: \.isCurrent)?.name, isSplit: true
+        )
     }
 
     func playlists() async throws -> [MediaPlaylist] {
@@ -38,32 +43,42 @@ final class NowPlayingSampleLibrary: MediaLibrary {
         }
     }
 
+    /// Skips everything before the song, queued songs first.
     func playFromQueue(_ item: MediaItem, at index: Int) async throws {
         try await Task.sleep(for: Self.delay)
-        queue.removeFirst(min(index + 1, queue.count))
+        let skipped = min(index + 1, queued.count + upcoming.count)
+        let skippedQueued = min(skipped, queued.count)
+        queued.removeFirst(skippedQueued)
+        upcoming.removeFirst(skipped - skippedQueued)
+    }
+
+    /// Queues a copy at the front; the song keeps its place in the playlist too.
+    func playNext(_ item: MediaItem) async throws {
+        try await Task.sleep(for: Self.delay)
+        // After anything already queued, as Spotify does.
+        queued.append(item)
     }
 
     // MARK: Samples
 
-    /// Drawn once, the first time a preview asks.
-    private static let sampleQueue: [MediaItem] = ([
+    /// Queued by hand, as it were. Drawn once, the first time a preview asks.
+    private static let sampleQueued = songs(in: "queue", [
         ("Harbour Lights", "Neon Harbour", 0.92, 204),
         ("Paper Planes Over Lisbon", "Juniper & the Tides", 0.52, 245),
+    ])
+
+    /// The rest of the playlist playing.
+    private static let sampleUpcoming = songs(in: "playlist", [
         ("Slow Tram Home", "The Late Arrivals", 0.08, 188),
         ("Glasshouse", "Mara Vey", 0.33, 231),
         ("Northbound", "Neon Harbour", 0.62, 197),
         ("Tidal", "Juniper & the Tides", 0.47, 262),
         ("Afterglow Avenue", "Sunset Committee", 0.02, 215),
         ("Quiet Machines", "Mara Vey", 0.74, 179),
-    ] as [(String, String, CGFloat, TimeInterval)]).enumerated().map { index, song in
-        MediaItem(
-            id: "sample.song.\(index)", title: song.0, subtitle: song.1,
-            artworkURL: cover(hue: song.2), duration: song.3
-        )
-    }
+    ])
 
     private static let samplePlaylists: [MediaPlaylist] = ([
-        ("Night Drive", "32 songs", 0.8),
+        ("Late Night Drive", "32 songs", 0.8),
         ("Sunday Morning", "18 songs", 0.12),
         ("Deep Focus", "64 songs", 0.55),
         ("Running Club", "40 songs", 0.0),
@@ -74,6 +89,15 @@ final class NowPlayingSampleLibrary: MediaLibrary {
             id: "sample.playlist.\(index)", name: playlist.0, detail: playlist.1,
             artworkURL: cover(hue: playlist.2), isCurrent: index == 0
         )
+    }
+
+    private static func songs(in part: String, _ songs: [(String, String, CGFloat, TimeInterval)]) -> [MediaItem] {
+        songs.enumerated().map { index, song in
+            MediaItem(
+                id: "sample.\(part).\(index)", title: song.0, subtitle: song.1,
+                artworkURL: cover(hue: song.2), duration: song.3
+            )
+        }
     }
 
     /// A small two-tone cover as a `data:` URL, so the panel loads it the way it

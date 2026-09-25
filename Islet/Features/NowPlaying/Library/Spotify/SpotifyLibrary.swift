@@ -19,7 +19,8 @@ final class SpotifyLibrary: MediaLibrary {
     let bundleIdentifiers: Set<String> = [SpotifyLibrary.bundleIdentifier]
     let displayName = "Spotify"
     /// Jam has no public API; `openListeningTogether()` brings Spotify forward instead.
-    let capabilities: MediaLibraryCapabilities = [.upNext, .playFromQueue, .playlists, .listeningTogether]
+    /// Nor can queued songs be reordered or removed, so Play Next is how one moves up.
+    let capabilities: MediaLibraryCapabilities = [.upNext, .playFromQueue, .playNext, .playlists, .listeningTogether]
 
     /// As typed in Settings; used trimmed.
     var clientID: String {
@@ -38,6 +39,10 @@ final class SpotifyLibrary: MediaLibrary {
     /// except to Spotify's token endpoint.
     private var pendingAuthorization: SpotifyAuthorization?
     private let api = SpotifyWebAPI()
+
+    /// Spotify takes a moment to pass a queued song on to the device playing, and
+    /// the list read again straight after would not have it yet.
+    private static let queueSettleDelay = Duration.milliseconds(750)
 
     private init() {
         clientID = UserDefaults.standard.string(forKey: Self.clientIDKey) ?? ""
@@ -123,8 +128,10 @@ final class SpotifyLibrary: MediaLibrary {
 
     // MARK: Library
 
+    /// Split into "Next in queue" and "Next from" the playlist or album playing,
+    /// when that can be read; see `SpotifyQueueSplit`.
     func upNext() async throws -> MediaQueue {
-        MediaQueue(upcoming: try await call { try await $0.upNext() })
+        try await call { try await $0.upNext() }
     }
 
     func playlists() async throws -> [MediaPlaylist] {
@@ -138,6 +145,15 @@ final class SpotifyLibrary: MediaLibrary {
     func playFromQueue(_ item: MediaItem, at index: Int) async throws {
         let uri = SpotifyQueue.uri(of: item)
         try await call { try await $0.skip(to: uri, near: index) }
+    }
+
+    /// Queues the song, so it plays once the current one, and any songs already
+    /// queued, are done: Spotify adds to the end of its queue and cannot put one
+    /// first. The song stays in the playlist, so it comes round again there.
+    func playNext(_ item: MediaItem) async throws {
+        let uri = SpotifyQueue.uri(of: item)
+        try await call { try await $0.addToQueue(uri) }
+        try? await Task.sleep(for: Self.queueSettleDelay)
     }
 
     /// Jam can only be started inside Spotify, so this brings Spotify forward,

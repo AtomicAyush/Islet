@@ -18,7 +18,7 @@ final class NowPlayingLibraryModel {
 
     enum Listing {
         case loading
-        case queue([MediaItem])
+        case queue(MediaQueue)
         case playlists([MediaPlaylist])
         case failed(String)
     }
@@ -113,6 +113,13 @@ final class NowPlayingLibraryModel {
         perform(row: Self.queueRow(index)) { try await $0.playFromQueue(item, at: index) }
     }
 
+    /// Queues a song still to come. It keeps its place in the playlist too, so the
+    /// list comes back with it twice, the first time under "Next in queue". The
+    /// library waits for its app to list it before returning.
+    func playNext(_ item: MediaItem, at index: Int) {
+        perform(row: Self.queueRow(index)) { try await $0.playNext(item) }
+    }
+
     func play(_ playlist: MediaPlaylist) {
         perform(row: Self.playlistRow(playlist)) { try await $0.play(playlist) }
     }
@@ -143,7 +150,7 @@ final class NowPlayingLibraryModel {
             let result: Listing
             do {
                 switch panel {
-                case .upNext: result = .queue(try await library.upNext().all)
+                case .upNext: result = .queue(try await library.upNext())
                 case .playlists: result = .playlists(try await library.playlists())
                 }
             } catch {
@@ -315,27 +322,19 @@ struct NowPlayingLibraryPanel: View {
                 .controlSize(.small)
         case .failed(let message):
             PanelMessage(text: message, button: "Retry") { library.reload() }
-        case .queue(let items):
-            if items.isEmpty {
+        case .queue(let queue):
+            if queue.all.isEmpty {
                 PanelMessage(text: "Nothing up next")
             } else {
                 PanelList {
-                    let playable = library.offers(.playFromQueue)
-                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                        LibraryRow(
-                            title: item.title,
-                            subtitle: item.subtitle,
-                            artworkURL: item.artworkURL,
-                            placeholder: "music.note",
-                            isBusy: library.pendingRow == NowPlayingLibraryModel.queueRow(index),
-                            action: playable ? { library.play(item, at: index) } : nil
-                        ) {
-                            if let duration = item.duration, duration > 0 {
-                                Text(NowPlayingClock.text(duration))
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundStyle(.white.opacity(0.55))
-                            }
+                    ForEach(QueueLine.lines(queue, canPlayNext: library.offers(.playNext))) { line in
+                        switch line {
+                        case .header(let title):
+                            PanelHeader(title: title)
+                        case .song(let item, let index, let canPlayNext):
+                            // Spotify adds after songs already queued, so the label
+                            // says where it will actually land.
+                            queueRow(item, at: index, canPlayNext: canPlayNext, joinsQueue: !queue.queued.isEmpty)
                         }
                     }
                 }
@@ -362,6 +361,86 @@ struct NowPlayingLibraryPanel: View {
                 }
             }
         }
+    }
+
+    private func queueRow(_ item: MediaItem, at index: Int, canPlayNext: Bool, joinsQueue: Bool) -> some View {
+        LibraryRow(
+            title: item.title,
+            subtitle: item.subtitle,
+            artworkURL: item.artworkURL,
+            placeholder: "music.note",
+            isBusy: library.pendingRow == NowPlayingLibraryModel.queueRow(index),
+            action: library.offers(.playFromQueue) ? { library.play(item, at: index) } : nil,
+            playNext: canPlayNext ? { library.playNext(item, at: index) } : nil,
+            joinsQueue: joinsQueue
+        ) {
+            if let duration = item.duration, duration > 0 {
+                Text(NowPlayingClock.text(duration))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+        }
+    }
+}
+
+/// A line of Up Next: a song, or the header over one part of the queue.
+///
+/// They make one list, not a list per part, because the lazy stack under them
+/// shows stale rows when a row's id moves from one part to the other, as it does
+/// when a song is queued ahead of it.
+private enum QueueLine: Identifiable {
+    case header(String)
+    /// `index` is the song's position in `MediaQueue.all`.
+    case song(MediaItem, index: Int, canPlayNext: Bool)
+
+    /// Songs go by position, since one can be in the queue twice.
+    var id: String {
+        switch self {
+        case .header(let title): "header.\(title)"
+        case .song(_, let index, _): "song.\(index)"
+        }
+    }
+
+    /// Split as Spotify shows it: what was queued plays first, then the rest of
+    /// what is playing. Only the rest can be queued to play next.
+    static func lines(_ queue: MediaQueue, canPlayNext: Bool) -> [QueueLine] {
+        var lines: [QueueLine] = []
+        if queue.isSplit, !queue.queued.isEmpty {
+            lines.append(.header("Next in queue"))
+        }
+        lines += queue.queued.enumerated().map { .song($1, index: $0, canPlayNext: false) }
+        if queue.isSplit, !queue.upcoming.isEmpty {
+            lines.append(.header(upcomingTitle(queue.sourceName)))
+        }
+        lines += queue.upcoming.enumerated().map {
+            .song($1, index: queue.queued.count + $0, canPlayNext: canPlayNext)
+        }
+        return lines
+    }
+
+    /// "Next from: My playlist #9", or plainer when the app does not say.
+    private static func upcomingTitle(_ sourceName: String?) -> String {
+        guard let name = sourceName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        else { return "Next up" }
+        return "Next from: \(name)"
+    }
+}
+
+/// Names a part of Up Next, over its rows.
+private struct PanelHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.55))
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 2)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -398,6 +477,13 @@ private struct LibraryRow<Accessory: View>: View {
     let isBusy: Bool
     /// `nil` when the library cannot act on the row.
     let action: (() -> Void)?
+    /// Queues the song to play next, for a song still to come that the library can
+    /// queue: a button over the accessory while the pointer is on the row, and the
+    /// row's menu.
+    var playNext: (() -> Void)?
+    /// Songs are already queued, so a queued song goes after them: "Add to Queue"
+    /// rather than "Play Next".
+    var joinsQueue = false
     @ViewBuilder let accessory: Accessory
     @State private var isHovering = false
 
@@ -424,7 +510,10 @@ private struct LibraryRow<Accessory: View>: View {
                     ProgressView()
                         .controlSize(.mini)
                 } else {
+                    // Kept in the layout under the button, so the title does not
+                    // shift when the button comes and goes.
                     accessory
+                        .opacity(showsPlayNext ? 0 : 1)
                 }
             }
             .padding(.horizontal, 8)
@@ -436,8 +525,53 @@ private struct LibraryRow<Accessory: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .allowsHitTesting(action != nil)
+        // Over the row's button rather than inside it, so it takes its own clicks.
+        .overlay(alignment: .trailing) {
+            if showsPlayNext, let playNext {
+                PlayNextButton(joinsQueue: joinsQueue, action: playNext)
+                    .padding(.trailing, 6)
+            }
+        }
+        .contextMenu {
+            if let playNext {
+                Button(PlayNextButton.title(joinsQueue), systemImage: PlayNextButton.symbol(joinsQueue), action: playNext)
+            }
+        }
+        .allowsHitTesting(action != nil || playNext != nil)
         .onHover { isHovering = $0 }
+    }
+
+    private var showsPlayNext: Bool {
+        isHovering && playNext != nil && !isBusy
+    }
+}
+
+/// Play Next (or Add to Queue) on a row the pointer is on.
+private struct PlayNextButton: View {
+    let joinsQueue: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    static func title(_ joinsQueue: Bool) -> String { joinsQueue ? "Add to Queue" : "Play Next" }
+
+    /// Music's own Play Next and Play Later symbols.
+    static func symbol(_ joinsQueue: Bool) -> String {
+        joinsQueue ? "text.line.last.and.arrowtriangle.forward" : "text.line.first.and.arrowtriangle.forward"
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: Self.symbol(joinsQueue))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(isHovering ? 1 : 0.85))
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(.white.opacity(isHovering ? 0.22 : 0.12)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(Self.title(joinsQueue))
+        .accessibilityLabel(Self.title(joinsQueue))
     }
 }
 

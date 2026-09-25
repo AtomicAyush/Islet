@@ -180,10 +180,89 @@ struct SpotifyPage<Item: Decodable>: Decodable {
     var items: SpotifyList<Item>
 }
 
-/// `GET /me/player`, for the playlist (or album, or artist) playing now.
+/// `GET /me/player`: the playlist (or album, or artist) playing now, and how.
 struct SpotifyPlayback: Decodable {
     struct Context: Decodable { var uri: String? }
     var context: Context?
+    var shuffleState: Bool?
+    /// Shuffle that slips in recommendations, which are in no playlist.
+    var smartShuffle: Bool?
+    /// "off", "track" or "context".
+    var repeatState: String?
+
+    /// How the context plays, for splitting the queue by it. nil for smart
+    /// shuffle, whose recommendations cannot be told from queued songs.
+    var queueOrder: SpotifyQueueSplit.Order? {
+        if smartShuffle == true { return nil }
+        if shuffleState == true { return .shuffled }
+        return .listed(repeats: repeatState == "context")
+    }
+}
+
+/// A playlist's or album's track, for telling queued songs from the rest. Read
+/// with `market=from_token`, so it says whether it plays here. When Spotify has
+/// swapped in a release that does, `linked_from` names the track it stands in
+/// for; February 2026 took that from full track objects, so only album listings
+/// may still have it.
+struct SpotifyListedTrack: Decodable {
+    struct Original: Decodable { var uri: String? }
+
+    var uri: String
+    var isPlayable: Bool?
+    var isLocal: Bool?
+    var linkedFrom: Original?
+
+    var splitTrack: SpotifyQueueSplit.Track {
+        SpotifyQueueSplit.Track(
+            uris: [uri] + [linkedFrom?.uri].compactMap { $0 },
+            mayBeSkipped: isPlayable == false || isLocal == true
+        )
+    }
+}
+
+/// A page of a playlist's entries (`/playlists/{id}/items`) or an album's tracks.
+struct SpotifyTrackPage: Decodable {
+    /// A playlist entry holds its track under `item` (`track` before February
+    /// 2026), null once the track has left Spotify; an album lists tracks bare.
+    struct Entry: Decodable {
+        var track: SpotifyListedTrack?
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            track = (try? container.decodeIfPresent(SpotifyListedTrack.self, forKey: .item))
+                ?? (try? container.decodeIfPresent(SpotifyListedTrack.self, forKey: .track))
+                ?? (try? SpotifyListedTrack(from: decoder))
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case item, track
+        }
+    }
+
+    var items: SpotifyList<Entry>
+    var offset: Int
+    var limit: Int
+    var total: Int
+
+    var page: SpotifyTrackListing.Page {
+        SpotifyTrackListing.Page(
+            offset: offset, limit: limit, total: total,
+            tracks: items.elements.compactMap { $0.track?.splitTrack }
+        )
+    }
+}
+
+/// `GET /albums/{id}`: its name, and its first page of tracks.
+struct SpotifyAlbum: Decodable {
+    var name: String?
+    var tracks: SpotifyTrackPage
+}
+
+/// `GET /playlists/{id}?fields=name,snapshot_id`: which version of a playlist is
+/// current, without its tracks.
+struct SpotifyPlaylistVersion: Decodable {
+    var name: String?
+    var snapshotId: String?
 }
 
 /// Either of Spotify's error bodies: the Web API's `{"error": {"status", "message",
