@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// iOS system blue, AirDrop's colour.
 let dropZoneBlue = Color(red: 0.04, green: 0.52, blue: 1.0)
@@ -25,16 +24,16 @@ struct DropZonePage: View {
 }
 
 /// One place to drop files. It swells and lights up in its colour while a drag is
-/// over it, and says what happened for a moment after the drop.
+/// over it, and says what happened for a moment after the drop. The island takes
+/// the drop and says which tile it landed on.
 private struct DropTile: View {
     let place: DropZoneModel.Place
     let model: DropZoneModel
-    @State private var isTargeted = false
 
     private var accent: Color { place == .airDrop ? dropZoneBlue : dropZoneYellow }
 
     var body: some View {
-        let isLit = isTargeted || model.demoTarget == place
+        let isLit = model.hovered == place || model.demoTarget == place
         // A new drag over the tile takes precedence over the last drop's note.
         let note = !isLit && model.note?.place == place ? model.note : nil
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -73,13 +72,6 @@ private struct DropTile: View {
         .scaleEffect(isLit ? 1.03 : 1)
         .animation(.spring(response: 0.3, dampingFraction: 0.62), value: isLit)
         .animation(.easeOut(duration: 0.2), value: note)
-        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
-            Task { @MainActor in
-                let urls = await DropZoneModel.fileURLs(from: providers)
-                model.dropped(urls, on: place)
-            }
-            return true
-        }
     }
 
     private func badge(isLit: Bool, note: DropZoneModel.Note?) -> some View {

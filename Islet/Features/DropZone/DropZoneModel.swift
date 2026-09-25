@@ -20,6 +20,8 @@ final class DropZoneModel {
 
     let shelf = ShelfStore()
     private(set) var note: Note?
+    /// The tile a file drag is over, as the island reports it.
+    var hovered: Place?
     /// Lights a tile as if a file were held over it, for previews.
     var demoTarget: Place?
 
@@ -51,20 +53,12 @@ final class DropZoneModel {
         }
     }
 
-    /// The file URLs behind a drop, in the order they were dragged.
-    nonisolated static func fileURLs(from providers: [NSItemProvider]) async -> [URL] {
-        var urls: [URL] = []
-        for provider in providers {
-            if let url = await provider.loadFileURL() { urls.append(url) }
-        }
-        return urls
-    }
-
     /// Clears the note and any preview highlight, when the feature stops.
     func reset() {
         noteTask?.cancel()
         noteTask = nil
         note = nil
+        hovered = nil
         demoTarget = nil
     }
 
@@ -118,20 +112,5 @@ final class DropZoneModel {
         NSApp.activate()
         service.perform(withItems: urls)
         return true
-    }
-}
-
-private extension NSItemProvider {
-    /// The dragged file's URL. Reading it as a URL object resolves the file reference
-    /// URLs Finder drags (file:///.file/id=…) into paths; one that cannot be resolved
-    /// comes back as a non-file URL and is skipped.
-    func loadFileURL() async -> URL? {
-        let url: URL? = await withCheckedContinuation { continuation in
-            _ = loadObject(ofClass: URL.self) { url, _ in
-                continuation.resume(returning: url)
-            }
-        }
-        guard let url, url.isFileURL else { return nil }
-        return url
     }
 }

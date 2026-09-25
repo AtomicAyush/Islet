@@ -159,7 +159,8 @@ final class DropZoneFeature: Feature {
     }
 }
 
-/// What the island opens onto while a file is dragged to the notch.
+/// What the island opens onto while a file is dragged to the notch: AirDrop on the
+/// left half of the page, the shelf on the right.
 @MainActor
 final class DropZoneTarget: DropTarget {
     let model: DropZoneModel
@@ -169,6 +170,22 @@ final class DropZoneTarget: DropTarget {
     var expandedHeight: CGFloat { 104 }
 
     func view() -> AnyView { AnyView(DropZonePage(model: model)) }
+
+    func dragMoved(to point: CGPoint?, in size: CGSize) {
+        let place = point.map { Self.place(at: $0, in: size) }
+        if model.hovered != place { model.hovered = place }
+    }
+
+    func canDrop(at point: CGPoint, in size: CGSize) -> Bool { true }
+
+    func drop(_ urls: [URL], at point: CGPoint, in size: CGSize) {
+        model.dropped(urls, on: Self.place(at: point, in: size))
+    }
+
+    /// The two tiles split the page down the middle.
+    private static func place(at point: CGPoint, in size: CGSize) -> DropZoneModel.Place {
+        point.x < size.width / 2 ? .airDrop : .shelf
+    }
 }
 
 private struct DropZoneSettings: View {

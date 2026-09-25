@@ -99,13 +99,23 @@ struct HomeWidget: Identifiable {
 }
 
 /// Receives files dragged onto the island. While a file drag nears the notch, the
-/// island opens onto this target's page and keeps catching the pointer until the
-/// drag ends. The page does its own drop handling (`.onDrop`), so it can offer
-/// more than one place to drop.
+/// island opens onto this target's page.
+///
+/// The island handles the drag itself and reports where it is over the page, so the
+/// page only draws. (A drop handler inside the page would appear only once the drag
+/// was under way, and AppKit does not offer a drag to a window that had nowhere to
+/// drop when it began — so the first drag would slide back every time.)
 @MainActor
 protocol DropTarget: AnyObject {
     /// Height of the drop page below the notch row.
     var expandedHeight: CGFloat { get }
-    /// The drop page.
+    /// The drop page. It shows where a drop would land; it takes no drops itself.
     func view() -> AnyView
+    /// A file drag is over the page at `point` (top-left origin, in a page of
+    /// `size`), or has left it (`nil`).
+    func dragMoved(to point: CGPoint?, in size: CGSize)
+    /// Whether files dropped at `point` would be taken.
+    func canDrop(at point: CGPoint, in size: CGSize) -> Bool
+    /// Files were dropped at `point`.
+    func drop(_ urls: [URL], at point: CGPoint, in size: CGSize)
 }
