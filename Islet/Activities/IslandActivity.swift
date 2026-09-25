@@ -84,6 +84,8 @@ struct IslandBanner {
     var style: Style
     var duration: TimeInterval = 2.6
     var haptic: Bool = true
+    /// Whether the banner may break through while a Focus asks for quiet.
+    var interruption: BannerInterruption = .active
     /// Compact style: left of the notch.
     var leading: AnyView = AnyView(EmptyView())
     /// Compact style: right of the notch.
@@ -92,14 +94,37 @@ struct IslandBanner {
     var content: AnyView = AnyView(EmptyView())
 }
 
+/// How much a banner may interrupt, after the iPhone's notification interruption
+/// levels. A Focus quiets passive banners the way it quiets passive notifications.
+/// A preview is there to be looked at, so a feature previewing a passive banner
+/// presents it as active.
+enum BannerInterruption {
+    /// Nice to see, never needed now: a song changing. Dropped while a Focus is on,
+    /// if Settings asks for quiet.
+    case passive
+    /// Worth the interruption: something the person did (plugging in, connecting
+    /// headphones, a Focus changing) or something they asked to hear about (a timer).
+    case active
+}
+
 /// A small coloured dot beside the notch, like the iPhone's camera and microphone
-/// indicators. Indicators sit at the island's right edge whether it is resting or
-/// showing an activity, and never take the island over.
+/// indicators, or a small symbol where the state needs naming. Indicators sit at the
+/// island's right edge whether it is resting or showing an activity, and never take
+/// the island over.
 struct StatusIndicator: Identifiable, Equatable {
     var id: String
     var color: Color
     /// Lower sorts first (closest to the notch).
     var order: Int = 0
+    /// An SF Symbol drawn in `color` in place of the dot, for a state that needs
+    /// naming rather than flagging (which Focus is on). `nil` draws the dot.
+    var symbol: String? = nil
+    /// Whether the indicator alone brings up the island where it would otherwise
+    /// hide: on a display without a notch, with no resting island asked for. The
+    /// camera and microphone dots do, since they must be seen wherever they are. A
+    /// Focus, on for hours at a time, does not: it is shown wherever the island is
+    /// up anyway, and never overrules that setting.
+    var keepsIslandShown = true
 }
 
 /// A tile on the home page — what the expanded island shows when nothing is

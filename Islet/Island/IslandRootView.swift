@@ -201,16 +201,33 @@ struct IndicatorDots: View {
     let indicators: [StatusIndicator]
 
     var body: some View {
-        HStack(spacing: IslandLayout.indicatorPitch - 7) {
+        HStack(spacing: IslandLayout.indicatorGap) {
             ForEach(indicators) { indicator in
-                Circle()
-                    .fill(indicator.color)
-                    .frame(width: 7, height: 7)
-                    .shadow(color: indicator.color.opacity(0.6), radius: 3)
+                mark(indicator)
                     .transition(.scale.combined(with: .opacity))
             }
         }
         .padding(.leading, 2)
+    }
+
+    /// A dot, or the indicator's symbol fitted into the box `IslandLayout` gives it,
+    /// with a softer glow than a dot's so its shape stays crisp.
+    @ViewBuilder
+    private func mark(_ indicator: StatusIndicator) -> some View {
+        if let symbol = indicator.symbol {
+            Image(systemName: symbol)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .fontWeight(.semibold)
+                .foregroundStyle(indicator.color)
+                .frame(width: IslandLayout.indicatorSymbol.width, height: IslandLayout.indicatorSymbol.height)
+                .shadow(color: indicator.color.opacity(0.45), radius: 2)
+        } else {
+            Circle()
+                .fill(indicator.color)
+                .frame(width: IslandLayout.indicatorDot, height: IslandLayout.indicatorDot)
+                .shadow(color: indicator.color.opacity(0.6), radius: 3)
+        }
     }
 }
 

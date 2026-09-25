@@ -307,6 +307,7 @@ final class NowPlayingFeature: Feature {
             style: .compact(leading: wing, trailing: wing),
             duration: 2.5,
             haptic: false,
+            interruption: model.isPreviewing ? .active : .passive,
             leading: AnyView(NowPlayingSongBannerLeading(model: model)),
             trailing: AnyView(NowPlayingSongBannerTrailing(model: model))
         ))

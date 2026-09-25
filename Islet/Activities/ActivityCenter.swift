@@ -18,6 +18,10 @@ final class ActivityCenter {
     var dropTarget: (any DropTarget)?
     /// Dots beside the notch, in display order.
     private(set) var indicators: [StatusIndicator] = []
+    /// Set while a Focus is on and Settings asks for quiet: passive banners are then
+    /// dropped rather than shown, the way a Focus holds back passive notifications.
+    /// Active banners, live activities and indicators are unaffected.
+    var silencesPassiveBanners = false
 
     /// Bumped whenever an activity re-publishes itself, so views that depend on its
     /// sizes are invalidated even though the array's identity did not change.
@@ -66,8 +70,10 @@ final class ActivityCenter {
     // MARK: Banners
 
     /// Shows a banner for its duration. A banner with the same id as the current one
-    /// updates in place; a different one replaces it.
+    /// updates in place; a different one replaces it. A passive banner is dropped
+    /// while passive banners are silenced.
     func present(_ banner: IslandBanner) {
+        if banner.interruption == .passive, silencesPassiveBanners { return }
         let isUpdate = self.banner?.id == banner.id
         if isUpdate {
             self.banner = banner

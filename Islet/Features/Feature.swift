@@ -59,6 +59,7 @@ final class FeatureRegistry {
         BluetoothFeature(),
         CalendarFeature(),
         PrivacyFeature(),
+        FocusFeature(),
         DropZoneFeature(),
     ]
 

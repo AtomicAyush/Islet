@@ -73,8 +73,9 @@ final class IslandViewModel {
         if isSuppressed { return .hidden }
         if let banner = center.banner { return .banner(id: banner.id) }
         if let primary = center.primary { return .compact(id: primary.id) }
-        // Camera and microphone dots need somewhere to sit, notch or not.
-        return metrics.hasNotch || showsIdlePill || !center.indicators.isEmpty ? .idle : .hidden
+        // Camera and microphone dots need somewhere to sit, notch or not; a
+        // long-lived indicator such as a Focus's waits for the island to be up.
+        return metrics.hasNotch || showsIdlePill || center.indicators.contains(where: \.keepsIslandShown) ? .idle : .hidden
     }
 
     var resolvedFocus: String {
@@ -275,6 +276,14 @@ struct IslandLayout: Equatable {
     static let foldedSpacing: CGFloat = 6
     /// Width of one indicator dot and the gap after it.
     static let indicatorPitch: CGFloat = 11
+    /// An indicator dot's diameter; the rest of the pitch is the gap after it, which
+    /// a symbol indicator keeps too.
+    static let indicatorDot: CGFloat = 7
+    static var indicatorGap: CGFloat { indicatorPitch - indicatorDot }
+    /// The box an indicator drawn as a symbol (a Focus's) is fitted into: as tall as
+    /// a line of small text, and wide enough for a wide symbol (a bed, a car) at that
+    /// height, so every symbol takes the same room whatever its shape.
+    static let indicatorSymbol = CGSize(width: 14, height: 11)
 
     var size: CGSize
     /// Gap above the island: zero when it hangs from a notch, a few points when it
@@ -309,6 +318,16 @@ struct IslandLayout: Equatable {
 
     /// Default width either side of the notch for compact content.
     static func defaultSide(for notch: CGSize) -> CGFloat { notch.height + 12 }
+
+    /// Width at the right edge given to `indicators`: each one's own width and the
+    /// gap after it, plus room before the island's rounded end. A row of dots comes
+    /// to `indicatorPitch` apiece; a symbol takes its wider box.
+    static func indicatorWidth(for indicators: [StatusIndicator]) -> CGFloat {
+        guard !indicators.isEmpty else { return 0 }
+        return indicators.reduce(6) { width, indicator in
+            width + (indicator.symbol == nil ? indicatorDot : indicatorSymbol.width) + indicatorGap
+        }
+    }
 
     var foldsSecondary: Bool { foldedWidth > 0 }
 
@@ -347,9 +366,7 @@ struct IslandLayout: Equatable {
         let center = model.center
         // Touch the revision so re-published activity sizes invalidate the layout.
         _ = center.revision
-        let dots = center.indicators.isEmpty
-            ? 0
-            : CGFloat(center.indicators.count) * indicatorPitch + 6
+        let dots = indicatorWidth(for: center.indicators)
 
         var layout = IslandLayout(
             size: CGSize(width: notch.width + 2 * ear, height: notch.height),

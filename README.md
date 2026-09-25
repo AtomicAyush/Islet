@@ -56,6 +56,14 @@ starts, with a Join button when there is a Zoom, Meet, Teams, Webex or FaceTime 
 **Camera & Microphone.** A green dot beside the notch while the camera is in use, an orange
 one while only the microphone is — as on the iPhone.
 
+**Focus.** Do Not Disturb, Sleep, Work or a Focus of your own gets a moment in the island as
+it turns on or off, as on the iPhone — its symbol and name left of the camera, "On" in its
+colour on the right — and while it is on, its symbol stays beside the notch and song changes
+go unannounced. macOS keeps which Focus is on in a database only apps with Full Disk Access
+may read, so this needs Full Disk Access; until it has it, the home tile says so. Nor can
+other apps turn Focus on or off, so clicking the tile runs a shortcut of yours: make one with
+the Set Focus action set to toggle Do Not Disturb, and pick it in Settings.
+
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
 bubble beside the island. macOS has no per-app volume, so Islet makes one with Core Audio
@@ -119,8 +127,9 @@ Requires macOS 14 or later and Xcode 16 or later.
 ```
 
 builds a Release copy, signs it with your Apple Development certificate if you have one, and
-installs it to `/Applications`. A stable signature matters: macOS remembers Accessibility and
-Calendar permission against the signature, and an ad-hoc one changes with every build.
+installs it to `/Applications`. A stable signature matters: macOS remembers Accessibility,
+Calendar and Full Disk Access permission against the signature, and an ad-hoc one changes with
+every build.
 
 ## Scripting
 
@@ -135,6 +144,7 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://timer/pause`, `/resume`, `/cancel` | |
 | `islet://preview?feature=battery&index=0` | Runs a feature's preview |
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
+| `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
 | `islet://settings?tab=activities` | Opens Settings on a tab |
 
 ```bash
