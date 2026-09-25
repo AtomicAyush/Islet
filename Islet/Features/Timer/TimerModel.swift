@@ -40,9 +40,17 @@ final class TimerModel {
         return remaining(at: date) / duration
     }
 
-    func start(_ seconds: TimeInterval) {
+    /// The longest countdown taken. Far beyond any real timer, and well inside what
+    /// the date maths and `Text(timerInterval:)` can represent.
+    nonisolated static let longest: TimeInterval = 100 * 3600
+
+    /// Starts a countdown. `remember` false leaves "the last length" alone, for
+    /// previews that should not change what the done card offers to restart.
+    func start(_ seconds: TimeInterval, remember: Bool = true) {
+        guard seconds.isFinite, seconds > 0 else { return }
+        let seconds = min(seconds, Self.longest)
         duration = seconds
-        lastDuration = seconds
+        if remember { lastDuration = seconds }
         run(until: Date().addingTimeInterval(seconds))
     }
 
@@ -93,7 +101,8 @@ extension TimeInterval {
     /// "4:05", or "1:02:03" past an hour. Rounds up, so a timer never reads 0:00
     /// while it is still running.
     var countdownText: String {
-        let total = Int(self.rounded(.up))
+        guard isFinite else { return "--:--" }
+        let total = Int(Swift.min(Swift.max(0, self.rounded(.up)), TimerModel.longest))
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
         return h > 0
             ? String(format: "%d:%02d:%02d", h, m, s)

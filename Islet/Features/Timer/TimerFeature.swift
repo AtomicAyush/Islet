@@ -47,8 +47,8 @@ final class TimerFeature: Feature {
 
     var previews: [FeaturePreview] {
         [
-            FeaturePreview(title: "10-second timer") { [model] in model.start(10) },
-            FeaturePreview(title: "5-minute timer") { [model] in model.start(5 * 60) },
+            FeaturePreview(title: "10-second timer") { [weak self] in self?.preview(seconds: 10) },
+            FeaturePreview(title: "5-minute timer") { [weak self] in self?.preview(seconds: 5 * 60) },
         ]
     }
 
@@ -62,7 +62,7 @@ final class TimerFeature: Feature {
         switch url.path() {
         case "/start":
             let seconds = value("seconds") ?? (value("minutes") ?? 5) * 60
-            guard seconds > 0 else { return false }
+            guard seconds.isFinite, seconds > 0, seconds <= TimerModel.longest else { return false }
             model.start(seconds)
         case "/pause": model.pause()
         case "/resume": model.resume()
@@ -70,6 +70,16 @@ final class TimerFeature: Feature {
         default: return false
         }
         return true
+    }
+
+    /// Shows a sample countdown — but never over a timer the person started: that one
+    /// is shown instead.
+    private func preview(seconds: TimeInterval) {
+        if model.isActive {
+            IslandManager.shared.focusedController?.model.expand(focus: activity.id)
+        } else {
+            model.start(seconds, remember: false)
+        }
     }
 
     private func sync() {
