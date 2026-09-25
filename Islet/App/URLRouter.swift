@@ -37,6 +37,10 @@ enum URLRouter {
             else { return }
             let index = Int(query["index"] ?? "0") ?? 0
             if feature.previews.indices.contains(index) { feature.previews[index].run() }
+        #if DEBUG
+        case "debug":
+            if url.path() == "/second" { DebugActivity.shared.toggle() }
+        #endif
         default:
             FeatureRegistry.shared.features.first { $0.id == host }.map { _ = $0.handle(url) }
         }

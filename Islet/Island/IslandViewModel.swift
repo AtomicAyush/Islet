@@ -212,8 +212,15 @@ struct IslandLayout: Equatable {
     /// the two sides of compact content differ in width: the island shifts so the
     /// gap in the middle stays exactly over the camera.
     var centerOffset: CGFloat = 0
+    /// Gap above the island: zero when it hangs from a notch, a few points when it
+    /// floats on a display without one.
+    var topInset: CGFloat = 0
     var earRadius: CGFloat
     var bottomRadius: CGFloat
+    /// Convex top corners, for the floating pill. Zero under a notch.
+    var topRadius: CGFloat = 0
+    /// The camera's gap. Under a notch it is drawn a point wider on each side than
+    /// the hardware so no sliver of menu bar shows between the two.
     var notch: CGSize
     /// Compact / banner content widths either side of the notch. The trailing
     /// width includes the indicator strip.
@@ -233,14 +240,17 @@ struct IslandLayout: Equatable {
     var bubbleCenterOffset: CGSize {
         CGSize(
             width: centerOffset + size.width / 2 + Self.bubbleGap + bubbleDiameter / 2,
-            height: notch.height / 2
+            height: topInset + notch.height / 2
         )
     }
 
     @MainActor
     static func make(for model: IslandViewModel) -> IslandLayout {
-        let notch = model.metrics.notchSize
-        let ear: CGFloat = 6
+        let metrics = model.metrics
+        let floating = !metrics.hasNotch
+        var notch = metrics.notchSize
+        if !floating { notch.width += 2 }
+        let ear: CGFloat = floating ? 0 : 6
         let side = defaultSide(for: notch)
         let hover: CGFloat = model.isHovering ? 1 : 0
         let center = model.center
@@ -252,11 +262,19 @@ struct IslandLayout: Equatable {
 
         var layout = IslandLayout(
             size: CGSize(width: notch.width + 2 * ear, height: notch.height),
+            topInset: metrics.topInset,
             earRadius: ear,
-            bottomRadius: 11,
+            bottomRadius: floating ? notch.height / 2 : 11,
+            topRadius: floating ? notch.height / 2 : 0,
             notch: notch,
             bubbleDiameter: notch.height - 4
         )
+
+        /// Rounds the corners; the floating pill rounds its top to match.
+        func corners(_ bottom: CGFloat, top: CGFloat? = nil) {
+            layout.bottomRadius = bottom
+            layout.topRadius = floating ? (top ?? bottom) : 0
+        }
 
         /// Lays out content either side of the notch at notch height.
         func wings(leading: CGFloat, trailing: CGFloat, grow: CGFloat) {
@@ -267,7 +285,7 @@ struct IslandLayout: Equatable {
                 height: notch.height + grow / 5
             )
             layout.centerOffset = (trailing - leading) / 2
-            layout.bottomRadius = min(notch.height / 2 - 2, 14) + grow / 10
+            corners(floating ? layout.size.height / 2 : min(notch.height / 2 - 2, 14) + grow / 10)
         }
 
         switch model.mode {
@@ -278,12 +296,14 @@ struct IslandLayout: Equatable {
             if dots > 0 {
                 layout.indicatorWidth = dots
                 wings(leading: 0, trailing: dots, grow: 5 * hover)
-                layout.bottomRadius = 11 + 2 * hover
+            } else if floating {
+                // The resting pill, where the user asked for one.
+                layout.size.width += 36 + 10 * hover
             } else {
                 // A little growth under the pointer says "this opens".
                 layout.size.width += 14 * hover
                 layout.size.height += 3 * hover
-                layout.bottomRadius = 11 + 2 * hover
+                corners(11 + 2 * hover)
             }
 
         case .compact(let id):
@@ -300,20 +320,20 @@ struct IslandLayout: Equatable {
             case .compact(let leading, let trailing):
                 wings(leading: leading, trailing: trailing, grow: 0)
             case .card(let width, let height):
-                layout.earRadius = 9
+                if !floating { layout.earRadius = 9 }
                 layout.bodyHeight = height
                 layout.size = CGSize(
                     width: (width ?? 400) + 2 * layout.earRadius,
                     height: notch.height + height + expandedInset.bottom
                 )
-                layout.bottomRadius = 26
+                corners(26, top: 22)
                 layout.showsShadow = true
             case nil:
                 break
             }
 
         case .expanded(let focus):
-            layout.earRadius = 10
+            if !floating { layout.earRadius = 10 }
             let body: CGFloat
             if focus == IslandViewModel.homeFocus {
                 body = homeHeight
@@ -327,7 +347,7 @@ struct IslandLayout: Equatable {
                 width: max(expandedWidth, notch.width + 300) + 2 * layout.earRadius,
                 height: notch.height + body + expandedInset.bottom
             )
-            layout.bottomRadius = 30
+            corners(30, top: 24)
             layout.showsShadow = true
         }
 

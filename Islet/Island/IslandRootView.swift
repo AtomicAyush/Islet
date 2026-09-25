@@ -12,19 +12,10 @@ struct IslandRootView: View {
         let layout = model.layout
 
         ZStack(alignment: .top) {
-            if let bubble = model.bubbleActivity {
-                MinimalBubble(activity: bubble, diameter: layout.bubbleDiameter) {
-                    model.expand(focus: bubble.id)
-                }
-                .offset(
-                    x: layout.bubbleCenterOffset.width,
-                    y: layout.bubbleCenterOffset.height - layout.bubbleDiameter / 2
-                )
-                .transition(.bubbleDetach(distance: layout.bubbleCenterOffset.width))
-            }
+            BubbleLayer(model: model, layout: layout)
 
             IslandSurface(model: model, layout: layout)
-                .offset(x: layout.centerOffset)
+                .offset(x: layout.centerOffset, y: layout.topInset)
         }
         .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
         .ignoresSafeArea()
@@ -39,7 +30,11 @@ private struct IslandSurface: View {
     let layout: IslandLayout
 
     var body: some View {
-        let shape = IslandShape(earRadius: layout.earRadius, bottomRadius: layout.bottomRadius)
+        let shape = IslandShape(
+            earRadius: layout.earRadius,
+            bottomRadius: layout.bottomRadius,
+            topRadius: layout.topRadius
+        )
 
         ZStack(alignment: .top) {
             shape.fill(Color.black)
@@ -49,10 +44,30 @@ private struct IslandSurface: View {
                 .transition(.islandContent)
                 .padding(.horizontal, layout.earRadius)
         }
-        .frame(width: layout.size.width, height: layout.size.height, alignment: .top)
+        // Width and height spring separately — width a little livelier — so the
+        // island stretches sideways a beat before it drops, rather than scaling
+        // like a rectangle.
+        .animation(.islandWidth) { $0.frame(width: layout.size.width, alignment: .top) }
+        .animation(.islandHeight) { $0.frame(height: layout.size.height, alignment: .top) }
         .clipShape(shape)
         .contentShape(shape)
-        .shadow(color: .black.opacity(layout.showsShadow ? 0.5 : 0), radius: 20, y: 10)
+        .keyframeAnimator(initialValue: Squash(), trigger: model.contentKey) { view, squash in
+            view.scaleEffect(x: squash.x, y: squash.y, anchor: .top)
+        } keyframes: { _ in
+            // A brief squash and rebound on every change of shape, like the iPhone's
+            // island absorbing the impact of new content.
+            KeyframeTrack(\.x) {
+                SpringKeyframe(1.035, duration: 0.14, spring: .snappy)
+                SpringKeyframe(0.994, duration: 0.16, spring: .snappy)
+                SpringKeyframe(1, duration: 0.2, spring: .smooth)
+            }
+            KeyframeTrack(\.y) {
+                SpringKeyframe(0.95, duration: 0.14, spring: .snappy)
+                SpringKeyframe(1.012, duration: 0.16, spring: .snappy)
+                SpringKeyframe(1, duration: 0.2, spring: .smooth)
+            }
+        }
+        .shadow(color: .black.opacity(layout.showsShadow ? 0.5 : 0), radius: 18, y: 8)
         .onTapGesture { model.tap() }
         .opacity(model.mode == .hidden ? 0 : 1)
     }
@@ -106,6 +121,11 @@ private struct IslandSurface: View {
     }
 }
 
+private struct Squash {
+    var x: CGFloat = 1
+    var y: CGFloat = 1
+}
+
 /// Compact content: one view left of the notch, one right, and the camera between.
 /// Indicator dots, if any, sit at the far right.
 private struct CompactRow: View {
@@ -147,42 +167,92 @@ struct IndicatorDots: View {
     }
 }
 
-/// The detached circle the iPhone uses for a second live activity.
-private struct MinimalBubble: View {
-    let activity: any IslandActivity
-    let diameter: CGFloat
-    let onTap: () -> Void
+/// The detached bubble the iPhone uses for a second live activity. It keeps the
+/// activity it last showed so it can merge back into the island after that
+/// activity has already gone.
+private struct BubbleLayer: View {
+    let model: IslandViewModel
+    let layout: IslandLayout
+    @State private var shown: (any IslandActivity)?
+    @State private var progress: CGFloat = 0
 
     var body: some View {
-        activity.minimal()
-            .frame(width: diameter, height: diameter)
-            .background(Circle().fill(Color.black))
-            .clipShape(Circle())
-            .contentShape(Circle())
-            .onTapGesture(perform: onTap)
+        BubbleDroplet(progress: progress, layout: layout, activity: shown) { id in
+            model.expand(focus: id)
+        }
+        .onChange(of: model.bubbleActivity?.id, initial: true) { _, id in
+            if let activity = model.bubbleActivity { shown = activity }
+            withAnimation(id == nil ? .islandClose : .islandMorph) {
+                progress = id == nil ? 0 : 1
+            } completion: {
+                if model.bubbleActivity == nil { shown = nil }
+            }
+        }
     }
 }
 
-private struct BubbleDetach: ViewModifier {
+/// The bubble budding off the island like a droplet. Both are drawn as black
+/// circles through a blur and an alpha threshold, so while they are close a neck
+/// of "liquid" joins them, stretches, and snaps — the way the iPhone's island
+/// splits in two. Once the bubble has settled it is drawn plainly.
+private struct BubbleDroplet: View, Animatable {
     var progress: CGFloat
-    var distance: CGFloat
+    let layout: IslandLayout
+    let activity: (any IslandActivity)?
+    let onTap: (String) -> Void
 
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(1 - 0.6 * progress)
-            .offset(x: -distance * 0.35 * progress)
-            .opacity(Double(1 - progress))
-            .blur(radius: 3 * progress)
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
     }
-}
 
-extension AnyTransition {
-    /// The bubble buds off the island's right edge and springs out to its place.
-    static func bubbleDetach(distance: CGFloat) -> AnyTransition {
-        .modifier(
-            active: BubbleDetach(progress: 1, distance: distance),
-            identity: BubbleDetach(progress: 0, distance: distance)
-        )
+    var body: some View {
+        let d = layout.bubbleDiameter
+        let h = layout.notch.height
+        let target = layout.bubbleCenterOffset
+        // The island's rounded right end, relative to the notch's centre.
+        let islandRight = layout.centerOffset + layout.size.width / 2 - layout.earRadius
+        let tucked = islandRight - d / 2
+        let x = tucked + (target.width - tucked) * progress
+        let scale = 0.55 + 0.45 * min(progress, 1.2)
+        let isMoving = progress > 0.001 && abs(progress - 1) > 0.001
+
+        ZStack(alignment: .top) {
+            if isMoving {
+                Canvas { context, size in
+                    context.addFilter(.alphaThreshold(min: 0.5, color: .black))
+                    context.addFilter(.blur(radius: 4))
+                    context.drawLayer { layer in
+                        let mid = size.width / 2
+                        let cap = h / 2 - 1
+                        layer.fill(
+                            Path(ellipseIn: CGRect(x: mid + islandRight - 2 * cap, y: target.height - cap, width: 2 * cap, height: 2 * cap)),
+                            with: .color(.black)
+                        )
+                        let r = d / 2 * scale
+                        layer.fill(
+                            Path(ellipseIn: CGRect(x: mid + x - r, y: target.height - r, width: 2 * r, height: 2 * r)),
+                            with: .color(.black)
+                        )
+                    }
+                }
+                .frame(width: IslandLayout.canvas.width, height: layout.topInset + h + 12)
+                .allowsHitTesting(false)
+            }
+
+            if let activity, progress > 0.001 {
+                activity.minimal()
+                    .frame(width: d, height: d)
+                    .background(Circle().fill(Color.black))
+                    .clipShape(Circle())
+                    .opacity(Double(min(1, max(0, (progress - 0.35) / 0.5))))
+                    .background(Circle().fill(Color.black))
+                    .scaleEffect(scale)
+                    .contentShape(Circle())
+                    .onTapGesture { onTap(activity.id) }
+                    .offset(x: x, y: target.height - d / 2)
+            }
+        }
     }
 }
 

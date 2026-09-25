@@ -13,6 +13,10 @@ extension Animation {
     static let islandMorph = Animation.spring(response: 0.46, dampingFraction: 0.7)
     /// The small growth under the pointer.
     static let islandHover = Animation.spring(response: 0.28, dampingFraction: 0.62)
+    /// The island's width, whatever changed it: lively, so it stretches sideways.
+    static let islandWidth = Animation.spring(duration: 0.44, bounce: 0.26)
+    /// The island's height: a touch slower and calmer than its width.
+    static let islandHeight = Animation.spring(duration: 0.5, bounce: 0.14)
 }
 
 /// Content fades in from a blur and a slight shrink, and leaves faster than it came.

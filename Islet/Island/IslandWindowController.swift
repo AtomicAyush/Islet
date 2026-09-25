@@ -58,8 +58,11 @@ final class IslandWindowController {
 
     private static func frame(for metrics: NotchMetrics) -> CGRect {
         let size = IslandLayout.canvas
+        // Snap to whole pixels, not whole points: the notch's centre is often on a
+        // half point, and rounding that to a point would shift the island a pixel.
+        let scale = max(metrics.backingScale, 1)
         return CGRect(
-            x: (metrics.notchMidX - size.width / 2).rounded(),
+            x: ((metrics.notchMidX - size.width / 2) * scale).rounded() / scale,
             y: metrics.screenFrame.maxY - size.height,
             width: size.width,
             height: size.height
@@ -154,19 +157,17 @@ final class IslandWindowController {
         }
     }
 
-    /// Catch clicks only over the island (and its bubble); let everything else
-    /// through to the menu bar and windows below.
+    /// Works out whether the pointer is over the island (and its bubble), for hover.
+    /// Clicks need no help: the panel only catches them on pixels it has drawn.
     ///
     /// When the island changes shape on its own (a banner arriving, say) the pointer
-    /// may now be over it without having moved. That updates click-catching, but it
-    /// does not count as hovering — otherwise a pointer resting near the top of the
-    /// screen would open the island every time something happened.
+    /// may now be over it without having moved. That does not count as hovering —
+    /// otherwise a pointer resting near the top of the screen would open the island
+    /// every time something happened.
     private func updateHitTesting(pointerMoved: Bool = true) {
         guard let layout else { return }
         let point = NSEvent.mouseLocation
         let inside = islandRect(for: layout).contains(point) || bubbleRect(for: layout)?.contains(point) == true
-        let catchesDrops = fileDragActive && model.isExpanded
-        panel.ignoresMouseEvents = !(inside || catchesDrops)
         if pointerMoved || !inside {
             model.pointer(inside: inside)
         }
@@ -176,7 +177,7 @@ final class IslandWindowController {
         let metrics = model.metrics
         var rect = CGRect(
             x: metrics.notchMidX + layout.centerOffset - layout.size.width / 2,
-            y: metrics.screenFrame.maxY - layout.size.height,
+            y: metrics.screenFrame.maxY - layout.topInset - layout.size.height,
             width: layout.size.width,
             height: layout.size.height
         )
