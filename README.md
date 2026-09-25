@@ -41,7 +41,8 @@ Low Power Mode and unplugging can be announced too.
 
 **Volume & Brightness.** Replaces the system overlay with a slim bar in the island, naming the
 device being changed ("AirPods Max", "Built-in Retina Display"), the way macOS does. Needs
-Accessibility, so it is off until you turn it on.
+Accessibility (called Device Control and Data Access from macOS 27), so it is off until you
+turn it on.
 
 **Headphones.** AirPods and other headphones connecting, as a card with a battery ring for
 each earbud and the case. Connections are read from CoreAudio, so they need no permission;
@@ -84,7 +85,10 @@ the gap stays exactly over the camera.
 more important one keeps the island and the other buds off into a circle beside it. The two
 are drawn through a blur and an alpha threshold while they are close, so a neck of black
 joins them, stretches and snaps as the bubble springs out — and forms again when it merges
-back.
+back. Where the menu bar's icons leave no room for the bubble, the second activity folds into
+the island instead, as a small circle at its left end. macOS 27 draws the whole menu bar as
+one window, so there Islet finds the icons through Accessibility when it has it, and
+otherwise folds rather than risk covering them.
 
 **Rest the pointer on it to open it.** The island stretches sideways a beat before it drops,
 with a small squash and rebound, and its content arrives out of a blur. There is a tab for

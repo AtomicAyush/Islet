@@ -165,14 +165,14 @@ struct SystemHUDSettings: View {
                 Button("Grant Access…") { access.request() }
             }
         } label: {
-            Text("Accessibility")
+            Text(AccessibilityAccess.paneName)
             Text(access.isGranted
                  ? "Islet sees the volume and brightness keys before macOS does."
                  : "Needed to catch the volume and brightness keys. Until then, macOS shows its own overlay.")
             if !access.isGranted {
                 // The usual trap: macOS keeps the permission for the exact copy of the
                 // app it was given to, and still shows it switched on for a newer one.
-                Text("Already switched on in System Settings? That permission belongs to an earlier copy of Islet. Select Islet in the Accessibility list, remove it with −, then click Grant Access again.")
+                Text("Already switched on in System Settings? That permission belongs to an earlier copy of Islet. Select Islet in the \(AccessibilityAccess.paneName) list, remove it with −, then click Grant Access again.")
             }
         }
         .onAppear { access.refresh() }

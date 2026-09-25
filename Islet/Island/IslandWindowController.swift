@@ -74,15 +74,20 @@ final class IslandWindowController {
 
     /// Finds where the status items begin right of this island, for the model to
     /// decide whether the second activity's bubble fits there. Read off the main
-    /// thread: the first read of the window list takes tens of milliseconds.
+    /// thread: the first read of the window list takes tens of milliseconds, and
+    /// asking every app through Accessibility, when it comes to that, longer. When
+    /// nothing can tell where the items are, there is no room, and the second
+    /// activity folds into the island. The moment it was asked for goes along, so an
+    /// Accessibility read from before whatever prompted it is not reused.
     func measureMenuBarRoom() {
         guard let display = screen.displayID else { return }
         let metrics = model.metrics
         roomGeneration &+= 1
         let generation = roomGeneration
+        let asked = ContinuousClock.now
         Task.detached(priority: .userInitiated) { [weak self] in
-            let item = MenuBarRoom.firstStatusItem(rightOf: metrics.notchRect.maxX, on: display)
-            await self?.apply(menuBarRoom: item.map { $0 - metrics.notchMidX } ?? .infinity, generation: generation)
+            let finding = MenuBarRoom.find(rightOf: metrics.notchRect.maxX, on: display, askedAt: asked)
+            await self?.apply(menuBarRoom: finding.roomRight(of: metrics.notchMidX), generation: generation)
         }
     }
 

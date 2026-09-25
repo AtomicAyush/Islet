@@ -28,9 +28,11 @@ final class IslandViewModel {
     /// Set by the controller from preferences and the full-screen watcher.
     var showsIdlePill = false
     var isSuppressed = false
-    /// How far right of the notch's centre the menu bar's first status item begins, or
-    /// infinity when none does. Set by the controller; decides whether the second
-    /// activity's bubble fits beside the island or folds into it.
+    /// How far right of the notch's centre the menu bar's first status item begins:
+    /// infinity when none does, and 0 when nothing can tell where the items are
+    /// (macOS 27 without Accessibility), so the second activity folds. Set by the
+    /// controller; decides whether the second activity's bubble fits beside the
+    /// island or folds into it.
     var menuBarRoomRight = CGFloat.infinity
 
     private(set) var isExpanded = false
