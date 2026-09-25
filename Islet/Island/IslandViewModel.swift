@@ -28,11 +28,16 @@ final class IslandViewModel {
     /// Set by the controller from preferences and the full-screen watcher.
     var showsIdlePill = false
     var isSuppressed = false
+    /// How far right of the notch's centre the menu bar's first status item begins, or
+    /// infinity when none does. Set by the controller; decides whether the second
+    /// activity's bubble fits beside the island or folds into it.
+    var menuBarRoomRight = CGFloat.infinity
 
     private(set) var isExpanded = false
     private(set) var isHovering = false
-    /// The pointer is over the detached bubble.
-    private(set) var isHoveringBubble = false
+    /// The pointer is over the second activity: the detached bubble, or its icon
+    /// folded into the island.
+    private(set) var isHoveringSecondary = false
     /// A file drag is in progress anywhere on screen.
     private(set) var isDraggingFile = false
     /// The tab picked in the expanded island; `nil` follows the primary activity.
@@ -101,9 +106,16 @@ final class IslandViewModel {
     }
 
     /// The activity in the detached bubble: the runner-up, while the island is
-    /// compact. Banners and the opened island absorb it.
+    /// compact and the bubble fits beside it. Banners and the opened island absorb it.
     var bubbleActivity: (any IslandActivity)? {
-        guard case .compact = mode else { return nil }
+        guard case .compact = mode, !layout.foldsSecondary else { return nil }
+        return center.secondary
+    }
+
+    /// The runner-up folded into the island's leading wing, because the menu bar has
+    /// no room for its bubble.
+    var foldedActivity: (any IslandActivity)? {
+        guard case .compact = mode, layout.foldsSecondary else { return nil }
         return center.secondary
     }
 
@@ -116,15 +128,16 @@ final class IslandViewModel {
     // MARK: Pointer
 
     /// Called by the window controller as the pointer moves, with whether it is over
-    /// the island and whether it is over the detached bubble.
+    /// the island and whether it is over the second activity (its bubble, or its icon
+    /// folded into the island).
     ///
-    /// The bubble is a target of its own: resting on it makes only the bubble react,
+    /// The second activity is a target of its own: resting on it makes only it react,
     /// and it opens on a click. Were it part of the island's hover, the island would
-    /// swell and open by itself as the pointer arrived, swallowing the bubble before
-    /// it could be clicked.
-    func pointer(inside: Bool, overBubble: Bool = false) {
-        if overBubble != isHoveringBubble {
-            withAnimation(.islandHover) { isHoveringBubble = overBubble }
+    /// swell and open by itself as the pointer arrived, swallowing it before it could
+    /// be clicked.
+    func pointer(inside: Bool, overSecondary: Bool = false) {
+        if overSecondary != isHoveringSecondary {
+            withAnimation(.islandHover) { isHoveringSecondary = overSecondary }
         }
         guard inside != isHovering else { return }
         withAnimation(.islandHover) { isHovering = inside }
@@ -252,6 +265,12 @@ struct IslandLayout: Equatable {
     static let homeHeight: CGFloat = 116
     static let expandedInset = EdgeInsets(top: 0, leading: 20, bottom: 16, trailing: 20)
     static let bubbleGap: CGFloat = 7
+    /// The second activity folded into the island: its circle, inset from the island's
+    /// end so it sits concentric with the rounded corner (with room to swell under the
+    /// pointer), and the gap between it and the primary's leading content.
+    static let foldedDiameter: CGFloat = 20
+    static let foldedInset: CGFloat = 4
+    static let foldedSpacing: CGFloat = 6
     /// Width of one indicator dot and the gap after it.
     static let indicatorPitch: CGFloat = 11
 
@@ -277,6 +296,10 @@ struct IslandLayout: Equatable {
     var trailingContentWidth: CGFloat = 0
     /// Width at the right edge given to indicator dots.
     var indicatorWidth: CGFloat = 0
+    /// Width at the leading wing's outer end given to the folded second activity (its
+    /// circle, and the inset and gap either side), part of `leadingContentWidth`. Zero
+    /// unless the bubble has no room beside the island.
+    var foldedWidth: CGFloat = 0
     /// Expanded body height below the notch row.
     var bodyHeight: CGFloat = 0
     var bubbleDiameter: CGFloat = 0
@@ -284,6 +307,23 @@ struct IslandLayout: Equatable {
 
     /// Default width either side of the notch for compact content.
     static func defaultSide(for notch: CGSize) -> CGFloat { notch.height + 12 }
+
+    var foldsSecondary: Bool { foldedWidth > 0 }
+
+    /// Where the folded second activity takes the pointer, in the island's own
+    /// coordinates (origin at its top left): the notch row from the island's leading
+    /// end to halfway across the gap after the circle. The end beyond the circle counts
+    /// as the circle's, so the island's hover growth, which moves the circle outwards,
+    /// cannot bounce the pointer between the two.
+    var foldedTarget: CGRect {
+        guard foldsSecondary else { return .null }
+        return CGRect(
+            x: 0,
+            y: 0,
+            width: earRadius + Self.foldedInset + Self.foldedDiameter + Self.foldedSpacing / 2,
+            height: notch.height
+        )
+    }
 
     /// Where the bubble's centre sits relative to the notch's top centre.
     var bubbleCenterOffset: CGSize {
@@ -360,12 +400,19 @@ struct IslandLayout: Equatable {
 
         case .compact(let id):
             let activity = center.activity(id: id)
+            let leading = activity?.compactLeadingWidth ?? side
+            let trailing = (activity?.compactTrailingWidth ?? side) + dots
             layout.indicatorWidth = dots
-            wings(
-                leading: activity?.compactLeadingWidth ?? side,
-                trailing: (activity?.compactTrailingWidth ?? side) + dots,
-                grow: 5 * hover
-            )
+            if center.secondary != nil {
+                // Where the bubble would end with the island at rest, so neither the
+                // pointer's hover growth nor the fold's own widening can flip the choice.
+                wings(leading: leading, trailing: trailing, grow: 0)
+                let bubbleEnd = layout.size.width / 2 + bubbleGap + layout.bubbleDiameter
+                if bubbleEnd > model.menuBarRoomRight - 2 {
+                    layout.foldedWidth = foldedInset + foldedDiameter + foldedSpacing
+                }
+            }
+            wings(leading: leading + layout.foldedWidth, trailing: trailing, grow: 5 * hover)
 
         case .banner:
             switch center.banner?.style {

@@ -11,6 +11,11 @@ final class IslandManager {
     private var observers: [NSObjectProtocol] = []
     private var pendingRebuild: DispatchWorkItem?
     private let fullScreen = FullScreenWatcher()
+    /// The second activity on show, to notice it arriving, changing or leaving.
+    private var secondaryID: String?
+    /// Re-measures the menu bar while there is a second activity: status items come
+    /// and go without telling anyone.
+    private var roomTimer: Timer?
 
     private init() {}
 
@@ -41,6 +46,18 @@ final class IslandManager {
                 MainActor.assumeIsolated { self?.scheduleRebuild() }
             })
         }
+        // Switching app or space can hide or reveal status items, once the menu bar
+        // has caught up: the switch finishes after the notification.
+        for name in [
+            NSWorkspace.activeSpaceDidChangeNotification,
+            NSWorkspace.didActivateApplicationNotification,
+        ] {
+            observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    MainActor.assumeIsolated { self?.measureMenuBars() }
+                }
+            })
+        }
         observers.append(DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main
         ) { [weak self] _ in
@@ -49,6 +66,7 @@ final class IslandManager {
 
         fullScreen.onChange = { [weak self] in self?.applyFullScreen() }
         fullScreen.start()
+        watchSecondary()
     }
 
     /// Whether any island is open on the given page (an activity id, or "home").
@@ -121,6 +139,39 @@ final class IslandManager {
             controller.model.showsIdlePill = idlePill
         }
         applyFullScreen()
+    }
+
+    // MARK: Menu bar
+
+    /// Whether the second activity's bubble fits beside each island depends on where
+    /// the menu bar's status items begin, so they are measured again whenever the
+    /// second activity changes, and every 20 seconds while there is one.
+    private func watchSecondary() {
+        let id = withObservationTracking {
+            ActivityCenter.shared.secondary?.id
+        } onChange: { [weak self] in
+            // Called as the change is about to happen; look again once it has.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.watchSecondary() }
+            }
+        }
+        guard id != secondaryID else { return }
+        secondaryID = id
+        measureMenuBars()
+
+        if id == nil {
+            roomTimer?.invalidate()
+            roomTimer = nil
+        } else if roomTimer == nil {
+            roomTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.measureMenuBars() }
+            }
+            roomTimer?.tolerance = 5
+        }
+    }
+
+    private func measureMenuBars() {
+        for controller in controllers.values { controller.measureMenuBarRoom() }
     }
 
     private func applyFullScreen() {

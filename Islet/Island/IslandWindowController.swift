@@ -29,6 +29,8 @@ final class IslandWindowController {
     /// The swipe began over a list that scrolls up and down (Up Next, the mixer), so
     /// up-and-down swipes are the list's, not the island's.
     private var swipeOverList = false
+    /// Counts menu bar measurements, so one that finishes late cannot overwrite a newer one.
+    private var roomGeneration = 0
 
     init(screen: NSScreen) {
         self.screen = screen
@@ -46,6 +48,7 @@ final class IslandWindowController {
         panel.contentView = host
         panel.orderFrontRegardless()
         installMonitors()
+        measureMenuBarRoom()
     }
 
     func invalidate() {
@@ -66,6 +69,26 @@ final class IslandWindowController {
         }
         panel.setFrame(Self.frame(for: metrics), display: true)
         panel.orderFrontRegardless()
+        measureMenuBarRoom()
+    }
+
+    /// Finds where the status items begin right of this island, for the model to
+    /// decide whether the second activity's bubble fits there. Read off the main
+    /// thread: the first read of the window list takes tens of milliseconds.
+    func measureMenuBarRoom() {
+        guard let display = screen.displayID else { return }
+        let metrics = model.metrics
+        roomGeneration &+= 1
+        let generation = roomGeneration
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let item = MenuBarRoom.firstStatusItem(rightOf: metrics.notchRect.maxX, on: display)
+            await self?.apply(menuBarRoom: item.map { $0 - metrics.notchMidX } ?? .infinity, generation: generation)
+        }
+    }
+
+    private func apply(menuBarRoom room: CGFloat, generation: Int) {
+        guard generation == roomGeneration, room != model.menuBarRoomRight else { return }
+        withAnimation(.islandMorph) { model.menuBarRoomRight = room }
     }
 
     private static func frame(for metrics: NotchMetrics) -> CGRect {
@@ -223,8 +246,9 @@ final class IslandWindowController {
         }
     }
 
-    /// Works out whether the pointer is over the island (and its bubble), for hover.
-    /// Clicks need no help: the panel only catches them on pixels it has drawn.
+    /// Works out whether the pointer is over the island or its second activity (the
+    /// bubble, or the icon folded into the island), for hover. Clicks need no help:
+    /// the panel only catches them on pixels it has drawn.
     ///
     /// When the island changes shape on its own (a banner arriving, say) the pointer
     /// may now be over it without having moved. That does not count as hovering —
@@ -233,9 +257,11 @@ final class IslandWindowController {
     private func updateHitTesting(pointerMoved: Bool = true) {
         guard let layout else { return }
         let point = NSEvent.mouseLocation
-        let overIsland = islandRect(for: layout).contains(point)
-        let overBubble = !overIsland && bubbleRect(for: layout)?.contains(point) == true
-        let inside = overIsland || overBubble
+        let overFolded = foldedRect(for: layout).contains(point)
+        let overIsland = !overFolded && islandRect(for: layout).contains(point)
+        let overBubble = !overFolded && !overIsland && bubbleRect(for: layout)?.contains(point) == true
+        let overSecondary = overFolded || overBubble
+        let inside = overIsland || overSecondary
         // A press that began on the island (dragging the scrubber, say) holds it open
         // until release, wherever the pointer wanders; mouse-up clears the press and
         // comes back through here. Outgoing file drags change the drag pasteboard and
@@ -245,15 +271,22 @@ final class IslandWindowController {
             return
         }
         if pointerMoved || !inside {
-            model.pointer(inside: overIsland, overBubble: overBubble)
+            model.pointer(inside: overIsland, overSecondary: overSecondary)
         }
+    }
+
+    /// The island's top-left corner on screen, which its own coordinates start from.
+    private func islandOrigin(for layout: IslandLayout) -> CGPoint {
+        let metrics = model.metrics
+        return CGPoint(x: metrics.notchMidX - layout.size.width / 2, y: metrics.screenFrame.maxY - layout.topInset)
     }
 
     private func islandRect(for layout: IslandLayout) -> CGRect {
         let metrics = model.metrics
+        let origin = islandOrigin(for: layout)
         var rect = CGRect(
-            x: metrics.notchMidX - layout.size.width / 2,
-            y: metrics.screenFrame.maxY - layout.topInset - layout.size.height,
+            x: origin.x,
+            y: origin.y - layout.size.height,
             width: layout.size.width,
             height: layout.size.height
         )
@@ -267,6 +300,23 @@ final class IslandWindowController {
         // Once open, be forgiving about brushing past the edge.
         let slop: CGFloat = model.isExpanded ? 10 : 2
         return rect.insetBy(dx: -slop, dy: -slop)
+    }
+
+    /// The folded second activity's patch of the island (`IslandLayout.foldedTarget`)
+    /// on screen, with the island's resting slop on its outer sides only: its inner
+    /// edge is where a click stops opening the second activity, so hovering stops
+    /// there too.
+    private func foldedRect(for layout: IslandLayout) -> CGRect {
+        let target = layout.foldedTarget
+        guard !target.isNull else { return .null }
+        let origin = islandOrigin(for: layout)
+        let slop: CGFloat = 2
+        return CGRect(
+            x: origin.x + target.minX - slop,
+            y: origin.y - target.maxY - slop,
+            width: target.width + slop,
+            height: target.height + 2 * slop
+        )
     }
 
     private func bubbleRect(for layout: IslandLayout) -> CGRect? {

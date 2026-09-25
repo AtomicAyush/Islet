@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The whole canvas: the island hanging from the top centre, and the detached bubble
-/// beside it when two activities are running.
+/// beside it when two activities are running and the menu bar has room for it.
 struct IslandRootView: View {
     let model: IslandViewModel
     /// Told whenever the island's footprint changes, so the controller can update
@@ -70,7 +70,15 @@ private struct IslandSurface: View {
             }
         }
         .shadow(color: .black.opacity(layout.showsShadow ? 0.5 : 0), radius: 18, y: 8)
-        .onTapGesture { model.tap() }
+        .onTapGesture { location in
+            // The folded second activity's end of the island opens that activity: the
+            // same patch the controller treats as hovering it, not just its circle.
+            if let folded = model.foldedActivity, layout.foldedTarget.contains(location) {
+                model.expand(focus: folded.id)
+            } else {
+                model.tap()
+            }
+        }
         .opacity(model.mode == .hidden ? 0 : 1)
     }
 
@@ -98,7 +106,9 @@ private struct IslandSurface: View {
                     leading: activity.compactLeading(),
                     trailing: activity.compactTrailing(),
                     indicators: model.center.indicators,
-                    layout: layout
+                    layout: layout,
+                    folded: model.foldedActivity,
+                    isFoldedHovered: model.isHoveringSecondary
                 )
             }
 
@@ -130,18 +140,34 @@ private struct Squash {
 
 /// Compact content: one view left of the notch, one right, and the camera between.
 /// Each view gets the width it asked for at its wing's outer edge; indicator dots,
-/// if any, sit at the far right.
+/// if any, sit at the far right, and a second activity with no room for its bubble
+/// sits at the far left.
 private struct CompactRow: View {
     let leading: AnyView
     let trailing: AnyView
     let indicators: [StatusIndicator]
     let layout: IslandLayout
+    var folded: (any IslandActivity)? = nil
+    var isFoldedHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
-            leading
-                .frame(width: layout.leadingContentWidth, height: layout.notch.height)
-                .frame(width: layout.leadingWidth, alignment: .leading)
+            HStack(spacing: 0) {
+                if let folded {
+                    folded.minimal()
+                        .frame(width: IslandLayout.foldedDiameter, height: IslandLayout.foldedDiameter)
+                        .clipShape(Circle())
+                        .secondaryHover(isFoldedHovered)
+                        .padding(.leading, IslandLayout.foldedInset)
+                        .frame(width: layout.foldedWidth, alignment: .leading)
+                        .id(folded.id)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
+                }
+                leading
+                    .frame(width: layout.leadingContentWidth - layout.foldedWidth, height: layout.notch.height)
+            }
+            .frame(width: layout.leadingWidth, alignment: .leading)
             Spacer(minLength: layout.notch.width)
             HStack(spacing: 0) {
                 trailing
@@ -157,6 +183,17 @@ private struct CompactRow: View {
             .frame(width: layout.trailingWidth, alignment: .trailing)
         }
         .frame(height: layout.notch.height)
+    }
+}
+
+extension View {
+    /// The second activity's circle — the bubble, or its icon folded into the island —
+    /// with the pointer on it: it swells a little and gains a faint ring, to say a
+    /// click opens it.
+    fileprivate func secondaryHover(_ isHovered: Bool, scale: CGFloat = 1) -> some View {
+        overlay(Circle().strokeBorder(Color.white.opacity(isHovered ? 0.22 : 0), lineWidth: 1))
+            .scaleEffect(scale * (isHovered ? 1.14 : 1))
+            .animation(.islandHover, value: isHovered)
     }
 }
 
@@ -187,7 +224,7 @@ private struct BubbleLayer: View {
     @State private var progress: CGFloat = 0
 
     var body: some View {
-        BubbleDroplet(progress: progress, layout: layout, activity: shown, isHovered: model.isHoveringBubble) { id in
+        BubbleDroplet(progress: progress, layout: layout, activity: shown, isHovered: model.isHoveringSecondary) { id in
             model.expand(focus: id)
         }
         .onChange(of: model.bubbleActivity?.id, initial: true) { _, id in
@@ -261,9 +298,7 @@ private struct BubbleDroplet: View, Animatable {
                     .clipShape(Circle())
                     .opacity(Double(min(1, max(0, (progress - 0.35) / 0.5))))
                     .background(Circle().fill(Color.black))
-                    .overlay(Circle().strokeBorder(Color.white.opacity(isHovered ? 0.22 : 0), lineWidth: 1))
-                    .scaleEffect(scale * (isHovered ? 1.14 : 1))
-                    .animation(.islandHover, value: isHovered)
+                    .secondaryHover(isHovered, scale: scale)
                     .contentShape(Circle())
                     .onTapGesture { onTap(activity.id) }
                     .offset(x: x, y: target.height - d / 2)
