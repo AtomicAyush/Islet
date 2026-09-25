@@ -15,13 +15,27 @@ struct ShelfItem: Identifiable, Equatable {
 /// Each file is also remembered by a minimal bookmark, so an item follows its file
 /// when it is moved or renamed. Files that have gone are dropped the next time the
 /// shelf is shown.
+///
+/// A picture dropped from a web page has no file of its own, and one dragged out of
+/// Firefox has only a file in the temporary folder, so the shelf keeps one: a copy in
+/// `storageFolder`, which it deletes when the picture leaves the shelf. A copy moved
+/// out of that folder is the user's, and is left alone.
 @MainActor
 @Observable
 final class ShelfStore {
     private(set) var items: [ShelfItem] = []
+    /// Pictures dropped on the shelf that are still being fetched.
+    private(set) var arriving = 0
 
-    /// Called after every change to `items`.
+    /// Called after every change to `items` or `arriving`.
     @ObservationIgnored var onChange: () -> Void = {}
+
+    /// Where the shelf keeps its own copies of pictures; `nil` if Application
+    /// Support is out of reach.
+    let storageFolder: URL?
+    /// Copies older than this that are on no shelf item are left over from an
+    /// earlier run, and are deleted when the saved shelf is read in.
+    @ObservationIgnored private let startedAt = Date()
 
     @ObservationIgnored private var bookmarks: [UUID: Data] = [:]
     @ObservationIgnored private var hasLoaded = false
@@ -30,6 +44,10 @@ final class ShelfStore {
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var isRefreshing = false
     @ObservationIgnored private var pendingSave: DispatchWorkItem?
+
+    init(storageFolder: URL? = ShelfArchive.picturesFolder) {
+        self.storageFolder = storageFolder
+    }
 
     // MARK: Changes
 
@@ -60,17 +78,45 @@ final class ShelfStore {
         hasLoaded = true
         loadGeneration &+= 1
         let hadItems = !items.isEmpty
+        let copies = items.map(\.url).filter(isOwnCopy)
         items.removeAll()
         bookmarks.removeAll()
         if hadItems { onChange() }
         scheduleSave()
+        discard(copies)
     }
 
     private func remove(ids: Set<UUID>) {
         guard items.contains(where: { ids.contains($0.id) }) else { return }
+        let copies = items.filter { ids.contains($0.id) }.map(\.url).filter(isOwnCopy)
         items.removeAll { ids.contains($0.id) }
         for id in ids { bookmarks[id] = nil }
         didChange()
+        discard(copies)
+    }
+
+    /// `count` pictures dropped on the shelf are being fetched, or (`count` below
+    /// zero) are no longer.
+    func picturesArriving(_ count: Int) {
+        let next = max(0, arriving + count)
+        guard next != arriving else { return }
+        arriving = next
+        onChange()
+    }
+
+    // MARK: Own copies
+
+    /// Whether the file is one of the shelf's own copies, in its storage folder.
+    func isOwnCopy(_ url: URL) -> Bool {
+        guard let storageFolder else { return false }
+        let folder = Self.identity(of: storageFolder)
+        return Self.identity(of: url).hasPrefix(folder + "/")
+    }
+
+    /// Deletes copies that have left the shelf, off the main thread.
+    private func discard(_ copies: [URL]) {
+        guard !copies.isEmpty, let storageFolder else { return }
+        ShelfArchive.queue.async { ShelfArchive.discard(copies, in: storageFolder) }
     }
 
     private func didChange() {
@@ -137,8 +183,13 @@ final class ShelfStore {
     func loadIfNeeded() {
         guard !hasLoaded else { return }
         hasLoaded = true
+        let storageFolder = self.storageFolder
+        let startedAt = self.startedAt
         guard ShelfArchive.keepsBetweenLaunches else {
-            ShelfArchive.queue.async { ShelfArchive.delete() }
+            ShelfArchive.queue.async {
+                ShelfArchive.delete()
+                if let storageFolder { ShelfArchive.prune(storageFolder, keeping: [], madeBefore: startedAt) }
+            }
             return
         }
         let generation = loadGeneration
@@ -146,6 +197,9 @@ final class ShelfStore {
             let saved = ShelfArchive.read()
             let found = saved.compactMap { record in
                 ShelfArchive.locate(record).map { (record.id, $0) }
+            }
+            if let storageFolder {
+                ShelfArchive.prune(storageFolder, keeping: found.map { $0.1.url }, madeBefore: startedAt)
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -292,6 +346,42 @@ enum ShelfArchive {
     static func delete() {
         guard let url = fileURL else { return }
         try? FileManager.default.removeItem(at: url)
+    }
+
+    // MARK: Own copies
+
+    /// Application Support/Islet/Shelf: the shelf's copies of pictures dropped from
+    /// web pages, each in a folder of its own.
+    static var picturesFolder: URL? {
+        fileURL?.deletingLastPathComponent().appendingPathComponent("Shelf", isDirectory: true)
+    }
+
+    /// Deletes copies that have left the shelf: each picture's own folder, or the
+    /// file alone if it sits in `folder` itself.
+    static func discard(_ copies: [URL], in folder: URL) {
+        let storage = folder.standardizedFileURL.resolvingSymlinksInPath().path
+        for copy in copies {
+            let parent = copy.deletingLastPathComponent()
+            let isOwnFolder = parent.standardizedFileURL.resolvingSymlinksInPath().deletingLastPathComponent().path == storage
+            try? FileManager.default.removeItem(at: isOwnFolder ? parent : copy)
+        }
+    }
+
+    /// Deletes copies no shelf item holds: left by a shelf that was not kept between
+    /// launches, or by a quit before a removal was written. Only those made before
+    /// `date`, so a picture dropped while the saved shelf is being read is safe.
+    static func prune(_ folder: URL, keeping kept: [URL], madeBefore date: Date) {
+        let files = FileManager.default
+        let identity = { (url: URL) in url.standardizedFileURL.resolvingSymlinksInPath().path }
+        let keptPaths = Set(kept.flatMap { [identity($0), identity($0.deletingLastPathComponent())] })
+        let entries = (try? files.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.creationDateKey], options: []
+        )) ?? []
+        for entry in entries where !keptPaths.contains(identity(entry)) {
+            guard let made = try? entry.resourceValues(forKeys: [.creationDateKey]).creationDate, made < date
+            else { continue }
+            try? files.removeItem(at: entry)
+        }
     }
 
     /// Bookmarks the records that have no bookmark yet (new items are bookmarked

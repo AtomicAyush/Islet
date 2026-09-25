@@ -1,15 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// Files dragged to the notch. The island opens onto two places to drop them:
-/// AirDrop, and a shelf that keeps them for later. While the shelf holds anything it
-/// sits on the home page, and its files drag back out wherever they are needed.
+/// Files dragged to the notch, or pictures dragged out of a web page. The island
+/// opens onto two places to drop them: AirDrop, and a shelf that keeps them for
+/// later. While the shelf holds anything it sits on the home page, and its files
+/// drag back out wherever they are needed.
 @MainActor
 final class DropZoneFeature: Feature {
     let id = "dropZone"
     let title = "Drop Zone"
     let symbol = "tray.and.arrow.down.fill"
-    let summary = "Drag files to the notch to AirDrop them or keep them on a shelf."
+    let summary = "Drag files or pictures from the web to the notch to AirDrop them or keep them on a shelf."
 
     private let model = DropZoneModel()
     private lazy var target = DropZoneTarget(model: model)
@@ -47,6 +48,7 @@ final class DropZoneFeature: Feature {
             FeaturePreview(title: "Open drop zone") { [weak self] in self?.previewDropPage() },
             FeaturePreview(title: "Drop files on the shelf") { [weak self] in self?.previewDrop() },
             FeaturePreview(title: "Add sample files to shelf") { [weak self] in self?.previewShelf() },
+            FeaturePreview(title: "Drop a picture from a web page") { [weak self] in self?.previewPictureDrop() },
         ]
     }
 
@@ -79,9 +81,10 @@ final class DropZoneFeature: Feature {
         FileThumbnails.shared.removeAll()
     }
 
-    /// The shelf is on the home page exactly while it holds something.
+    /// The shelf is on the home page exactly while it holds something, or has
+    /// pictures on their way to it.
     private func syncWidget() {
-        let wanted = isAttached && !model.shelf.items.isEmpty
+        let wanted = isAttached && (!model.shelf.items.isEmpty || model.shelf.arriving > 0)
         guard wanted != widgetShown else { return }
         widgetShown = wanted
         if wanted {
@@ -116,6 +119,33 @@ final class DropZoneFeature: Feature {
             model.demoTarget = nil
             guard !Task.isCancelled else { return }
             model.dropped(urls, on: .shelf)
+        }
+    }
+
+    /// A picture dropped on the shelf the way a web page hands one over when its bytes
+    /// are not on the drag: promised, and a moment in coming, so the tile shows it on
+    /// its way before it lands. Its copy is the shelf's own, gone when it is removed.
+    private func previewPictureDrop() {
+        previewDropPage()
+        demo?.cancel()
+        demo = Task { [weak self] in
+            let sample = await DropZoneSamples.make().first { $0.pathExtension == "png" }
+            guard let self, let sample, !Task.isCancelled else { return }
+            let name = "Sunset over the hills.png"
+            // The last preview's picture, so this one reads "Added" beside no twin.
+            let shelf = model.shelf
+            shelf.remove(urls: shelf.items.map(\.url).filter { $0.lastPathComponent == name && shelf.isOwnCopy($0) })
+            let promise = FilePromise { folder, done in
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 1.5) {
+                    let file = folder.appendingPathComponent(name)
+                    done((try? FileManager.default.copyItem(at: sample, to: file)) != nil ? file : nil)
+                }
+            }
+            model.demoTarget = .shelf
+            try? await Task.sleep(for: .seconds(1.6))
+            model.demoTarget = nil
+            guard !Task.isCancelled else { return }
+            model.dropped(PictureDrop(pictures: [DroppedPicture(sources: [.promise(promise)])]), on: .shelf)
         }
     }
 
@@ -159,10 +189,10 @@ final class DropZoneFeature: Feature {
     }
 }
 
-/// What the island opens onto while a file is dragged to the notch: AirDrop on the
-/// left half of the page, the shelf on the right.
+/// What the island opens onto while a file or a picture is dragged to the notch:
+/// AirDrop on the left half of the page, the shelf on the right.
 @MainActor
-final class DropZoneTarget: DropTarget {
+final class DropZoneTarget: PictureDropTarget {
     let model: DropZoneModel
 
     init(model: DropZoneModel) { self.model = model }
@@ -180,6 +210,10 @@ final class DropZoneTarget: DropTarget {
 
     func drop(_ urls: [URL], at point: CGPoint, in size: CGSize) {
         model.dropped(urls, on: Self.place(at: point, in: size))
+    }
+
+    func drop(_ pictures: PictureDrop, at point: CGPoint, in size: CGSize) {
+        model.dropped(pictures, on: Self.place(at: point, in: size))
     }
 
     /// The two tiles split the page down the middle.

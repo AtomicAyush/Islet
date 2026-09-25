@@ -70,9 +70,13 @@ bubble beside the island. macOS has no per-app volume, so Islet makes one with C
 process taps (macOS 14.2 or later): the first time you move a slider, macOS asks to let Islet
 record system audio, which is how it passes the app's sound through at the level you set.
 
-**Drop Zone.** Drag files toward the notch and the island opens onto two targets: AirDrop,
-and a shelf that keeps them for later. Shelved files show on the home page and drag back out
-wherever they are needed.
+**Drop Zone.** Drag files — or pictures straight from a web page — toward the notch and the
+island opens onto two targets: AirDrop, and a shelf that keeps them for later. A picture
+from Safari, Chrome or another browser, Google Images results included, arrives as an
+ordinary image file under the name the site gave it; the shelf keeps its own copy and
+deletes it when the picture comes off the shelf. Ordinary links and text selections leave
+the island shut. Shelved files show on the home page and drag back out wherever they are
+needed.
 
 Every feature can be turned off, and each has previews in the menu bar item, so you can see
 what it looks like without waiting for the real thing.

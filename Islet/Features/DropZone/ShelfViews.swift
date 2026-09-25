@@ -20,6 +20,10 @@ struct ShelfHomeTile: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
+                    ForEach(0..<model.shelf.arriving, id: \.self) { _ in
+                        ArrivingItemView()
+                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    }
                     ForEach(items) { item in
                         ShelfItemView(item: item, model: model)
                             .transition(.scale(scale: 0.6).combined(with: .opacity))
@@ -28,6 +32,7 @@ struct ShelfHomeTile: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: items.map(\.id))
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: model.shelf.arriving)
         .onAppear { model.shelf.refresh() }
     }
 
@@ -96,6 +101,25 @@ private struct ShelfItemView: View {
             Button("Remove from Shelf") { model.shelf.remove(item) }
         }
         .help(item.name)
+    }
+}
+
+/// A picture dropped on the shelf that is still being downloaded or written: a
+/// spinner where its icon will be.
+private struct ArrivingItemView: View {
+    var body: some View {
+        VStack(spacing: 3) {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 36, height: 36)
+            Text("Fetching…")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+                .lineLimit(1)
+        }
+        .frame(width: 60)
+        .padding(.vertical, 4)
+        .help("A picture on its way to the shelf")
     }
 }
 

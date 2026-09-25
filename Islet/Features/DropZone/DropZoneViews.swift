@@ -7,8 +7,9 @@ let dropZoneYellow = Color(red: 1.0, green: 0.84, blue: 0.04)
 /// iOS system red, for a drop that could not be handled.
 let dropZoneRed = Color(red: 1.0, green: 0.27, blue: 0.23)
 
-/// The page the island opens onto while a file is dragged to the notch: AirDrop on
-/// the left, the shelf on the right. Each tile takes its own drops.
+/// The page the island opens onto while a file or a picture is dragged to the notch:
+/// AirDrop on the left, the shelf on the right. The island takes the drops and says
+/// which tile they landed on.
 struct DropZonePage: View {
     let model: DropZoneModel
 
@@ -81,12 +82,20 @@ private struct DropTile: View {
         // Yellow is too light to carry a white glyph.
         let glyphOnFill: Color = place == .shelf ? .black : .white
 
-        return Image(systemName: symbol)
-            .font(.system(size: 18, weight: .bold))
-            .foregroundStyle(isLit ? glyphOnFill : tint)
-            .contentTransition(.symbolEffect(.replace))
-            .frame(width: 40, height: 40)
-            .background(Circle().fill(tint.opacity(isLit ? 1 : 0.2)))
+        return Group {
+            if note?.isWorking == true {
+                // A picture still on its way from the web.
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: symbol)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(isLit ? glyphOnFill : tint)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+        }
+        .frame(width: 40, height: 40)
+        .background(Circle().fill(tint.opacity(isLit ? 1 : 0.2)))
     }
 
     private func subtitle(isLit: Bool) -> String {

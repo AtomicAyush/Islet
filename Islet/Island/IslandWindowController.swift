@@ -12,6 +12,7 @@ final class IslandWindowController {
     private var layout: IslandLayout?
     private var monitors: [Any] = []
     private var dragChangeCount = NSPasteboard(name: .drag).changeCount
+    /// A drag of files, or of a picture from a web page, is under way.
     private var fileDragActive = false
     /// The current press began on the island — dragging a file out of the shelf,
     /// say — so the drag it starts is outgoing and must not open the drop page.
@@ -233,12 +234,13 @@ final class IslandWindowController {
         }
     }
 
-    /// A drag that put files on the drag pasteboard, with the pointer approaching the
-    /// top of this screen, opens the island onto the drop target.
+    /// A drag that put files on the drag pasteboard, or a picture from a web page,
+    /// with the pointer approaching the top of this screen, opens the island onto
+    /// the drop target.
     private func trackFileDrag() {
         let pasteboard = NSPasteboard(name: .drag)
         if !fileDragActive, !pressBeganInside, pasteboard.changeCount != dragChangeCount,
-           pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
+           Self.opensDropZone(for: pasteboard) {
             fileDragActive = true
             model.fileDrag(began: true)
         }
@@ -249,6 +251,14 @@ final class IslandWindowController {
         if catchZone.contains(point) {
             model.fileDragApproached()
         }
+    }
+
+    /// Whether a drag carrying this pasteboard is one the drop zone takes: files, or a
+    /// picture dragged out of a web page. A link or a text selection is not; the
+    /// island stays shut for those.
+    static func opensDropZone(for pasteboard: NSPasteboard) -> Bool {
+        pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+            || PictureDrag.isPictureDrag(pasteboard)
     }
 
     /// Works out whether the pointer is over the island or its second activity (the

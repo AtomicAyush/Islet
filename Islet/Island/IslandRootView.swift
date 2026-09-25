@@ -52,7 +52,7 @@ private struct IslandSurface: View {
         .animation(.islandHeight) { $0.frame(height: layout.size.height, alignment: .top) }
         .clipShape(shape)
         .contentShape(shape)
-        .onDrop(of: [.fileURL], delegate: IslandDropDelegate(model: model, layout: layout))
+        .onDrop(of: IslandDropDelegate.offeredTypes, delegate: IslandDropDelegate(model: model, layout: layout))
         .keyframeAnimator(initialValue: Squash(), trigger: model.contentKey) { [reduceMotion] view, squash in
             view.scaleEffect(x: reduceMotion ? 1 : squash.x, y: reduceMotion ? 1 : squash.y, anchor: .top)
         } keyframes: { _ in
