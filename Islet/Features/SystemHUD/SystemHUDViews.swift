@@ -27,52 +27,54 @@ struct SystemHUDIcon: View {
     }
 }
 
-/// Right of the notch: what is being changed, like the macOS overlay says (the
-/// output device, or the display), over the level as a slim bar — greyed while
+/// Left of the notch: the speaker or sun, and — like the macOS overlay — what is
+/// being changed: the output device, or the display. Where there is no room for the
+/// name, or even the insets (the opened island's header gives it 24 points), just
+/// the icon.
+struct SystemHUDLeading: View {
+    let model: SystemHUDModel
+    var showsName = true
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            if showsName, let name = model.deviceName {
+                HStack(spacing: SystemHUDLayout.iconSpacing) {
+                    SystemHUDIcon(model: model)
+                    Text(name)
+                        .font(Font(SystemHUDLayout.nameFont))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: SystemHUDLayout.maximumNameWidth, alignment: .leading)
+                }
+                .modifier(SystemHUDLayout.LeadingInsets())
+            }
+            SystemHUDIcon(model: model)
+                .modifier(SystemHUDLayout.LeadingInsets())
+            SystemHUDIcon(model: model)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Right of the notch: the level as a slim bar that fills the wing, greyed while
 /// muted, with the percentage beside it if asked for.
 struct SystemHUDLevel: View {
     let model: SystemHUDModel
     let showsPercentage: Bool
-    var showsName = true
-
-    static let barWidth: CGFloat = 64
-    static let percentageWidth: CGFloat = 36
-    static let spacing: CGFloat = 8
-    /// Long names ("External Headphones", "LG UltraFine Display") truncate here
-    /// rather than push the island over half the menu bar.
-    static let maximumNameWidth: CGFloat = 132
-    static let nameFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
-
-    /// The right wing's width: the widest line with even room either side of it.
-    static func wingWidth(showsPercentage: Bool, name: String?) -> CGFloat {
-        let levelWidth = showsPercentage ? barWidth + spacing + percentageWidth : barWidth
-        let nameWidth = name.map {
-            min(ceil(($0 as NSString).size(withAttributes: [.font: nameFont]).width), maximumNameWidth)
-        } ?? 0
-        return max(levelWidth, nameWidth) + (showsPercentage && nameWidth <= levelWidth ? 20 : 32)
-    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if showsName, let name = model.deviceName {
-                Text(name)
-                    .font(Font(Self.nameFont))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: Self.maximumNameWidth, alignment: .leading)
-            }
-            HStack(spacing: Self.spacing) {
-                LevelBar(level: model.level, isDimmed: model.isMuted)
-                    .frame(width: Self.barWidth, height: 5)
-                if showsPercentage {
-                    Text(percentage)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white.opacity(model.isMuted ? 0.55 : 1))
-                        .contentTransition(.numericText(value: model.level))
-                        .frame(width: Self.percentageWidth, alignment: .trailing)
-                }
+        HStack(spacing: SystemHUDLayout.spacing) {
+            LevelBar(level: model.level, isDimmed: model.isMuted)
+                .frame(minWidth: SystemHUDLayout.minimumBarWidth, maxWidth: .infinity)
+                .frame(height: 5)
+            if showsPercentage {
+                Text(percentage)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(model.isMuted ? 0.55 : 1))
+                    .contentTransition(.numericText(value: model.level))
+                    .frame(width: SystemHUDLayout.percentageWidth, alignment: .trailing)
             }
         }
         .animation(.smooth(duration: 0.2), value: model.level)
@@ -84,6 +86,44 @@ struct SystemHUDLevel: View {
 
     private var percentage: String {
         "\(Int((model.level * 100).rounded()))%"
+    }
+}
+
+/// The overlay's measurements. Both wings are always the same width, so the island
+/// stays centred on the notch; it shifts sideways when one wing is wider than the
+/// other, which in an overlay just looks off-centre.
+enum SystemHUDLayout {
+    static let nameFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    /// Wide enough for the usual names whole ("Built-in Retina Display", "Studio
+    /// Display Speakers"); anything longer truncates rather than push the island
+    /// over half the menu bar.
+    static let maximumNameWidth: CGFloat = 136
+    static let iconWidth: CGFloat = 24
+    static let iconSpacing: CGFloat = 7
+    static let minimumBarWidth: CGFloat = 56
+    static let percentageWidth: CGFloat = 36
+    static let spacing: CGFloat = 8
+    /// Room between each wing's content and the island's outer edge, and the notch.
+    static let outerInset: CGFloat = 12
+    static let innerInset: CGFloat = 10
+    static let minimumWing: CGFloat = 92
+
+    struct LeadingInsets: ViewModifier {
+        func body(content: Content) -> some View {
+            content.padding(.leading, outerInset).padding(.trailing, innerInset)
+        }
+    }
+
+    /// The width of each wing: whichever side needs more, used for both.
+    static func wingWidth(name: String?, showsPercentage: Bool) -> CGFloat {
+        // Two points of slack: SwiftUI sets text a hair wider than AppKit measures it,
+        // which would otherwise truncate a name that just fits.
+        let nameWidth = name.map {
+            min(ceil(($0 as NSString).size(withAttributes: [.font: nameFont]).width) + 2, maximumNameWidth)
+        }
+        let leading = iconWidth + (nameWidth.map { iconSpacing + $0 } ?? 0)
+        let trailing = minimumBarWidth + (showsPercentage ? spacing + percentageWidth : 0)
+        return max(max(leading, trailing) + outerInset + innerInset, minimumWing)
     }
 }
 

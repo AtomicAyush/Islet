@@ -168,17 +168,18 @@ final class SystemHUDFeature: Feature {
     private func presentHUD() {
         let showsPercentage = showsPercentage
         let showsName = showsName
-        let name = showsName ? model.deviceName : nil
+        let wing = SystemHUDLayout.wingWidth(name: showsName ? model.deviceName : nil, showsPercentage: showsPercentage)
         ActivityCenter.shared.present(IslandBanner(
             id: Self.bannerID,
-            style: .compact(
-                leading: 40,
-                trailing: SystemHUDLevel.wingWidth(showsPercentage: showsPercentage, name: name)
-            ),
+            style: .compact(leading: wing, trailing: wing),
             duration: 1.6,
             haptic: false,
-            leading: AnyView(SystemHUDIcon(model: model)),
-            trailing: AnyView(SystemHUDLevel(model: model, showsPercentage: showsPercentage, showsName: showsName))
+            leading: AnyView(SystemHUDLeading(model: model, showsName: showsName)),
+            trailing: AnyView(
+                SystemHUDLevel(model: model, showsPercentage: showsPercentage)
+                    .padding(.leading, SystemHUDLayout.innerInset)
+                    .padding(.trailing, SystemHUDLayout.outerInset)
+            )
         ))
     }
 
