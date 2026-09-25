@@ -53,8 +53,19 @@ Settings; Islet can install a profile that turns it off.
 **Calendar.** Your next event counts down beside the notch from ten minutes before it
 starts, with a Join button when there is a Zoom, Meet, Teams, Webex or FaceTime link.
 
-**Camera & Microphone.** A green dot beside the notch while the camera is in use, an orange
-one while only the microphone is — as on the iPhone.
+**Camera, Microphone & more.** A green dot beside the notch while the camera is in use, an
+orange one while only a microphone is — as on the iPhone — and a purple one while an app
+records the screen or what the Mac plays. Turn on Location in Settings for an arrow while an
+app gets the Mac's location (it is off at first: a single look-up lights it for about twelve
+seconds). The home page says what is in use and which app is using it — "Microphone · Zoom",
+"Screen · QuickTime Player" — and Islet can name the app for a moment as it starts. Whether a
+sensor is in use comes from the system itself and needs no permission. The microphone's app
+comes from Core Audio; the rest of the names, and location and recorded sound at all, come from
+the system log, which macOS only shows to administrator accounts. On any other account only
+microphone apps are named, the camera and screen show as in use (screen mirroring can light the
+purple dot there), and recorded sound and location aren't shown. The Sound Mixer records what
+the Mac plays to set each app's volume, which macOS marks with its own purple dot; Islet never
+lights a dot for it.
 
 **Focus.** While Do Not Disturb, Sleep, Work or a Focus of your own is on, its symbol stays
 beside the notch in its colour, the home tile says which and until when, and song changes go
