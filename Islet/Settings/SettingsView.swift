@@ -49,7 +49,16 @@ private struct GeneralSettings: View {
                 if let loginError {
                     Text(loginError).font(.caption).foregroundStyle(.red)
                 }
-                Toggle("Show menu bar icon", isOn: $showMenuBarIcon)
+                Toggle(isOn: $showMenuBarIcon) {
+                    Text("Show menu bar icon")
+                    if !showMenuBarIcon {
+                        Text("Settings stay in the opened island's gear and open when Islet is launched again.")
+                    }
+                }
+                // Without the menu bar icon, this is the only way to quit.
+                LabeledContent("Quit Islet") {
+                    Button("Quit") { NSApp.terminate(nil) }
+                }
             }
 
             Section("Island") {
