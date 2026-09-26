@@ -163,6 +163,23 @@ final class IslandViewModel {
         return center.secondary
     }
 
+    /// The attachment riding in a row under this island's compact content: the one
+    /// presented, while there is compact content here to ride under — an activity, or
+    /// a compact banner. Not while the island is open (its header shows the
+    /// attachment's banner instead), a card is up, or the island is hidden.
+    var attachment: IslandAttachment? {
+        guard let attachment = center.attachment else { return nil }
+        switch mode {
+        case .compact:
+            return attachment
+        case .banner:
+            guard case .compact? = center.banner?.style else { return nil }
+            return attachment
+        case .hidden, .idle, .expanded:
+            return nil
+        }
+    }
+
     // MARK: Layout
 
     var layout: IslandLayout {
@@ -568,6 +585,10 @@ struct IslandLayout: Equatable {
     /// a line of small text, and wide enough for a wide symbol (a bed, a car) at that
     /// height, so every symbol takes the same room whatever its shape.
     static let indicatorSymbol = CGSize(width: 14, height: 11)
+    /// The bottom corners while an attachment rides under the compact row: rounder
+    /// than the compact island's, for an island nearly twice as tall, and still clear
+    /// of the row's content.
+    static let attachedRadius: CGFloat = 16
 
     var size: CGSize
     /// Gap above the island: zero when it hangs from a notch, a few points when it
@@ -597,6 +618,12 @@ struct IslandLayout: Equatable {
     var foldedWidth: CGFloat = 0
     /// Expanded body height below the notch row.
     var bodyHeight: CGFloat = 0
+    /// Height of the attachment's row below the notch row; zero without one.
+    var attachmentHeight: CGFloat = 0
+    /// Width of the attachment's row: the island's body between its ears, as it is at
+    /// rest. The pointer's growth leaves it be, so the row does not stretch and settle
+    /// again every time the pointer arrives.
+    var attachmentWidth: CGFloat = 0
     var bubbleDiameter: CGFloat = 0
     var showsShadow = false
     /// Whether the island is drawn. When it is not, it is fully transparent, and the
@@ -671,19 +698,35 @@ struct IslandLayout: Equatable {
             layout.topRadius = floating ? (top ?? bottom) : 0
         }
 
+        // An attachment rides in a row under compact content. The row spans the
+        // island's body, so each wing is at least wide enough for the body to hold it:
+        // both alike, keeping the island centred on the notch however wide the row asks
+        // to be.
+        let attachment = model.attachment
+        let attachmentWing = attachment.map { max(0, ($0.width - notch.width) / 2) } ?? 0
+
         /// Lays out content either side of the notch at notch height, both wings as
-        /// wide as the wider side asks.
+        /// wide as the wider side asks (or the attachment below them), and makes room
+        /// for the attachment's row underneath.
         func wings(leading: CGFloat, trailing: CGFloat, grow: CGFloat) {
-            let wing = max(leading, trailing)
+            let wing = max(leading, trailing, attachmentWing)
             layout.leadingContentWidth = leading
             layout.trailingContentWidth = trailing
             layout.leadingWidth = wing
             layout.trailingWidth = wing
+            layout.attachmentHeight = attachment?.height ?? 0
+            layout.attachmentWidth = attachment == nil ? 0 : notch.width + 2 * wing
             layout.size = CGSize(
                 width: notch.width + 2 * wing + 2 * ear + 2 * grow,
-                height: notch.height + grow / 5
+                height: notch.height + grow / 5 + layout.attachmentHeight
             )
-            corners(floating ? layout.size.height / 2 : min(notch.height / 2 - 2, 14) + grow / 10)
+            if attachment != nil {
+                // The top keeps the compact island's corners (a floating pill's round
+                // ends); only the bottom, now further down, rounds more.
+                corners(attachedRadius + grow / 10, top: notch.height / 2)
+            } else {
+                corners(floating ? layout.size.height / 2 : min(notch.height / 2 - 2, 14) + grow / 10)
+            }
         }
 
         switch model.mode {
@@ -732,6 +775,8 @@ struct IslandLayout: Equatable {
             if center.secondary != nil {
                 // Where the bubble would end with the island at rest, so neither the
                 // pointer's hover growth nor the fold's own widening can flip the choice.
+                // An attachment wider than the compact row widens the island, and moves
+                // the bubble out with it, so it counts.
                 wings(leading: leading, trailing: trailing, grow: 0)
                 let bubbleEnd = layout.size.width / 2 + bubbleGap + layout.bubbleDiameter
                 if bubbleEnd > model.menuBarRoomRight - 2 {

@@ -68,6 +68,11 @@ private struct IslandSurface: View {
                 .id(model.contentKey)
                 .transition(.islandContent)
                 .padding(.horizontal, layout.earRadius)
+
+            // Its own layer under the compact row, so arriving and leaving it never
+            // touches the content above: the island grows down to it, and it comes out
+            // of a blur the way content does.
+            AttachmentLayer(attachment: model.attachment, layout: layout, isOpen: model.isExpanded)
         }
         // Width and height spring separately — width a little livelier — so the
         // island stretches sideways a beat before it drops, rather than scaling
@@ -172,6 +177,65 @@ private struct IslandSurface: View {
 private struct Squash {
     var x: CGFloat = 1
     var y: CGFloat = 1
+}
+
+/// The row an attachment rides in, under the notch row: across the island's body and
+/// centred on the notch, whatever the compact content either side of the notch is
+/// doing. It takes no clicks; a click there is on the island.
+///
+/// The layer is always there, and the row hangs from a point at the notch's centre
+/// rather than from the island's edges. A view on its way out keeps the frame it last
+/// had in its parent; with the island for a parent, whose edges move as it narrows or
+/// opens, the row would slide sideways with the island's leading edge as it faded.
+/// From a point that never moves, it comes and goes where it belongs, under the notch.
+private struct AttachmentLayer: View {
+    let attachment: IslandAttachment?
+    let layout: IslandLayout
+    /// The island is open, and its header shows the attachment as its banner. The row
+    /// goes at once rather than fade out over the page coming in, a second level on
+    /// screen beside the header's.
+    let isOpen: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .overlay(alignment: .top) {
+                if let attachment {
+                    attachment.content
+                        .frame(width: layout.attachmentWidth, height: attachment.height)
+                        .padding(.top, layout.notch.height)
+                        // A row laid out afresh at a new width (another device's longer
+                        // name) cross-fades, the way the island's content does, while the
+                        // island springs out to it: stretched in place, its content,
+                        // already at its new layout, would sit off-centre, or run past
+                        // the island's edges, until the spring settled.
+                        .id(RowIdentity(id: attachment.id, width: layout.attachmentWidth))
+                        .transition(reduceMotion ? .attachmentFade : .islandContent)
+                }
+            }
+            // Its own geometry, so the row is placed from this point, which stays put,
+            // rather than from the island's edges, which do not.
+            .geometryGroup()
+            .animation(nil) { $0.opacity(isOpen ? 0 : 1) }
+            .allowsHitTesting(false)
+    }
+
+    private struct RowIdentity: Hashable {
+        let id: String
+        let width: CGFloat
+    }
+}
+
+extension AnyTransition {
+    /// An attachment's row with Reduce Motion: no blur or shrink, just the fade, on the
+    /// island content's own timings rather than whichever spring moved the island.
+    fileprivate static var attachmentFade: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.animation(.easeOut(duration: 0.28).delay(0.07)),
+            removal: .opacity.animation(.easeIn(duration: 0.14))
+        )
+    }
 }
 
 /// Compact content: one view left of the notch, one right, and the camera between.
@@ -418,7 +482,9 @@ private struct ExpandedHeader: View {
 
     @ViewBuilder
     private var trailing: some View {
-        if let banner = model.center.banner, case .compact = banner.style {
+        // An attachment has no compact row to ride under here, so it shows as its
+        // banner would, ahead of any other banner.
+        if let banner = model.center.attachment?.banner ?? model.center.banner, case .compact = banner.style {
             HStack(spacing: 6) {
                 banner.leading.frame(width: 24)
                 banner.trailing

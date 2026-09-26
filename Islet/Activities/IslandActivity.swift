@@ -68,7 +68,8 @@ extension IslandActivity {
 }
 
 /// A transient alert that takes over the island for a moment, the way plugging in a
-/// charger or connecting AirPods does on the iPhone, then gives it back.
+/// charger or connecting AirPods does on the iPhone, then gives it back. Something
+/// that should leave the island's content in place instead is an `IslandAttachment`.
 struct IslandBanner {
     enum Style: Equatable {
         /// Stays at notch height and widens: content either side of the notch.
@@ -92,6 +93,35 @@ struct IslandBanner {
     var trailing: AnyView = AnyView(EmptyView())
     /// Card style: the card's body below the notch row.
     var content: AnyView = AnyView(EmptyView())
+}
+
+/// Something brief that rides under the compact island instead of taking it over: the
+/// volume changing while music plays, say. What the island was showing stays exactly
+/// as it was, and a slim row grows beneath it for a moment, then folds away again.
+///
+/// It needs compact content to ride under: a live activity, or a compact banner. With
+/// none (the island at rest, or a card up), it shows as `banner` instead, taking the
+/// island over as any banner does. `ActivityCenter.present(_:)` chooses between the
+/// two when it goes up, and it keeps that form while it is presented again in place;
+/// a row whose activity or banner goes before it does becomes its banner for the time
+/// it has left. The opened island has no compact row either, so its header shows the
+/// banner, as it shows any compact banner.
+struct IslandAttachment {
+    /// Presenting an attachment with the id of the one on screen updates it in place
+    /// (and restarts its timer) instead of animating a new one in, as with banners.
+    var id: String
+    /// The row's height, below the notch row.
+    var height: CGFloat = 26
+    /// The least width the row's content needs. The row spans the island's body at
+    /// rest, centred on the notch; an island narrower than this widens for it, on both
+    /// sides alike.
+    var width: CGFloat
+    var duration: TimeInterval = 2.6
+    /// The row. It takes no clicks: a click there is on the island.
+    var content: AnyView
+    /// The same thing as a banner of its own, for when there is nothing compact to
+    /// ride under. `nil` shows it only under compact content.
+    var banner: IslandBanner?
 }
 
 /// How much a banner may interrupt, after the iPhone's notification interruption

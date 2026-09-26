@@ -43,9 +43,10 @@ level and a green battery on the other — and warnings as the battery runs low.
 Low Power Mode and unplugging can be announced too.
 
 **Volume & Brightness.** Replaces the system overlay with a slim bar in the island, naming the
-device being changed ("AirPods Max", "Built-in Retina Display"), the way macOS does. Needs
-Accessibility (called Device Control and Data Access from macOS 27), so it is off until you
-turn it on.
+device being changed ("AirPods Max", "Built-in Retina Display"), the way macOS does. While the
+island is showing something else, such as a song or a timer, the bar joins it in a slim row
+underneath instead of taking its place. Needs Accessibility (called Device Control and Data
+Access from macOS 27), so it is off until you turn it on.
 
 **Headphones.** AirPods and other headphones connecting, as a card with a battery ring for
 each earbud and the case. Connections are read from CoreAudio, so they need no permission;

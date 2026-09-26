@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 /// Stands in for the system's volume and brightness overlay: the keys change the
-/// level as macOS would, and the island shows it beside the notch.
+/// level as macOS would, and the island shows it beside the notch — or, while it is
+/// showing something already (music, a timer), in a slim row beneath that.
 ///
 /// Catching the keys needs Accessibility, so the feature is opt-in and never asks on
 /// its own. Until access is granted every key reaches macOS as usual, and so does any
@@ -22,8 +23,9 @@ final class SystemHUDFeature: Feature {
         static let showName = "systemHUD.showName"
     }
 
-    /// One id for volume and brightness alike, so held or alternating keys update
-    /// the banner on screen instead of animating a new one in.
+    /// One id for volume and brightness alike, as a banner or an attachment, so held
+    /// or alternating keys update the overlay on screen instead of animating a new
+    /// one in.
     static let bannerID = "systemHUD"
 
     private let model = SystemHUDModel()
@@ -34,6 +36,8 @@ final class SystemHUDFeature: Feature {
     private var accessObserver: NSObjectProtocol?
     private var accessRecheck: DispatchWorkItem?
     private var previewTask: Task<Void, Never>?
+    /// The made-up song a preview plays the volume over, while it is up.
+    private var previewSong: SystemHUDSampleSong?
 
     @AppStorage(Key.volume) private var handlesVolume = true
     @AppStorage(Key.brightness) private var handlesBrightness = true
@@ -47,7 +51,7 @@ final class SystemHUDFeature: Feature {
         tap.onAccessLost = { [weak self] in self?.scheduleAccessRecheck() }
         access.onChange = { [weak self] in self?.syncTap() }
         model.onChange = { [weak self] in
-            self?.previewTask?.cancel()
+            self?.endPreview()
             self?.presentHUD()
         }
     }
@@ -77,10 +81,10 @@ final class SystemHUDFeature: Feature {
             DistributedNotificationCenter.default().removeObserver(accessObserver)
         }
         accessObserver = nil
-        previewTask?.cancel()
-        previewTask = nil
+        endPreview()
         model.stop()
         ActivityCenter.shared.dismissBanner(id: Self.bannerID)
+        ActivityCenter.shared.dismissAttachment(id: Self.bannerID)
     }
 
     func settingsView() -> AnyView? {
@@ -98,6 +102,12 @@ final class SystemHUDFeature: Feature {
             },
             FeaturePreview(title: "Mute") { [weak self] in
                 self?.playPreview([(.volume, 0.5, false), (.volume, 0.5, true)], interval: 0.7, device: "MacBook Pro Speakers")
+            },
+            // A song of its own, so what is really playing is left alone.
+            FeaturePreview(title: "Volume while music plays") { [weak self] in
+                self?.playPreview(
+                    (6...10).map { (.volume, Double($0) / 16, false) }, device: "AirPods Max", overSong: true
+                )
             },
         ]
     }
@@ -165,37 +175,78 @@ final class SystemHUDFeature: Feature {
 
     // MARK: HUD
 
+    /// How long the overlay stays after the last key.
+    private static let duration: TimeInterval = 1.6
+
+    /// Shows the level. Over something compact, such as music playing, it rides in a
+    /// row beneath it and leaves it be; with nothing to ride under, it is a banner
+    /// either side of the notch. `ActivityCenter` picks between the two each time, so
+    /// a held key follows the island as it changes.
     private func presentHUD() {
         let showsPercentage = showsPercentage
         let showsName = showsName
-        let wing = SystemHUDLayout.wingWidth(name: showsName ? model.deviceName : nil, showsPercentage: showsPercentage)
-        ActivityCenter.shared.present(IslandBanner(
+        let state = model.state
+        let name = showsName ? state.deviceName : nil
+        let wing = SystemHUDLayout.wingWidth(name: name, showsPercentage: showsPercentage)
+        let banner = IslandBanner(
             id: Self.bannerID,
             style: .compact(leading: wing, trailing: wing),
-            duration: 1.6,
+            duration: Self.duration,
             haptic: false,
-            leading: AnyView(SystemHUDLeading(model: model, showsName: showsName)),
+            leading: AnyView(SystemHUDLeading(state: state, showsName: showsName)),
             trailing: AnyView(
-                SystemHUDLevel(model: model, showsPercentage: showsPercentage)
+                SystemHUDLevel(state: state, showsPercentage: showsPercentage)
                     .padding(.leading, SystemHUDLayout.innerInset)
                     .padding(.trailing, SystemHUDLayout.outerInset)
             )
+        )
+        ActivityCenter.shared.present(IslandAttachment(
+            id: Self.bannerID,
+            height: SystemHUDLayout.rowHeight,
+            width: SystemHUDLayout.rowWidth(name: name, kind: state.kind, showsPercentage: showsPercentage),
+            duration: Self.duration,
+            content: AnyView(SystemHUDRow(state: state, showsName: showsName, showsPercentage: showsPercentage)),
+            banner: banner
         ))
     }
 
+    /// Plays made-up levels, `interval` apart. `overSong` first puts up a made-up song
+    /// for them to ride under, and takes it down once the overlay has gone.
     private func playPreview(
         _ frames: [(kind: SystemHUDModel.Kind, level: Double, muted: Bool)],
         interval: TimeInterval = 0.3,
-        device: String
+        device: String,
+        overSong: Bool = false
     ) {
-        previewTask?.cancel()
+        endPreview()
+        let song = overSong ? SystemHUDSampleSong() : nil
+        if let song {
+            previewSong = song
+            ActivityCenter.shared.show(song)
+        }
         previewTask = Task { [weak self] in
+            // Let the song settle into the island before the volume changes over it.
+            if song != nil { try? await Task.sleep(for: .seconds(0.9)) }
             for (index, frame) in frames.enumerated() {
                 if index > 0 { try? await Task.sleep(for: .seconds(interval)) }
                 guard let self, !Task.isCancelled else { return }
                 self.model.display(frame.kind, level: frame.level, muted: frame.muted, device: device)
                 self.presentHUD()
             }
+            guard song != nil else { return }
+            try? await Task.sleep(for: .seconds(Self.duration + 0.8))
+            guard !Task.isCancelled else { return }
+            self?.endPreview()
+        }
+    }
+
+    /// Stops a preview part way, and takes down its song.
+    private func endPreview() {
+        previewTask?.cancel()
+        previewTask = nil
+        if let song = previewSong {
+            ActivityCenter.shared.end(id: song.id)
+            previewSong = nil
         }
     }
 

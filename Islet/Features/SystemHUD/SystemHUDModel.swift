@@ -49,6 +49,11 @@ final class SystemHUDModel {
         pendingBrightness = nil
     }
 
+    /// What the HUD shows now, as values for the overlay's views to draw.
+    var state: SystemHUDState {
+        SystemHUDState(kind: kind, level: level, isMuted: isMuted, deviceName: deviceName)
+    }
+
     /// Sets what the HUD shows without touching any hardware (previews use it).
     func display(_ kind: Kind, level: Double, muted: Bool = false, device: String? = nil) {
         self.kind = kind
@@ -133,4 +138,16 @@ final class SystemHUDModel {
         guard step > 0 else { return level }
         return min(max(((level + delta) / step).rounded() * step, 0), 1)
     }
+}
+
+/// One moment of the overlay: which level, where it stands, and on what. The overlay
+/// is presented afresh with each change (`SystemHUDModel.onChange`), and each
+/// presentation draws the values it was given rather than the live model, so an
+/// overlay on its way out, fading as the next one comes in, still shows what it
+/// showed rather than the level that replaced it.
+struct SystemHUDState: Equatable {
+    var kind: SystemHUDModel.Kind
+    var level: Double
+    var isMuted: Bool
+    var deviceName: String?
 }
