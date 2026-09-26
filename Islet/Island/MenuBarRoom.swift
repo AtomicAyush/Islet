@@ -107,7 +107,8 @@ enum MenuBarRoom {
     /// Whether a frame lies along the top of the display, where its menu bar is. Every
     /// menu bar covers at least the top 24 points and centres its items in its height,
     /// so an item there overlaps that strip. One with no place in the menu bar comes
-    /// back with no size, in a corner of the screen.
+    /// back with no size, in a corner of the screen (before macOS 27), or with its size
+    /// but parked at the bottom of the main display (macOS 27).
     private static func isOnMenuBar(_ frame: CGRect, of screen: CGRect) -> Bool {
         frame.width > 0 && frame.height > 0
             && frame.minX >= screen.minX && frame.minX < screen.maxX
@@ -131,9 +132,15 @@ private final class MenuExtras: @unchecked Sendable {
     static let shared = MenuExtras()
 
     /// Control Center draws the clock, Wi-Fi and the like, and SystemUIServer the
-    /// older extras. They are asked whatever activation policy macOS gives them, which
-    /// for a system agent is its own business.
-    private static let systemOwners: Set<String> = ["com.apple.controlcenter", "com.apple.systemuiserver"]
+    /// older extras; on macOS 27 MenuBarAgent draws them all. They are asked whatever
+    /// activation policy macOS gives them, which for a system agent is its own business.
+    private static let systemOwners: Set<String> = ["com.apple.controlcenter", "com.apple.systemuiserver", menuBarAgent]
+    /// macOS 27's menu bar process. Its own extras bar holds the system items, and its
+    /// window holds every item the menu bar shows, other apps' included, so one app
+    /// answers what otherwise takes asking every running app (about a second).
+    private static let menuBarAgent = "com.apple.MenuBarAgent"
+    /// How deep into the agent's window its item buttons sit, with room to spare.
+    private static let agentDepth = 6
     /// How long one app may take to answer each question. The default is six seconds,
     /// and a single hung app would hold up the whole read.
     private static let timeout: Float = 0.1
@@ -161,6 +168,10 @@ private final class MenuExtras: @unchecked Sendable {
     }
 
     private static func otherAppsExtras() -> [CGRect] {
+        if let agent = NSRunningApplication.runningApplications(withBundleIdentifier: menuBarAgent).first {
+            let frames = agentItems(agent.processIdentifier)
+            if !frames.isEmpty { return frames }
+        }
         let ownPID = ProcessInfo.processInfo.processIdentifier
         return NSWorkspace.shared.runningApplications
             .filter { app in
@@ -184,6 +195,28 @@ private final class MenuExtras: @unchecked Sendable {
         let pid = ProcessInfo.processInfo.processIdentifier
         if Thread.isMainThread { return extras(of: pid) }
         return DispatchQueue.main.sync { extras(of: pid) }
+    }
+
+    /// Every item macOS 27's menu bar shows: the system ones from the agent's extras
+    /// bar, and the buttons in its window, which stand for other apps' items. Items
+    /// with no place in the menu bar are parked off it, and `isOnMenuBar` drops them.
+    private static func agentItems(_ pid: pid_t) -> [CGRect] {
+        var frames = extras(of: pid)
+        let app = AXUIElementCreateApplication(pid)
+        let windows = (value(kAXWindowsAttribute, of: app) as? [CFTypeRef] ?? []).compactMap(element)
+        var level = windows
+        for _ in 0..<agentDepth where !level.isEmpty {
+            var next: [AXUIElement] = []
+            for item in level {
+                if (value(kAXRoleAttribute, of: item) as? String) == kAXButtonRole, let frame = frame(of: item) {
+                    frames.append(frame)
+                } else {
+                    next += (value(kAXChildrenAttribute, of: item) as? [CFTypeRef] ?? []).compactMap(element)
+                }
+            }
+            level = next
+        }
+        return frames
     }
 
     /// The frames of one app's status items: none if it has none, or does not answer in time.

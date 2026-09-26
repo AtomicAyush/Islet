@@ -28,7 +28,7 @@ framework and print now-playing updates as JSON lines on stdout.
   while that app is paused, even as another plays on. Its targeted calls
   (`MRMediaRemoteSendCommandToApp`, `…ToClient`, `…ToPlayer`) cannot get round that
   from here: mediaremoted (macOS 26.6) redirects a targeted command to the elected
-  app unless the client holds entitlement bit 0x2 — perl has 0x200 — or the target is
+  app unless the client holds entitlement bit 0x2 — perl has 0x200 on macOS 26 and 0xFC00200 on macOS 27, never 0x2 — or the target is
   Apple's own Music, Podcasts or Books, and logs "missing entitlement needed to
   send command … to arbitrary apps. Sending to NowPlayingApp instead". So Islet checks
   that the app it shows is the elected one straight before sending, instead.

@@ -33,8 +33,8 @@ final class AccessibilityAccess {
     func request() {
         // The literal key: the imported constant is a global var Swift 6 rejects.
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-        // The pane's anchor from before macOS 27. Whether it still opens the renamed
-        // pane there is unverified.
+        // The pane's anchor from before macOS 27, which the renamed pane there still
+        // registers under its old identifier.
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
