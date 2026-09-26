@@ -253,6 +253,91 @@ struct FocusTileDisplay: Equatable {
     }
 }
 
+// MARK: - Indicator card
+
+/// The card the Focus's symbol opens in the opened island: which Focus is on and until
+/// when, in the home tile's words, and, while that is Do Not Disturb and Settings names
+/// a shortcut to toggle Focus, a button that turns it off with that shortcut, as
+/// clicking the tile does. Once the Focus is off, the card says so for the moment
+/// before it closes.
+///
+/// Only Do Not Disturb is offered "Turn Off": the shortcut Islet asks for toggles Do
+/// Not Disturb, and run while another Focus is on it would turn Do Not Disturb on in
+/// that one's place. The tile, which promises only to turn Focus on or off, runs it
+/// whatever is on.
+struct FocusIndicatorCard: View {
+    let model: FocusModel
+    let toggle: FocusToggle
+    let turnOff: () -> Void
+    @AppStorage(FocusPrefs.shortcut) private var shortcut = ""
+
+    /// Wide enough for Apple's longest name, "Reduce Interruptions", whole; a longer
+    /// one shrinks a little, then truncates. The card is no wider than its words and
+    /// button need.
+    static let maxWidth: CGFloat = 276
+
+    var body: some View {
+        let display = FocusTileDisplay(
+            state: model.shown,
+            needsAccess: false,
+            failure: model.preview == nil ? toggle.failure : nil
+        )
+        let offersTurnOff = display.isOn && model.shown?.mode?.isDoNotDisturb == true && !shortcut.isEmpty
+        HStack(spacing: 10) {
+            FocusBadge(symbol: display.symbol, tint: display.tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(display.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(display.isOn ? .white : .white.opacity(0.8))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                TimelineView(.everyMinute) { context in
+                    Text(display.status(at: context.date))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(display.statusColor)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if offersTurnOff {
+                FocusTurnOffButton(tint: display.tint ?? FocusPalette.off, isRunning: toggle.isRunning, action: turnOff)
+                    .padding(.leading, 4)
+            }
+        }
+        .animation(.smooth(duration: 0.3), value: display)
+    }
+}
+
+extension FocusMode {
+    /// Do Not Disturb itself, the Focus the toggle shortcut Islet asks for turns off.
+    var isDoNotDisturb: Bool { identifier == "com.apple.donotdisturb.mode.default" }
+}
+
+/// "Turn Off", in the Focus's colour on a capsule of it, matching `RoundButton`. Dimmed
+/// while the shortcut runs, as the tile is.
+private struct FocusTurnOffButton: View {
+    let tint: Color
+    let isRunning: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text("Turn Off")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(Capsule().fill(tint.opacity(isHovering ? 0.3 : 0.2)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isRunning)
+        .opacity(isRunning ? 0.55 : 1)
+        .onHover { isHovering = $0 }
+    }
+}
+
 /// The Focus's symbol on a disc of its colour, matching `RoundButton`; grey when off.
 struct FocusBadge: View {
     let symbol: String

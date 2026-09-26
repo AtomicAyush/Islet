@@ -19,6 +19,16 @@ extension PrivacyUsage {
     /// Whether the purple dot is lit: the screen, or the Mac's sound, recorded by an
     /// app other than Islet.
     var capturesScreenOrSound: Bool { screen.inUse || systemAudio.inUse }
+
+    /// What an indicator lit for `sensors` says to VoiceOver: "Location in use — Find
+    /// My", or "Camera in use — FaceTime, Microphone in use" where nobody can be named
+    /// for the microphone. `nil` when none of them is in use.
+    func indicatorLabel(for sensors: [PrivacyMonitor.Sensor]) -> String? {
+        let parts = sensors.filter { self[$0].inUse }.map { sensor in
+            "\(sensor.name) in use" + (self[sensor].appNames.map { " — \($0)" } ?? "")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
 }
 
 extension PrivacyMonitor.Sensor {
@@ -181,10 +191,10 @@ private struct PrivacySingleSensor: View {
     }
 }
 
-/// A line of the tile: the sensor's symbol, the first app's icon, and who. `full`
-/// names the sensor too ("Microphone · Zoom"); otherwise the app alone, or the sensor
-/// alone where no app can be named.
-private struct PrivacySensorLine: View {
+/// A line of the tile, and of the indicators' card: the sensor's symbol, the first
+/// app's icon, and who. `full` names the sensor too ("Microphone · Zoom"); otherwise
+/// the app alone, or the sensor alone where no app can be named.
+struct PrivacySensorLine: View {
     let sensor: PrivacyMonitor.Sensor
     let use: PrivacyUse
     let full: Bool
@@ -197,9 +207,11 @@ private struct PrivacySensorLine: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(sensor.tint)
                 .frame(width: 16)
+            // The line names the app, so its icon says nothing more to VoiceOver.
             if let app = use.apps.first, app.bundlePath != nil {
                 PrivacyAppIcon(app: app)
                     .frame(width: 15, height: 15)
+                    .accessibilityHidden(true)
             }
             Text(full ? "\(sensor.name) · \(use.appNames ?? "In use")" : use.appNames ?? sensor.name)
                 .font(Self.font)
@@ -212,7 +224,7 @@ private struct PrivacySensorLine: View {
 }
 
 /// The Sound Mixer's own recording, muted: it is expected, and lights nothing.
-private struct PrivacySoundMixerLine: View {
+struct PrivacySoundMixerLine: View {
     let full: Bool
 
     var body: some View {
@@ -224,12 +236,51 @@ private struct PrivacySoundMixerLine: View {
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 15, height: 15)
+                .accessibilityHidden(true)
             Text(full ? "Islet — Sound Mixer" : "Sound Mixer")
                 .font(PrivacySensorLine.font)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
         .foregroundStyle(.white.opacity(0.4))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Indicator card
+
+/// The card a privacy indicator opens in the opened island: a line for each sensor in
+/// use, as on the home tile, and the Sound Mixer's own recording, greyed. Every privacy
+/// indicator opens this same card, so it stays open while any of them is lit; once
+/// none is, it says so for the moment before it closes.
+struct PrivacyIndicatorCard: View {
+    let monitor: PrivacyMonitor
+
+    /// Wide enough for "System Audio · QuickTime Player" whole; a longer line truncates.
+    static let maxWidth: CGFloat = 248
+    static let lineHeight: CGFloat = 22
+
+    var body: some View {
+        let usage = monitor.usage
+        let sensors = usage.sensorsInUse
+        VStack(alignment: .leading, spacing: 0) {
+            if sensors.isEmpty {
+                Text("Nothing in use now")
+                    .font(PrivacySensorLine.font)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(height: Self.lineHeight)
+            } else {
+                ForEach(sensors, id: \.self) { sensor in
+                    PrivacySensorLine(sensor: sensor, use: usage[sensor], full: true)
+                        .frame(height: Self.lineHeight)
+                }
+                // It explains the purple dot macOS shows and Islet does not.
+                if usage.soundMixer {
+                    PrivacySoundMixerLine(full: true)
+                        .frame(height: Self.lineHeight)
+                }
+            }
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

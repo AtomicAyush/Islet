@@ -61,7 +61,8 @@ orange one while only a microphone is — as on the iPhone — and a purple one 
 records the screen or what the Mac plays. Turn on Location in Settings for an arrow while an
 app gets the Mac's location (it is off at first: a single look-up lights it for about twelve
 seconds). The home page says what is in use and which app is using it — "Microphone · Zoom",
-"Screen · QuickTime Player" — and Islet can name the app for a moment as it starts. Whether a
+"Screen · QuickTime Player" — as does a click on any of these dots or the arrow, and Islet can
+name the app for a moment as it starts. Whether a
 sensor is in use comes from the system itself and needs no permission. The microphone's app
 comes from Core Audio; the rest of the names, and location and recorded sound at all, come from
 the system log, which macOS only shows to administrator accounts. On any other account only
@@ -76,7 +77,9 @@ unannounced. macOS shows a banner of its own for every Focus change, so Islet's 
 "On" and "Off" banner is off unless you turn it on in Settings. macOS keeps which Focus is on in a database only apps with Full Disk Access
 may read, so this needs Full Disk Access; until it has it, the home tile says so. Nor can
 other apps turn Focus on or off, so clicking the tile runs a shortcut of yours: make one with
-the Set Focus action set to toggle Do Not Disturb, and pick it in Settings.
+the Set Focus action set to toggle Do Not Disturb, and pick it in Settings. Click the Focus's
+symbol for which Focus is on and until when, with Turn Off for Do Not Disturb once that
+shortcut is picked.
 
 **Shortcuts.** While a shortcut runs, its icon sits left of the camera and a spinner right of
 it, as on the iPhone; a tick or a cross shows as it ends, and the island gives itself back.

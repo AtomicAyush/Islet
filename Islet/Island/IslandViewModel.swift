@@ -52,6 +52,18 @@ final class IslandViewModel {
     var focus: String?
     /// Which page of home tiles is showing, when they need more than one.
     var homePage = 0
+    /// The indicator card open in the opened island, if any (`IndicatorDetail`).
+    private(set) var indicatorCard: OpenIndicatorCard?
+    /// How tall each card is as drawn, by its id, as the card reports it, so the island
+    /// can grow to hold one taller than its page leaves room for. Kept while the card
+    /// is closed: one opened again while it is still fading out is the same view, come
+    /// back, and reports no new height. Forgotten as the island closes.
+    private(set) var indicatorCardHeights: [String: CGFloat] = [:]
+    /// Room kept for a card that closed or shrank under the pointer
+    /// (`keepingCardRoom(_:)`).
+    private var heldCardRoom: CGFloat = 0
+    /// Where the pointer last was, in global coordinates, as the controller reports it.
+    @ObservationIgnored private var pointerLocation: CGPoint?
 
     /// The current press began on the island, so a drag it starts is outgoing (a file
     /// dragged off the shelf) and the island must not treat it as one arriving.
@@ -250,6 +262,8 @@ final class IslandViewModel {
     /// a mouse button is held; only the notch of an island hidden for a full-screen app
     /// looks at them.
     func pointer(inside: Bool, overSecondary: Bool = false, at point: CGPoint? = nil, buttonsDown: Bool = false) {
+        if let point { pointerLocation = point }
+        if heldCardRoom > 0 { releaseCardRoom(inside: inside) }
         if overSecondary != isHoveringSecondary {
             withAnimation(.islandHover) { isHoveringSecondary = overSecondary }
         }
@@ -298,8 +312,13 @@ final class IslandViewModel {
         peekWait = .resting(at: point ?? .zero)
     }
 
+    /// A click on the island that nothing in it took. Opened, that is a click beside
+    /// an indicator's card, which closes it.
     func tap() {
-        guard !isExpanded else { return }
+        guard !isExpanded else {
+            closeIndicatorCard()
+            return
+        }
         cancelExpand()
         expand()
     }
@@ -326,6 +345,8 @@ final class IslandViewModel {
     func expand(focus: String? = nil) {
         cancelExpand()
         cancelCollapse()
+        // Already open, this is a change of page, which a card does not outlast.
+        closeIndicatorCard()
         let wasExpanded = isExpanded
         if !wasExpanded { appInFrontAtOpen = appInFront() }
         withAnimation(.islandOpen) {
@@ -343,12 +364,112 @@ final class IslandViewModel {
         withAnimation(.islandClose) {
             isExpanded = false
             focus = nil
+            indicatorCard = nil
+            indicatorCardHeights = [:]
+            heldCardRoom = 0
         }
         homePage = 0
     }
 
     func select(focus: String) {
+        closeIndicatorCard()
         withAnimation(.islandMorph) { self.focus = focus }
+    }
+
+    // MARK: Indicator cards
+
+    /// The indicator the open card hangs from: the one it was opened from while that
+    /// is shown, or else another showing the same card (the location arrow, once the
+    /// camera's dot has gone). `nil` once none is, when the card says so for a moment
+    /// and closes (`IndicatorCardOverlay`), or while the island is closed.
+    var indicatorCardAnchor: String? {
+        guard isExpanded, let card = indicatorCard else { return nil }
+        let showing = center.indicators.filter { $0.detail?.id == card.detail.id }
+        return showing.first { $0.id == card.indicatorID }?.id ?? showing.first?.id
+    }
+
+    /// A click on an indicator in the opened island: opens its card, or closes it if it
+    /// is already open under that indicator. Opening one closes any other; one showing
+    /// the same card as the open one just moves the card to it.
+    func toggleIndicatorCard(id: String) {
+        if indicatorCardAnchor == id {
+            closeIndicatorCard()
+            return
+        }
+        guard isExpanded, let detail = center.indicators.first(where: { $0.id == id })?.detail else { return }
+        keepingCardRoom {
+            withAnimation(.indicatorCard) { indicatorCard = OpenIndicatorCard(indicatorID: id, detail: detail) }
+        }
+    }
+
+    func closeIndicatorCard() {
+        guard indicatorCard != nil else { return }
+        keepingCardRoom {
+            withAnimation(.indicatorCard) { indicatorCard = nil }
+        }
+    }
+
+    /// The card `id` is drawn `height` tall.
+    func indicatorCardMeasured(id: String, height: CGFloat) {
+        guard indicatorCardHeights[id] != height else { return }
+        keepingCardRoom { indicatorCardHeights[id] = height }
+    }
+
+    /// How tall a card the opened island makes room for under its header: the open
+    /// card, or one held for the pointer, whichever is taller (`IslandLayout`).
+    var indicatorCardRoom: CGFloat {
+        max(openCardHeight, heldCardRoom)
+    }
+
+    private var openCardHeight: CGFloat {
+        indicatorCard.flatMap { indicatorCardHeights[$0.detail.id] } ?? 0
+    }
+
+    /// Makes `change`, which may leave the open card shorter or close it, without
+    /// pulling the island's bottom edge up from under the pointer. A card taller than
+    /// its page leaves room for lengthens the island; were the island to shorten while
+    /// the pointer rests in that added length — on the strip beside the card, clicked
+    /// to close it, or on its last lines as they go — the pointer would be left
+    /// outside, and the island would close as though it had been left. So the room
+    /// stays until the pointer moves up into the rest of the island, or off it, or the
+    /// island closes (`releaseCardRoom(inside:)`).
+    private func keepingCardRoom(_ change: () -> Void) {
+        let before = indicatorCardRoom
+        let bottom = islandBottom
+        change()
+        guard isExpanded, isHovering, let pointer = pointerLocation, indicatorCardRoom < before else { return }
+        let length = cardGrowth(before) - cardGrowth(indicatorCardRoom)
+        if pointer.y < bottom + length { heldCardRoom = before }
+    }
+
+    /// The pointer moved: the room held for a card goes once it is off the island, or
+    /// above the length that room adds.
+    private func releaseCardRoom(inside: Bool) {
+        if inside, let pointer = pointerLocation {
+            let length = cardGrowth(heldCardRoom) - cardGrowth(openCardHeight)
+            guard pointer.y >= islandBottom + length else { return }
+        }
+        withAnimation(.indicatorCard) { heldCardRoom = 0 }
+    }
+
+    /// How much longer the opened island, as laid out now, is for a card `height` tall.
+    private func cardGrowth(_ height: CGFloat) -> CGFloat {
+        let layout = layout
+        return IndicatorCardLayout.growth(cardHeight: height, pageHeight: layout.bodyHeight, notchHeight: layout.notch.height)
+    }
+
+    /// The island's bottom edge on screen, in global coordinates (y up), as the
+    /// controller places it.
+    private var islandBottom: CGFloat {
+        let layout = layout
+        return metrics.screenFrame.maxY - layout.topInset - layout.size.height
+    }
+
+    /// A click on an indicator in the resting or compact island: it opens with that
+    /// indicator's card already showing.
+    func expand(showingCardOf id: String) {
+        expand()
+        toggleIndicatorCard(id: id)
     }
 
     // MARK: File drags
@@ -647,9 +768,14 @@ struct IslandLayout: Equatable {
                 body = center.activity(id: focus)?.expandedHeight ?? homeHeight
             }
             layout.bodyHeight = body
+            // A card taller than the page leaves room for lengthens the island below
+            // the page, which keeps its own height.
+            let card = IndicatorCardLayout.growth(
+                cardHeight: model.indicatorCardRoom, pageHeight: body, notchHeight: notch.height
+            )
             layout.size = CGSize(
                 width: max(expandedWidth, notch.width + 300) + 2 * layout.earRadius,
-                height: notch.height + body + expandedInset.bottom
+                height: notch.height + body + expandedInset.bottom + card
             )
             corners(30, top: 24)
             layout.showsShadow = true

@@ -99,6 +99,8 @@ private struct IslandSurface: View {
             // same patch the controller treats as hovering it, not just its circle.
             if let folded = model.foldedActivity, layout.foldedTarget.contains(location) {
                 model.expand(focus: folded.id)
+            } else if let id = IndicatorCardLayout.compactIndicator(at: location, in: layout, indicators: model.center.indicators) {
+                model.expand(showingCardOf: id)
             } else {
                 model.tap()
             }
@@ -234,34 +236,17 @@ extension View {
 struct IndicatorDots: View {
     let indicators: [StatusIndicator]
 
+    /// Room before the first mark, within the strip `IslandLayout` gives the dots.
+    static let leading: CGFloat = 2
+
     var body: some View {
         HStack(spacing: IslandLayout.indicatorGap) {
             ForEach(indicators) { indicator in
-                mark(indicator)
+                IndicatorMark(indicator: indicator)
                     .transition(.scale.combined(with: .opacity))
             }
         }
-        .padding(.leading, 2)
-    }
-
-    /// A dot, or the indicator's symbol fitted into the box `IslandLayout` gives it,
-    /// with a softer glow than a dot's so its shape stays crisp.
-    @ViewBuilder
-    private func mark(_ indicator: StatusIndicator) -> some View {
-        if let symbol = indicator.symbol {
-            Image(systemName: symbol)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .fontWeight(.semibold)
-                .foregroundStyle(indicator.color)
-                .frame(width: IslandLayout.indicatorSymbol.width, height: IslandLayout.indicatorSymbol.height)
-                .shadow(color: indicator.color.opacity(0.45), radius: 2)
-        } else {
-            Circle()
-                .fill(indicator.color)
-                .frame(width: IslandLayout.indicatorDot, height: IslandLayout.indicatorDot)
-                .shadow(color: indicator.color.opacity(0.6), radius: 3)
-        }
+        .padding(.leading, Self.leading)
     }
 }
 
@@ -375,7 +360,10 @@ private struct ExpandedIsland: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
                 .frame(height: layout.bodyHeight, alignment: .top)
                 .frame(maxWidth: .infinity)
+                // Under an open card the page takes no clicks, and VoiceOver skips it.
+                .accessibilityHidden(model.indicatorCard != nil)
         }
+        .indicatorCard(model: model, layout: layout)
         .padding(.horizontal, IslandLayout.expandedInset.leading - 6)
     }
 
@@ -440,7 +428,7 @@ private struct ExpandedHeader: View {
         } else {
             HStack(spacing: 8) {
                 if !model.center.indicators.isEmpty {
-                    IndicatorDots(indicators: model.center.indicators)
+                    HeaderIndicators(model: model)
                 }
                 TabButton(symbol: "gearshape.fill", isSelected: false) {
                     model.collapse()

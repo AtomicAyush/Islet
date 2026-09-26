@@ -123,9 +123,14 @@ final class FocusFeature: Feature {
             // Ahead of the camera and microphone dot: the Focus stays put while the dot
             // comes and goes at the island's end. On a display without a notch it
             // waits for the island to be up, rather than keep a pill there for hours
-            // against the person's choice.
+            // against the person's choice. Clicked in the opened island, it says which
+            // Focus and until when, and offers to turn Do Not Disturb off.
             center.setIndicator(StatusIndicator(
-                id: id, color: mode.tint.color, order: -1, symbol: mode.symbol, keepsIslandShown: false
+                id: id, color: mode.tint.color, order: -1, symbol: mode.symbol, keepsIslandShown: false,
+                label: "Focus on — \(mode.name)",
+                detail: IndicatorDetail(id: id, title: "Focus", maxWidth: FocusIndicatorCard.maxWidth) { [weak self, model, toggle] in
+                    AnyView(FocusIndicatorCard(model: model, toggle: toggle) { self?.tileClicked() })
+                }
             ))
         } else {
             center.removeIndicator(id: id)

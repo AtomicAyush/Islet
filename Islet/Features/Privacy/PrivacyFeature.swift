@@ -103,24 +103,36 @@ final class PrivacyFeature: Feature {
     /// has; and the location arrow after both, at the island's end, where it comes and
     /// goes without moving them: a single look-up lights it for a dozen seconds. For
     /// the same reason the arrow alone never brings up the island where it is hidden.
+    ///
+    /// Clicked in the opened island, each opens the same card, which lists everything
+    /// in use and by whom.
     private func render() {
         let center = ActivityCenter.shared
         let usage = monitor.usage
+        let detail = IndicatorDetail(id: id, title: "Privacy", maxWidth: PrivacyIndicatorCard.maxWidth) { [monitor] in
+            AnyView(PrivacyIndicatorCard(monitor: monitor))
+        }
 
         if let tint = usage.dotTint {
-            center.setIndicator(StatusIndicator(id: Self.dotID, color: tint, order: 1))
+            center.setIndicator(StatusIndicator(
+                id: Self.dotID, color: tint, order: 1,
+                label: usage.indicatorLabel(for: [.camera, .microphone]), detail: detail
+            ))
         } else {
             center.removeIndicator(id: Self.dotID)
         }
         if usage.capturesScreenOrSound {
-            center.setIndicator(StatusIndicator(id: Self.captureID, color: privacyPurple, order: 2))
+            center.setIndicator(StatusIndicator(
+                id: Self.captureID, color: privacyPurple, order: 2,
+                label: usage.indicatorLabel(for: [.screen, .systemAudio]), detail: detail
+            ))
         } else {
             center.removeIndicator(id: Self.captureID)
         }
         if usage.location.inUse {
             center.setIndicator(StatusIndicator(
                 id: Self.locationID, color: privacyBlue, order: 3, symbol: PrivacyMonitor.Sensor.location.symbol,
-                keepsIslandShown: false
+                keepsIslandShown: false, label: usage.indicatorLabel(for: [.location]), detail: detail
             ))
         } else {
             center.removeIndicator(id: Self.locationID)

@@ -125,6 +125,41 @@ struct StatusIndicator: Identifiable, Equatable {
     /// Focus, on for hours at a time, does not: it is shown wherever the island is
     /// up anyway, and never overrules that setting.
     var keepsIslandShown = true
+    /// What the indicator says, in words, to VoiceOver: "Location in use — Find My".
+    var label: String? = nil
+    /// What the indicator means, in full. With one, clicking the indicator shows it in
+    /// a card under the indicator; without, the indicator is only a mark.
+    var detail: IndicatorDetail? = nil
+}
+
+/// The card an indicator opens: which apps are behind a privacy dot, which Focus is
+/// on and until when. It shows under the indicator in the opened island, one card at
+/// a time, and closes with a click anywhere else in the island.
+///
+/// Its view observes the feature's model, as an activity's views do, so it stays
+/// current while open without the indicator being re-published.
+struct IndicatorDetail: Equatable {
+    /// Which card this is. Indicators that show the same card give it the same id —
+    /// the privacy dots and the location arrow all list what is in use — so it stays
+    /// open while any of them is lit, and a click on another of them moves it there
+    /// rather than closing it. Once none is lit, the card stays a moment, to say so,
+    /// then closes.
+    var id: String
+    /// What the card is about, in a word, for VoiceOver: "Privacy", "Focus".
+    var title: String
+    /// The widest the card grows. It is as wide as its content asks, and no narrower
+    /// than it takes to reach its indicator; a line longer than this truncates. Its
+    /// height is whatever the content needs: the opened island grows to hold a card
+    /// taller than its page leaves room for.
+    var maxWidth: CGFloat
+    var content: @MainActor () -> AnyView
+
+    /// Two details are the same card when all but their views match. The view is
+    /// built afresh each time an indicator is published, and draws the same card
+    /// from the same model, so a new one is no reason to update the island.
+    static func == (a: Self, b: Self) -> Bool {
+        a.id == b.id && a.title == b.title && a.maxWidth == b.maxWidth
+    }
 }
 
 /// A tile on the home page — what the expanded island shows when nothing is
