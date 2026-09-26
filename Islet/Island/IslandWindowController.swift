@@ -182,12 +182,13 @@ final class IslandWindowController {
             if swipeOverList { return }
         }
 
+        // Swiping down opens the island. Swiping up does not close it: a two-finger
+        // scroll over a part of the opened island that doesn't scroll read as that
+        // gesture and closed the island mid-use. It closes when the pointer leaves
+        // or on a click outside.
         if swipeTravel > 24, !model.isExpanded {
             swipeHandled = true
             model.expand()
-        } else if swipeTravel < -24, model.isExpanded {
-            swipeHandled = true
-            model.collapse("two-finger swipe up")
         }
     }
 

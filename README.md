@@ -137,9 +137,9 @@ otherwise folds rather than risk covering them.
 
 **Rest the pointer on it to open it.** The island stretches sideways a beat before it drops,
 with a small squash and rebound, and its content arrives out of a blur. There is a tab for
-each running activity and one for the home page. It closes when the pointer leaves, on a
-click anywhere else, or with a two-finger swipe up (swipe down opens it). Clicking works too,
-if you would rather it did not open on hover.
+each running activity and one for the home page. It closes when the pointer leaves or on a
+click anywhere else; a two-finger swipe down opens it. Clicking works too, if you would rather
+it did not open on hover.
 
 **Alerts take it over for a moment.** Plugging in a charger, AirPods connecting, a timer
 finishing: the island widens or drops into a card, then gives itself back.
