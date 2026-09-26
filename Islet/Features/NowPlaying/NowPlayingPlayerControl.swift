@@ -11,17 +11,27 @@ import AppKit
 /// They are addressed to the running process, so a command can never relaunch a
 /// player that has quit.
 ///
-/// Each blocks — on the player, or on the person answering the Automation prompt
-/// macOS shows the first time Islet controls that app — so they run one at a time
-/// on a private serial queue. Only a press in the island may put that prompt up: a
-/// command from a Shortcut or a script could raise it with nobody looking, and hold
-/// every control queued behind it until someone answers. Until macOS has said yes,
-/// and once refused, a command is unavailable this way, and the caller tries
-/// MediaRemote instead.
+/// Each blocks on the player, so they run one at a time on a private serial queue.
+/// None ever waits on the person: the Automation prompt macOS shows the first time
+/// Islet controls an app is raised from a queue of its own, and the press that
+/// raised it goes the MediaRemote way meanwhile. The prompt can land on another
+/// Space, out of sight, and a control waiting on it would hold every control
+/// behind it until someone found it. Only a press in the island may raise it: a
+/// command from a Shortcut or a script could raise it with nobody looking. Until
+/// macOS has said yes, and once refused, a command is unavailable this way, and the
+/// caller tries MediaRemote instead.
 enum NowPlayingPlayerControl {
     private static let queue = DispatchQueue(
         label: "com.ayush.Islet.playerControl", qos: .userInitiated, autoreleaseFrequency: .workItem
     )
+    /// Where the Automation prompt is raised, and waited on for as long as the person
+    /// takes. Kept apart from `queue`, so an unanswered prompt holds up no control.
+    private static let consentQueue = DispatchQueue(label: "com.ayush.Islet.playerControl.consent", qos: .utility)
+    /// Players whose prompt is up, so another press does not queue a second one.
+    /// Touched only on `consentQueue`, and on `queue` under `consentLock`.
+    private static var askingConsent: Set<String> = []
+    private static let consentLock = NSLock()
+
     /// Long enough for a busy player; short enough that a hung one does not hold up
     /// the controls queued behind it for long.
     private static let timeout: TimeInterval = 5
@@ -67,16 +77,45 @@ enum NowPlayingPlayerControl {
         return error == noErr ? .delivered : .failed
     }
 
-    /// Whether Islet may send this event to the player, with `askingUser` asking the
-    /// person if they have not decided yet, and blocking while the prompt is up.
-    /// Without it, an undecided person is `errAEEventWouldRequireUserConsent`.
+    /// Whether Islet may send this event to the player, never waiting on the person.
+    /// An undecided person is `errAEEventWouldRequireUserConsent`; with `askingUser`,
+    /// the prompt goes up from `consentQueue`, and this command is left to MediaRemote.
     private static func permission(
         for event: NSAppleEventDescriptor, to player: NowPlayingBroadcastPlayer, askingUser: Bool
+    ) -> OSStatus {
+        let status = determinePermission(eventClass: event.eventClass, eventID: event.eventID, to: player, asking: false)
+        if status == errAEEventWouldRequireUserConsent, askingUser {
+            askConsent(eventClass: event.eventClass, eventID: event.eventID, to: player)
+        }
+        return status
+    }
+
+    /// Raises the Automation prompt for the player unless it is already up, and waits
+    /// on it off the control queue. The answer is macOS's to keep: the next press
+    /// finds it.
+    private static func askConsent(eventClass: AEEventClass, eventID: AEEventID, to player: NowPlayingBroadcastPlayer) {
+        consentLock.lock()
+        let isNew = askingConsent.insert(player.bundleID).inserted
+        consentLock.unlock()
+        guard isNew else { return }
+        consentQueue.async {
+            let status = determinePermission(eventClass: eventClass, eventID: eventID, to: player, asking: true)
+            NowPlayingRouting.log.notice(
+                "Automation prompt for \(player.bundleID, privacy: .public) answered: \(status, privacy: .public)"
+            )
+            consentLock.lock()
+            askingConsent.remove(player.bundleID)
+            consentLock.unlock()
+        }
+    }
+
+    private static func determinePermission(
+        eventClass: AEEventClass, eventID: AEEventID, to player: NowPlayingBroadcastPlayer, asking: Bool
     ) -> OSStatus {
         let target = NSAppleEventDescriptor(bundleIdentifier: player.bundleID)
         return withExtendedLifetime(target) {
             guard let address = target.aeDesc else { return OSStatus(paramErr) }
-            return AEDeterminePermissionToAutomateTarget(address, event.eventClass, event.eventID, askingUser)
+            return AEDeterminePermissionToAutomateTarget(address, eventClass, eventID, asking)
         }
     }
 
