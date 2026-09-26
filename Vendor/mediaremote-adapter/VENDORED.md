@@ -63,3 +63,9 @@ framework and print now-playing updates as JSON lines on stdout.
   way the stream carries on. Checked on macOS 27 with a YouTube video in Safari and
   Spotify: both are listed, whichever is elected. It only reads: a command still
   reaches the elected application alone, as `expect` checks.
+
+- `exitWithParent()` (src/utility/helpers.m), called by `stream` and `sessions` before
+  their run loops: the command exits when the process that started it does. A killed
+  Islet (an update's reinstall, a crash) cannot terminate its commands, and a stream
+  that writes nothing while playback is idle never sees its pipe close, so without it
+  the command lingered until the next change.

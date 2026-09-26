@@ -569,6 +569,7 @@ void adapter_sessions(void) {
     }
     g_mediaRemote.registerForNowPlayingNotifications(g_serialdispatchQueue);
     startSessions(debounceMillis, convertMicros, noArtwork);
+    exitWithParent();
     CFRunLoopRun();
     g_mediaRemote.unregisterForNowPlayingNotifications();
 }

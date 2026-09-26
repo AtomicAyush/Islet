@@ -24,4 +24,8 @@ bool appForPID(int pid, void (^block)(NSRunningApplication *));
 
 void makePayloadHumanReadable(NSMutableDictionary *dict);
 
+// Local change (Islet): ends the process when the one that started it goes, so a
+// long-running command never outlives an app that was killed rather than quit.
+void exitWithParent(void);
+
 #endif // MEDIAREMOTEADAPTER_UTILITY_HELPERS_H

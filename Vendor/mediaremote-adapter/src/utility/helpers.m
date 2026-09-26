@@ -244,3 +244,24 @@ void makePayloadHumanReadable(NSMutableDictionary *dict) {
         }
     }
 }
+
+// Local change (Islet). A parent that quits normally terminates its commands itself,
+// but one that is killed cannot, and a stream that writes nothing while playback is
+// idle never learns its pipe has closed. Watching the parent's pid catches both.
+void exitWithParent(void) {
+    pid_t parent = getppid();
+    if (parent <= 1) {
+        exit(0);
+    }
+    static dispatch_source_t source;
+    source = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)parent,
+                                    DISPATCH_PROC_EXIT, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(source, ^{
+      exit(0);
+    });
+    dispatch_resume(source);
+    // The parent may have gone between getppid() and the source starting to watch.
+    if (getppid() != parent) {
+        exit(0);
+    }
+}

@@ -491,6 +491,7 @@ extern void adapter_stream() {
 
     g_mediaRemote.registerForNowPlayingNotifications(g_serialdispatchQueue);
 
+    exitWithParent();
     CFRunLoopRun();
 
     g_mediaRemote.unregisterForNowPlayingNotifications();
