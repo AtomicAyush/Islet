@@ -139,8 +139,8 @@ final class BluetoothAudioWatcher {
     }
 
     /// "70-F9-4A-8F-7A-F3:output" becomes "70:F9:4A:8F:7A:F3": a Bluetooth device's UID is
-    /// its address followed by its direction.
-    private static func headsetID(uid: String) -> String {
+    /// its address followed by its direction. The output picker keys battery levels by it too.
+    static func headsetID(uid: String) -> String {
         var base = uid
         for suffix in [":input", ":output"] where base.lowercased().hasSuffix(suffix) {
             base.removeLast(suffix.count)
@@ -150,7 +150,7 @@ final class BluetoothAudioWatcher {
 
     /// Bluetooth devices report a model UID of "<product id> <vendor id>" in hex ("202d 4c"
     /// for AirPods Max), which is enough to pick a picture before system_profiler answers.
-    private static func parseModelUID(_ uid: String) -> (product: Int, vendor: Int)? {
+    static func parseModelUID(_ uid: String) -> (product: Int, vendor: Int)? {
         let parts = uid.split(separator: " ")
         guard parts.count == 2,
               let product = Int(parts[0], radix: 16),

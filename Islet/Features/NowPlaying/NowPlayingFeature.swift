@@ -28,7 +28,9 @@ final class NowPlayingFeature: Feature {
 
     private let model = NowPlayingModel()
     private let library = NowPlayingLibraryModel()
-    private lazy var activity = NowPlayingActivity(model: model, library: library)
+    /// Where the sound plays, for the player's output button.
+    private let outputs = OutputPickerModel()
+    private lazy var activity = NowPlayingActivity(model: model, library: library, outputs: outputs)
     /// `nil` when the adapter is missing from the bundle; then only previews and the
     /// players' own notifications work.
     private let adapter = NowPlayingAdapter()
@@ -90,6 +92,7 @@ final class NowPlayingFeature: Feature {
             }
         )
         broadcasts.start()
+        outputs.start()
         sync()
     }
 
@@ -102,10 +105,15 @@ final class NowPlayingFeature: Feature {
         previewStepWork?.cancel()
         previewStepWork = nil
         previewLibrary = nil
+        // Stopped first, so ending a preview of the outputs starts nothing real.
+        outputs.stop()
+        outputs.endPreview()
         cancelHide()
         model.reset()
         NowPlayingLevels.shared.show(nil, playing: false)
-        // Closes any panel and drops its requests.
+        // Closes any panel, the outputs' too, which no library change closes, and
+        // drops the library's requests.
+        library.close()
         library.use(nil)
         libraryTrack = nil
         let center = ActivityCenter.shared
@@ -119,9 +127,10 @@ final class NowPlayingFeature: Feature {
         AnyView(NowPlayingSettings { [weak self] in self?.hideAfterPauseChanged() })
     }
 
-    /// Each shows sample data for 10 seconds (the library's 20, several players' 13),
-    /// then hands back to whatever is really playing. None of them touches a real
-    /// player or library: the songs come with a sample library of their own.
+    /// Each shows sample data for 10 seconds (the library's and outputs' 20, several
+    /// players' 13), then hands back to whatever is really playing. None of them
+    /// touches a real player, library or output: the songs come with a sample library
+    /// of their own, and the output picker with sample outputs.
     var previews: [FeaturePreview] {
         [
             FeaturePreview(title: "Sample song (playing)") { [weak self] in
@@ -145,6 +154,9 @@ final class NowPlayingFeature: Feature {
             },
             FeaturePreview(title: "Up Next and playlists") { [weak self] in
                 self?.previewLibraryPanel()
+            },
+            FeaturePreview(title: "Output picker") { [weak self] in
+                self?.previewOutputPicker()
             },
         ]
     }
@@ -386,6 +398,8 @@ final class NowPlayingFeature: Feature {
         }
         previewWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + (length ?? Self.previewLength), execute: work)
+        // The output picker's own preview puts its samples back after this.
+        endOutputPreview()
         previewLibrary = sampleLibrary
         model.beginPreview(sample, players: players)
     }
@@ -452,11 +466,32 @@ final class NowPlayingFeature: Feature {
         library.open(.upNext)
     }
 
+    /// Opens the island on the sample song with the output panel showing, over
+    /// sample outputs: speakers, AirPods Pro with their battery, a display. The song
+    /// has no library, so no row of library buttons takes the room: the three outputs
+    /// show in full, with the AirPlay row just under them, a scroll away.
+    private func previewOutputPicker() {
+        preview(.midnightDrive(playing: true), for: Self.libraryPreviewLength)
+        outputs.beginPreview()
+        IslandManager.shared.focusedController?.model.expand(focus: activity.id)
+        library.open(.output)
+    }
+
+    /// Hands the output picker back to the real outputs, closing its panel first if
+    /// it was listing the samples: a click meant for them must not move the Mac's
+    /// sound. A panel opened on the real outputs during a song's preview stays open.
+    private func endOutputPreview() {
+        guard outputs.isPreviewing else { return }
+        if library.panel == .output { library.close() }
+        outputs.endPreview()
+    }
+
     private func endPreview() {
         previewWork = nil
         previewStepWork?.cancel()
         previewStepWork = nil
         previewLibrary = nil
+        endOutputPreview()
         ActivityCenter.shared.dismissBanner(id: Self.songBannerID)
         model.endPreview()
         // The preview put the activity up; a paused session would not have.
@@ -469,10 +504,12 @@ final class NowPlayingActivity: IslandActivity {
     let id = "nowPlaying"
     let model: NowPlayingModel
     let library: NowPlayingLibraryModel
+    let outputs: OutputPickerModel
 
-    init(model: NowPlayingModel, library: NowPlayingLibraryModel) {
+    init(model: NowPlayingModel, library: NowPlayingLibraryModel, outputs: OutputPickerModel) {
         self.model = model
         self.library = library
+        self.outputs = outputs
     }
 
     var symbol: String { model.isVideo ? "play.rectangle.fill" : "music.note" }
@@ -488,7 +525,7 @@ final class NowPlayingActivity: IslandActivity {
     func compactLeading() -> AnyView { AnyView(NowPlayingCompactLeading(model: model)) }
     func compactTrailing() -> AnyView { AnyView(NowPlayingCompactTrailing(model: model)) }
     func minimal() -> AnyView { AnyView(NowPlayingMinimal(model: model)) }
-    func expanded() -> AnyView { AnyView(NowPlayingExpanded(model: model, library: library)) }
+    func expanded() -> AnyView { AnyView(NowPlayingExpanded(model: model, library: library, outputs: outputs)) }
 
     /// Moves between the players that have something loaded; nothing to do with one.
     func swipe(_ direction: ActivitySwipe) -> Bool {

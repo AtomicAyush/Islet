@@ -12,8 +12,12 @@ the camera while something is going on, and opens into a card when the pointer r
 **Now Playing.** Whatever the Mac is playing — Music, Spotify, a browser — with the artwork
 left of the camera and a waveform on the right, tinted with the cover's colour. Opened, it
 is a player: artwork, a scrolling title, a scrubber you can drag, and the controls, with
-shuffle and repeat where the player reports them. A song change gets a moment's banner. On
-macOS 15 and later, once Islet may record system audio (the permission the Sound Mixer asks
+shuffle and repeat where the player reports them. The button at the end of the controls lists
+the Mac's outputs as the Sound menu does — its speakers, AirPods with each bud's and the case's
+battery, a display, USB or HDMI — with the volume above them, and moves the sound to the one
+you click; macOS lets only its own Sound menu and Sound settings list AirPlay receivers, so for
+those the last row opens Sound settings. A song change gets a moment's banner. On macOS 15 and
+later, once Islet may record system audio (the permission the Sound Mixer asks
 for), the waveform follows the music itself, bass on the left and cymbals on the right, in time
 with what you hear; macOS shows its purple recording indicator while it listens. Without that,
 or with "Waveform follows the music" off, the bars dance on Core Animation as before.

@@ -15,7 +15,10 @@ struct Headset: Identifiable, Equatable, Sendable {
 
     /// The name without its owner, where space is short: "Ayush’s AirPods Pro" reads as
     /// "AirPods Pro".
-    var shortName: String {
+    var shortName: String { Self.shortName(name) }
+
+    /// Also used for the output picker's names, which are headsets' names as often as not.
+    static func shortName(_ name: String) -> String {
         for mark in ["’s ", "'s "] {
             if let range = name.range(of: mark), range.upperBound < name.endIndex {
                 return String(name[range.upperBound...])

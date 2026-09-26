@@ -1,0 +1,228 @@
+import AudioToolbox
+import CoreAudio
+import Foundation
+
+/// An output's volume as the panel's slider shows it.
+struct OutputVolume: Equatable, Sendable {
+    /// 0...1. Full for an output with no volume of its own.
+    var level: Double
+    var isMuted: Bool
+    /// HDMI and most digital outputs play at one fixed level, as the Sound menu's
+    /// greyed-out slider says.
+    var isSettable: Bool
+}
+
+/// What a listener heard.
+enum OutputChange: Sendable {
+    /// A device came or went, or sound moved to another one.
+    case devices
+    /// The followed output's volume or mute changed.
+    case volume
+    /// The audio server started afresh, and its devices may have come back under new
+    /// IDs.
+    case restarted
+}
+
+/// Where the output picker gets and sets the Mac's outputs: Core Audio, or made-up
+/// ones for previews and tests.
+///
+/// Every call is a round trip to the audio server, a millisecond or more on Bluetooth
+/// headphones and longer while one is still connecting, so the picker makes them all
+/// from one serial queue of its own, never the main thread; that queue is also the one
+/// `listen(on:_:)` is given, and the only one a conformer is ever called on.
+protocol OutputHardware: AnyObject, Sendable {
+    func candidates() -> [OutputCandidate]
+    /// A device's UID, or `nil` once it has gone.
+    func uid(of device: AudioObjectID) -> String?
+    func defaultOutput() -> AudioObjectID?
+    /// Where alerts and sound effects play.
+    func defaultSystemOutput() -> AudioObjectID?
+    func setDefaultOutput(_ device: AudioObjectID) -> OSStatus
+    func setDefaultSystemOutput(_ device: AudioObjectID) -> OSStatus
+    func volume(of device: AudioObjectID) -> OutputVolume?
+    /// Unmutes on the way unless the level is zero, which mutes, as the Sound menu's
+    /// slider does.
+    func setVolume(_ level: Double, of device: AudioObjectID) -> Bool
+
+    /// Reports changes to the device list and the default output on `queue`.
+    func listen(on queue: DispatchQueue, _ changed: @escaping @Sendable (OutputChange) -> Void)
+    func stopListening()
+    /// Reports `device`'s volume and mute changes as well, or stops with `nil`.
+    func followVolume(of device: AudioObjectID?)
+}
+
+/// The Mac's outputs, from Core Audio.
+///
+/// Listeners are `CoreAudioListener`s reporting on the picker's queue, so each one
+/// added is taken off again; the properties are read with `MixerHAL`, whose calls
+/// fail softly for a device that has gone.
+final class CoreAudioOutputHardware: OutputHardware, @unchecked Sendable {
+    // Confined to the picker's queue, like every call.
+    private var queue: DispatchQueue?
+    private var changed: (@Sendable (OutputChange) -> Void)?
+    private var listener: CoreAudioListener?
+    private var volumeListener: CoreAudioListener?
+    private var volumeDevice: AudioObjectID?
+
+    private static let systemProperties = [
+        MixerHAL.address(kAudioHardwarePropertyDevices),
+        MixerHAL.address(kAudioHardwarePropertyDefaultOutputDevice),
+        MixerHAL.address(kAudioHardwarePropertyServiceRestarted),
+    ]
+    /// The virtual main volume is what the Sound menu's slider moves: it exists on
+    /// devices with no main channel (AirPods, most USB audio), and setting it keeps
+    /// the balance.
+    private static let volumeAddress = MixerHAL.address(
+        kAudioHardwareServiceDeviceProperty_VirtualMainVolume, scope: kAudioObjectPropertyScopeOutput
+    )
+    private static let muteAddress = MixerHAL.address(kAudioDevicePropertyMute, scope: kAudioObjectPropertyScopeOutput)
+
+    deinit {
+        stopListening()
+    }
+
+    // MARK: Devices
+
+    func candidates() -> [OutputCandidate] {
+        MixerHAL.objects(kAudioHardwarePropertyDevices, of: MixerHAL.system).compactMap(candidate)
+    }
+
+    private func candidate(_ id: AudioObjectID) -> OutputCandidate? {
+        // Most devices are microphones, which one look at their output streams rules
+        // out before any more round trips.
+        let output = kAudioObjectPropertyScopeOutput
+        let streams = MixerHAL.count(kAudioDevicePropertyStreams, scope: output, of: id)
+        guard streams > 0, let uid = MixerHAL.string(kAudioDevicePropertyDeviceUID, of: id) else { return nil }
+        let transport = MixerHAL.read(UInt32(0), kAudioDevicePropertyTransportType, of: id) ?? kAudioDeviceTransportTypeUnknown
+        let isAggregate = transport == kAudioDeviceTransportTypeAggregate || transport == kAudioDeviceTransportTypeAutoAggregate
+        return OutputCandidate(
+            id: id,
+            uid: uid,
+            name: MixerHAL.string(kAudioObjectPropertyName, of: id) ?? uid,
+            transport: transport,
+            modelUID: MixerHAL.string(kAudioDevicePropertyModelUID, of: id),
+            outputStreams: streams,
+            canBeDefault: MixerHAL.read(UInt32(0), kAudioDevicePropertyDeviceCanBeDefaultDevice, scope: output, of: id) == 1,
+            canBeSystemDefault: MixerHAL.read(UInt32(0), kAudioDevicePropertyDeviceCanBeDefaultSystemDevice, scope: output, of: id) == 1,
+            isHidden: MixerHAL.read(UInt32(0), kAudioDevicePropertyIsHidden, of: id) == 1,
+            isPrivate: isAggregate && Self.isPrivateAggregate(id),
+            dataSource: transport == kAudioDeviceTransportTypeBuiltIn
+                ? MixerHAL.read(UInt32(0), kAudioDevicePropertyDataSource, scope: output, of: id)
+                : nil
+        )
+    }
+
+    private static func isPrivateAggregate(_ id: AudioObjectID) -> Bool {
+        var address = MixerHAL.address(kAudioAggregateDevicePropertyComposition)
+        var value: Unmanaged<CFDictionary>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFDictionary>?>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr,
+              let composition = value?.takeRetainedValue() as? [String: Any]
+        else { return false }
+        return (composition[kAudioAggregateDeviceIsPrivateKey] as? Int) == 1
+    }
+
+    func uid(of device: AudioObjectID) -> String? {
+        MixerHAL.string(kAudioDevicePropertyDeviceUID, of: device)
+    }
+
+    func defaultOutput() -> AudioObjectID? {
+        Self.device(kAudioHardwarePropertyDefaultOutputDevice)
+    }
+
+    func defaultSystemOutput() -> AudioObjectID? {
+        Self.device(kAudioHardwarePropertyDefaultSystemOutputDevice)
+    }
+
+    func setDefaultOutput(_ device: AudioObjectID) -> OSStatus {
+        Self.write(device, at: MixerHAL.address(kAudioHardwarePropertyDefaultOutputDevice), of: MixerHAL.system)
+    }
+
+    func setDefaultSystemOutput(_ device: AudioObjectID) -> OSStatus {
+        Self.write(device, at: MixerHAL.address(kAudioHardwarePropertyDefaultSystemOutputDevice), of: MixerHAL.system)
+    }
+
+    private static func device(_ selector: AudioObjectPropertySelector) -> AudioObjectID? {
+        let id = MixerHAL.read(AudioObjectID(kAudioObjectUnknown), selector, of: MixerHAL.system)
+        return id == kAudioObjectUnknown ? nil : id
+    }
+
+    // MARK: Volume
+
+    func volume(of device: AudioObjectID) -> OutputVolume? {
+        guard MixerHAL.uidExists(device) else { return nil }
+        let muted = MixerHAL.read(UInt32(0), kAudioDevicePropertyMute, scope: kAudioObjectPropertyScopeOutput, of: device)
+        guard let level = MixerHAL.read(
+            Float32(0), kAudioHardwareServiceDeviceProperty_VirtualMainVolume, scope: kAudioObjectPropertyScopeOutput, of: device
+        ) else {
+            return OutputVolume(level: 1, isMuted: muted == 1, isSettable: false)
+        }
+        return OutputVolume(
+            level: Double(min(max(level, 0), 1)),
+            isMuted: muted == 1,
+            isSettable: Self.isSettable(Self.volumeAddress, of: device)
+        )
+    }
+
+    func setVolume(_ level: Double, of device: AudioObjectID) -> Bool {
+        let level = min(max(level, 0), 1)
+        guard Self.write(Float32(level), at: Self.volumeAddress, of: device) == noErr else { return false }
+        let muted = MixerHAL.read(UInt32(0), kAudioDevicePropertyMute, scope: kAudioObjectPropertyScopeOutput, of: device)
+        if let muted, (muted == 1) != (level == 0), Self.isSettable(Self.muteAddress, of: device) {
+            _ = Self.write(UInt32(level == 0 ? 1 : 0), at: Self.muteAddress, of: device)
+        }
+        return true
+    }
+
+    // MARK: Listening
+
+    func listen(on queue: DispatchQueue, _ changed: @escaping @Sendable (OutputChange) -> Void) {
+        guard listener == nil else { return }
+        self.queue = queue
+        self.changed = changed
+        listener = CoreAudioListener(on: MixerHAL.system, Self.systemProperties, queue: queue) { selectors in
+            changed(selectors.contains(kAudioHardwarePropertyServiceRestarted) ? .restarted : .devices)
+        }
+    }
+
+    func stopListening() {
+        followVolume(of: nil)
+        listener?.remove()
+        listener = nil
+        changed = nil
+    }
+
+    func followVolume(of device: AudioObjectID?) {
+        guard device != volumeDevice else { return }
+        volumeListener?.remove()
+        volumeListener = nil
+        volumeDevice = nil
+        guard let device, let queue, let changed else { return }
+        volumeDevice = device
+        volumeListener = CoreAudioListener(on: device, [Self.volumeAddress, Self.muteAddress], queue: queue) { _ in
+            changed(.volume)
+        }
+    }
+
+    // MARK: Property access
+
+    private static func write<T: BitwiseCopyable>(_ value: T, at address: AudioObjectPropertyAddress, of object: AudioObjectID) -> OSStatus {
+        guard object != kAudioObjectUnknown else { return kAudioHardwareBadObjectError }
+        var address = address
+        var value = value
+        return AudioObjectSetPropertyData(object, &address, 0, nil, UInt32(MemoryLayout<T>.size), &value)
+    }
+
+    private static func isSettable(_ address: AudioObjectPropertyAddress, of object: AudioObjectID) -> Bool {
+        var address = address
+        var settable: DarwinBoolean = false
+        return AudioObjectIsPropertySettable(object, &address, &settable) == noErr && settable.boolValue
+    }
+}
+
+private extension MixerHAL {
+    /// Whether the device is still there to ask.
+    static func uidExists(_ device: AudioObjectID) -> Bool {
+        string(kAudioDevicePropertyDeviceUID, of: device) != nil
+    }
+}

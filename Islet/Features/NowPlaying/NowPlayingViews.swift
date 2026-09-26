@@ -813,9 +813,12 @@ struct NowPlayingMinimal: View {
 /// The opened island: the player, a row of buttons for the playing app's library
 /// when it has one, and the library's panel below them when one is open. While the
 /// panel is open the player folds down to a single row, so the list has the room.
+/// The output button ends the controls row, or the folded player, and opens the
+/// outputs in the same place.
 struct NowPlayingExpanded: View {
     let model: NowPlayingModel
     let library: NowPlayingLibraryModel
+    let outputs: OutputPickerModel
 
     /// The card's height for what it is showing. The island body can be about 250 pt
     /// at most (the island's window is 330 pt tall); the open panel takes it all.
@@ -831,13 +834,18 @@ struct NowPlayingExpanded: View {
     var body: some View {
         VStack(spacing: 0) {
             if library.panel != nil {
-                NowPlayingMiniPlayer(model: model)
-                    .transition(.opacity)
+                HStack(spacing: 10) {
+                    NowPlayingMiniPlayer(model: model)
+                    outputButton
+                }
+                .transition(.opacity)
             } else if model.isVideo {
                 NowPlayingVideoPlayer(model: model)
+                    .overlay(alignment: .bottomTrailing) { outputButton.frame(height: 38) }
                     .transition(.opacity)
             } else {
                 NowPlayingMusicPlayer(model: model)
+                    .overlay(alignment: .bottomTrailing) { outputButton.frame(height: 38) }
                     .transition(.opacity)
             }
 
@@ -851,7 +859,11 @@ struct NowPlayingExpanded: View {
                     .padding(.top, library.panel == nil ? 8 : 12)
             }
 
-            if library.panel != nil {
+            if library.panel == .output {
+                NowPlayingOutputPanel(model: model, outputs: outputs)
+                    .padding(.top, 8)
+                    .transition(.opacity)
+            } else if library.panel != nil {
                 NowPlayingLibraryPanel(model: model, library: library)
                     .padding(.top, 8)
                     .transition(.opacity)
@@ -862,6 +874,13 @@ struct NowPlayingExpanded: View {
         .frame(maxHeight: .infinity, alignment: .top)
         // Closing the island, or turning to another tab, closes the panel.
         .onDisappear { library.close() }
+    }
+
+    /// Beside the controls, where the 38-point play button sets the row's height.
+    private var outputButton: some View {
+        NowPlayingOutputButton(outputs: outputs, isSelected: library.panel == .output) {
+            library.toggle(.output)
+        }
     }
 }
 

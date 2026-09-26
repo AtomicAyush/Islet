@@ -1,0 +1,459 @@
+import AppKit
+import CoreAudio
+import Observation
+import SwiftUI
+
+/// Where the Mac's sound plays, for the player's output button and panel: the
+/// outputs the Sound menu would list, which one is in use, its volume while the panel
+/// is open, and switching to another.
+///
+/// Everything comes from Core Audio listeners, so nothing runs while nothing changes.
+/// The checkmark is only ever where Core Audio says sound is going: a switch is not
+/// taken as done until the device list has been read back after it.
+///
+/// AirPlay receivers are not listed. macOS gives the list, and the way to send the
+/// Mac's sound to one, only to its own processes (the AVFoundation entitlements behind
+/// the Sound menu cannot be claimed by an app signed as Islet is), so the panel sends
+/// people to Sound settings for them. A receiver already playing shows up in Core Audio,
+/// and then it is listed like any other output, and can be switched away from.
+@MainActor
+@Observable
+final class OutputPickerModel {
+    private(set) var devices: [OutputDevice] = []
+    /// Where sound plays now, which may be a device the list leaves out.
+    private(set) var currentID: AudioObjectID?
+    /// The current output's volume, kept only while a panel is open.
+    private(set) var volume: OutputVolume?
+    /// Headsets' levels, keyed by `OutputDevice.headsetAddress`, read as a panel opens.
+    private(set) var batteries: [String: HeadsetBattery] = [:]
+    /// The output just picked, shown busy until Core Audio has answered.
+    private(set) var pendingID: AudioObjectID?
+    /// What went wrong with the last pick, for a few seconds.
+    private(set) var failure: String?
+    private(set) var isPreviewing = false
+
+    var current: OutputDevice? {
+        devices.first { $0.id == currentID }
+    }
+
+    /// The button's symbol: the AirPods or receiver sound is going to, as the
+    /// iPhone's route button shows them, else AirPlay's.
+    var buttonSymbol: String {
+        switch current?.kind {
+        case .headset, .builtInHeadphones, .airPlay: current?.symbol ?? Self.airPlaySymbol
+        default: Self.airPlaySymbol
+        }
+    }
+
+    static let airPlaySymbol = "airplayaudio"
+    /// Sound settings, on its list of outputs, which AirPlay receivers are part of.
+    static let soundSettingsURL = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension?output")!
+
+    // Stand-ins for tests; each defaults to the real thing.
+    @ObservationIgnored var readLevels: @MainActor () -> [String: HeadsetBattery] = { BluetoothLevels.shared.read() }
+    @ObservationIgnored var readProfile: @Sendable () async -> [BluetoothProfile.Device]? = {
+        await BluetoothProfile.connectedDevices()
+    }
+    @ObservationIgnored var openURL: @MainActor (URL) -> Void = { url in
+        // As the library panel's settings button does: close, then open.
+        IslandManager.shared.focusedController?.model.collapse()
+        NSWorkspace.shared.open(url)
+    }
+
+    @ObservationIgnored private let makeHardware: () -> any OutputHardware
+    @ObservationIgnored private var session: OutputSession?
+    @ObservationIgnored private var isRunning = false
+    /// Panels on screen: one per island window showing the player with it open.
+    @ObservationIgnored private var openPanels = 0
+    @ObservationIgnored private var failureTask: Task<Void, Never>?
+    @ObservationIgnored private var profileTask: Task<Void, Never>?
+    @ObservationIgnored private var lastProfileRead = Date.distantPast
+
+    /// How long a failure stays up.
+    private static let failureLength: Duration = .seconds(4)
+    /// system_profiler is a process launch; once in this long is plenty for levels
+    /// that move a percent every few minutes.
+    private static let profileInterval: TimeInterval = 60
+
+    init(hardware: @escaping () -> any OutputHardware = { CoreAudioOutputHardware() }) {
+        makeHardware = hardware
+    }
+
+    // MARK: Running
+
+    /// Follows the outputs from now on. Cheap while nothing changes: the listeners
+    /// only wake on a device coming or going, or sound moving.
+    func start() {
+        guard !isRunning else { return }
+        isRunning = true
+        guard !isPreviewing else { return }
+        begin(OutputSession(hardware: makeHardware()))
+    }
+
+    func stop() {
+        guard isRunning else { return }
+        isRunning = false
+        guard !isPreviewing else { return }
+        end()
+    }
+
+    // MARK: Panel
+
+    /// A panel came on screen: its volume and headsets' levels are wanted now.
+    func panelAppeared() {
+        openPanels += 1
+        guard openPanels == 1 else { return }
+        session?.followVolume(of: currentID)
+        refreshBatteries()
+    }
+
+    func panelDisappeared() {
+        guard openPanels > 0 else { return }
+        openPanels -= 1
+        guard openPanels == 0 else { return }
+        session?.followVolume(of: nil)
+        volume = nil
+        profileTask?.cancel()
+        profileTask = nil
+        clearFailure()
+    }
+
+    // MARK: Actions
+
+    /// Sends the Mac's sound to `device`. One pick at a time; the checkmark moves once
+    /// Core Audio says it has, and a pick that fails says so under the slider.
+    func select(_ device: OutputDevice) {
+        guard let session, pendingID == nil, device.id != currentID else { return }
+        clearFailure()
+        pendingID = device.id
+        session.select(device) { [weak self, weak session] result, snapshot in
+            guard let self, let session, session === self.session else { return }
+            self.pendingID = nil
+            self.apply(snapshot)
+            if let message = result.message(for: device) { self.fail(message) }
+        }
+    }
+
+    /// The slider moved. Shown at once; the writes behind it are coalesced, so a
+    /// drag across the track costs a handful of round trips, not one per point.
+    func setVolume(_ level: Double) {
+        guard let session, let currentID, var volume, volume.isSettable else { return }
+        volume.level = min(max(level, 0), 1)
+        volume.isMuted = volume.level == 0
+        self.volume = volume
+        session.setVolume(volume.level, of: currentID)
+    }
+
+    /// AirPlay receivers, and anything else only macOS may list, are in Sound settings.
+    func openSoundSettings() {
+        openURL(Self.soundSettingsURL)
+    }
+
+    // MARK: Previews
+
+    /// Made-up outputs, to try the panel without touching the Mac's sound: until
+    /// `endPreview()`, picking one or moving the slider changes only the samples.
+    func beginPreview() {
+        // Whatever ran before, real outputs or an earlier preview's, gives way. An
+        // open panel's slider picks up the samples' volume once they have been read.
+        end()
+        isPreviewing = true
+        let sample = SampleOutputHardware()
+        begin(OutputSession(hardware: sample))
+        batteries = sample.batteries
+    }
+
+    func endPreview() {
+        guard isPreviewing else { return }
+        end()
+        isPreviewing = false
+        if isRunning { begin(OutputSession(hardware: makeHardware())) }
+    }
+
+    // MARK: Updates
+
+    private func begin(_ session: OutputSession) {
+        self.session = session
+        session.start { [weak self, weak session] event in
+            guard let self, let session, session === self.session else { return }
+            switch event {
+            case .snapshot(let snapshot):
+                self.apply(snapshot)
+            case .volume(let device, let volume):
+                guard self.openPanels > 0, device == self.currentID else { return }
+                if self.volume != volume { self.volume = volume }
+            }
+        }
+    }
+
+    private func end() {
+        session?.stop()
+        session = nil
+        devices = []
+        currentID = nil
+        volume = nil
+        batteries = [:]
+        pendingID = nil
+        profileTask?.cancel()
+        profileTask = nil
+        clearFailure()
+    }
+
+    private func apply(_ snapshot: OutputSnapshot) {
+        let listChanged = devices != snapshot.devices
+        if listChanged { devices = snapshot.devices }
+        if currentID != snapshot.currentID {
+            currentID = snapshot.currentID
+            // The slider follows sound to its new output, keeping the last level
+            // for the moment until the new one is read, rather than blinking empty.
+            if openPanels > 0 { session?.followVolume(of: currentID) }
+            if currentID == nil { volume = nil }
+        }
+        // A headset that connects while the panel is open gets its levels.
+        if listChanged, openPanels > 0 { refreshBatteries() }
+    }
+
+    // MARK: Battery
+
+    /// Exact levels from Bluetooth where Islet may read them; otherwise, or for a
+    /// headset Bluetooth has no levels for yet, system_profiler's.
+    private func refreshBatteries() {
+        guard !isPreviewing else { return }
+        let headsets = devices.compactMap(\.headsetAddress)
+        guard !headsets.isEmpty else { return }
+        var levels = batteries
+        for (address, battery) in readLevels() where headsets.contains(address) {
+            levels[address] = battery
+        }
+        if levels != batteries { batteries = levels }
+
+        let missing = headsets.contains { levels[$0]?.isEmpty ?? true }
+        guard missing, profileTask == nil,
+              Date().timeIntervalSince(lastProfileRead) > Self.profileInterval
+        else { return }
+        let read = readProfile
+        profileTask = Task { [weak self] in
+            let profile = await read()
+            guard !Task.isCancelled, let self else { return }
+            self.profileTask = nil
+            self.lastProfileRead = Date()
+            guard !self.isPreviewing, let profile else { return }
+            var levels = self.batteries
+            for device in profile {
+                guard let address = device.address, !device.battery.isEmpty,
+                      levels[address]?.isEmpty ?? true else { continue }
+                levels[address] = device.battery
+            }
+            if levels != self.batteries { self.batteries = levels }
+        }
+    }
+
+    // MARK: Failure
+
+    private func fail(_ message: String) {
+        failureTask?.cancel()
+        withAnimation(.islandMorph) { failure = message }
+        failureTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.failureLength)
+            guard !Task.isCancelled else { return }
+            self?.clearFailure()
+        }
+    }
+
+    private func clearFailure() {
+        failureTask?.cancel()
+        failureTask = nil
+        guard failure != nil else { return }
+        withAnimation(.islandMorph) { failure = nil }
+    }
+}
+
+// MARK: - Switching
+
+/// The outputs and which one is in use, read together.
+struct OutputSnapshot: Equatable, Sendable {
+    var devices: [OutputDevice]
+    var currentID: AudioObjectID?
+
+    static func read(_ hardware: any OutputHardware) -> OutputSnapshot {
+        OutputSnapshot(
+            devices: OutputCatalog.outputs(from: hardware.candidates()),
+            currentID: hardware.defaultOutput()
+        )
+    }
+}
+
+/// How a pick went.
+enum OutputSwitchResult: Equatable, Sendable {
+    case switched
+    /// The device went between the list being drawn and the click: AirPods put back
+    /// in their case, a receiver that stopped.
+    case gone
+    /// Core Audio would not have it.
+    case refused(OSStatus)
+    /// Core Audio took it, but sound is still going elsewhere.
+    case didNotTake
+
+    func message(for device: OutputDevice) -> String? {
+        switch self {
+        case .switched: nil
+        case .gone: "\(device.shortName) is no longer connected"
+        case .refused, .didNotTake: "Couldn’t switch to \(device.shortName)"
+        }
+    }
+
+    /// Moves the Mac's sound to `device`, the way the Sound menu does: its default
+    /// output. Alerts and sound effects go along only if they were playing where the
+    /// sound was, so a choice of a fixed alert device in Sound settings is kept. The
+    /// input is left alone: macOS already moves the microphone to AirPods and back.
+    static func perform(to device: OutputDevice, on hardware: any OutputHardware) -> OutputSwitchResult {
+        guard hardware.uid(of: device.id) == device.uid else { return .gone }
+        let previous = hardware.defaultOutput()
+        let alerts = hardware.defaultSystemOutput()
+        let status = hardware.setDefaultOutput(device.id)
+        guard status == noErr else { return .refused(status) }
+        if let previous, alerts == previous, device.canBeSystemDefault {
+            _ = hardware.setDefaultSystemOutput(device.id)
+        }
+        return hardware.defaultOutput() == device.id ? .switched : .didNotTake
+    }
+}
+
+/// One run of the picker's hardware: its serial queue, the listeners and the
+/// coalescing of what they hear. The model makes a new one for each start and each
+/// preview, and drops what an old one reports.
+final class OutputSession: @unchecked Sendable {
+    enum Event: Sendable {
+        case snapshot(OutputSnapshot)
+        case volume(AudioObjectID, OutputVolume?)
+    }
+
+    typealias Report = @MainActor @Sendable (Event) -> Void
+
+    let hardware: any OutputHardware
+    private let queue = DispatchQueue(label: "Islet.NowPlaying.output", qos: .userInitiated)
+
+    // Confined to `queue`.
+    private var report: Report?
+    private var scanScheduled = false
+    private var volumeScheduled = false
+    private var followed: AudioObjectID?
+    /// The slider's latest level and the device it is for, waiting to be written.
+    private var pendingLevel: (level: Double, device: AudioObjectID)?
+
+    /// Connecting AirPods changes the device list two or three times in quick
+    /// succession (output, input, then the default output); one look after the
+    /// burst is enough.
+    static let settle: TimeInterval = 0.25
+    /// Volume keys held down step the level every few tens of milliseconds.
+    static let volumeSettle: TimeInterval = 0.05
+
+    init(hardware: any OutputHardware) {
+        self.hardware = hardware
+    }
+
+    /// Listens, then reads the outputs once: listening first means no change can
+    /// slip in between. The first Core Audio call in a process sets up the audio
+    /// system, which takes a few hundred milliseconds, so even this stays off the
+    /// main thread.
+    func start(report: @escaping Report) {
+        queue.async { [self] in
+            self.report = report
+            listen()
+            send(.snapshot(OutputSnapshot.read(hardware)))
+        }
+    }
+
+    func stop() {
+        queue.async { [self] in
+            report = nil
+            followed = nil
+            hardware.stopListening()
+        }
+    }
+
+    func followVolume(of device: AudioObjectID?) {
+        queue.async { [self] in
+            followed = device
+            hardware.followVolume(of: device)
+            if let device { send(.volume(device, hardware.volume(of: device))) }
+        }
+    }
+
+    func select(_ device: OutputDevice, completion: @escaping @MainActor @Sendable (OutputSwitchResult, OutputSnapshot) -> Void) {
+        queue.async { [self] in
+            let result = OutputSwitchResult.perform(to: device, on: hardware)
+            let snapshot = OutputSnapshot.read(hardware)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { completion(result, snapshot) }
+            }
+        }
+    }
+
+    func setVolume(_ level: Double, of device: AudioObjectID) {
+        queue.async { [self] in
+            let isQueued = pendingLevel != nil
+            pendingLevel = (level, device)
+            guard !isQueued else { return }
+            // Behind whatever else is queued, so a burst of drags lands as one write.
+            queue.async { [self] in
+                guard let pending = pendingLevel else { return }
+                pendingLevel = nil
+                _ = hardware.setVolume(pending.level, of: pending.device)
+            }
+        }
+    }
+
+    // MARK: Listening
+
+    private func listen() {
+        hardware.listen(on: queue) { [weak self] change in
+            // Already on the queue.
+            self?.heard(change)
+        }
+    }
+
+    private func heard(_ change: OutputChange) {
+        switch change {
+        case .devices:
+            scheduleScan()
+        case .volume:
+            scheduleVolumeRead()
+        case .restarted:
+            // Its devices may be back under new IDs. Off and on again leaves one set
+            // of listeners, whether or not the restart kept the old ones, and the
+            // scan puts the slider on the output's new ID.
+            hardware.stopListening()
+            listen()
+            if let followed { hardware.followVolume(of: followed) }
+            scheduleScan()
+            scheduleVolumeRead()
+        }
+    }
+
+    private func scheduleScan() {
+        guard !scanScheduled else { return }
+        scanScheduled = true
+        queue.asyncAfter(deadline: .now() + Self.settle) { [self] in
+            scanScheduled = false
+            send(.snapshot(OutputSnapshot.read(hardware)))
+        }
+    }
+
+    private func scheduleVolumeRead() {
+        guard !volumeScheduled, followed != nil else { return }
+        volumeScheduled = true
+        queue.asyncAfter(deadline: .now() + Self.volumeSettle) { [self] in
+            volumeScheduled = false
+            guard let followed else { return }
+            send(.volume(followed, hardware.volume(of: followed)))
+        }
+    }
+
+    private func send(_ event: Event) {
+        guard let report else { return }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { report(event) }
+        }
+    }
+}

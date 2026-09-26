@@ -14,6 +14,10 @@ final class NowPlayingLibraryModel {
     enum Panel: Equatable {
         case upNext
         case playlists
+        /// Where the sound plays (see `OutputPickerModel`). It shares the panel's place
+        /// so only one list is ever open, but belongs to no library: it opens for any
+        /// player, and stays open when the player changes.
+        case output
     }
 
     enum Listing {
@@ -53,12 +57,12 @@ final class NowPlayingLibraryModel {
 
     // MARK: Library
 
-    /// Follows the app that is playing. Another library closes the panel, since
+    /// Follows the app that is playing. Another library closes its panel, since
     /// what it listed belonged to the last one, and drops what was asked of the
-    /// last one.
+    /// last one; the output panel is no library's, and stays.
     func use(_ newLibrary: (any MediaLibrary)?) {
         guard newLibrary.map({ ObjectIdentifier($0) }) != library.map({ ObjectIdentifier($0) }) else { return }
-        close()
+        if panel != .output { close() }
         actionTask?.cancel()
         actionTask = nil
         pendingRow = nil
@@ -83,7 +87,7 @@ final class NowPlayingLibraryModel {
     }
 
     func open(_ newPanel: Panel) {
-        guard library != nil, panel != newPanel else { return }
+        guard library != nil || newPanel == .output, panel != newPanel else { return }
         withAnimation(.islandMorph) {
             panel = newPanel
             listing = .loading
@@ -140,7 +144,7 @@ final class NowPlayingLibraryModel {
     private func load(after delay: TimeInterval = 0, quietly: Bool) {
         loadTask?.cancel()
         loadTask = nil
-        guard let library, let panel, library.state == .ready else { return }
+        guard let library, let panel, panel != .output, library.state == .ready else { return }
         if !quietly { listing = .loading }
         loadTask = Task { [weak self] in
             if delay > 0 {
@@ -152,6 +156,7 @@ final class NowPlayingLibraryModel {
                 switch panel {
                 case .upNext: result = .queue(try await library.upNext())
                 case .playlists: result = .playlists(try await library.playlists())
+                case .output: return
                 }
             } catch {
                 result = .failed(error.localizedDescription)
@@ -427,8 +432,8 @@ private enum QueueLine: Identifiable {
     }
 }
 
-/// Names a part of Up Next, over its rows.
-private struct PanelHeader: View {
+/// Names a part of Up Next, or of the outputs, over its rows.
+struct PanelHeader: View {
     let title: String
 
     var body: some View {
@@ -445,24 +450,34 @@ private struct PanelHeader: View {
 }
 
 /// A short scrolling list whose edges soften where rows pass under them.
-private struct PanelList<Rows: View>: View {
+struct PanelList<Rows: View>: View {
+    /// Rows made only as they scroll into view, for lists that can run long. A short
+    /// list can have them all made at once, so any view in any row can be scrolled to.
+    var isLazy = true
     @ViewBuilder let rows: Rows
 
-    private let fade: CGFloat = 12
+    /// The faded band at the bottom edge; the top one is half as deep.
+    static var fade: CGFloat { 12 }
 
     var body: some View {
         ScrollView(.vertical) {
-            LazyVStack(spacing: 2) { rows }
-                .padding(.vertical, fade / 2)
+            Group {
+                if isLazy {
+                    LazyVStack(spacing: 2) { rows }
+                } else {
+                    VStack(spacing: 2) { rows }
+                }
+            }
+            .padding(.vertical, Self.fade / 2)
         }
         .scrollIndicators(.automatic)
         .mask {
             VStack(spacing: 0) {
                 LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: fade / 2)
+                    .frame(height: Self.fade / 2)
                 Rectangle()
                 LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: fade)
+                    .frame(height: Self.fade)
             }
         }
     }
