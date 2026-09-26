@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Marks restarts in the log, so a closed island can be told from a relaunch.
+        IslandLog.app.notice("Islet launched")
         let registry = FeatureRegistry.shared
         Prefs.register(features: registry.features)
 

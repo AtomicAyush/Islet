@@ -187,7 +187,7 @@ final class IslandWindowController {
             model.expand()
         } else if swipeTravel < -24, model.isExpanded {
             swipeHandled = true
-            model.collapse()
+            model.collapse("two-finger swipe up")
         }
     }
 

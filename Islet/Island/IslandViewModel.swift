@@ -261,7 +261,7 @@ final class IslandViewModel {
         #if DEBUG
         if isPinnedOpen { return }
         #endif
-        if isSuppressed || appInFront() != appInFrontAtOpen { collapse() }
+        if isSuppressed || appInFront() != appInFrontAtOpen { collapse("Space changed under a full-screen peek") }
     }
 
     // MARK: Pointer
@@ -356,7 +356,7 @@ final class IslandViewModel {
         #if DEBUG
         if isPinnedOpen { return }
         #endif
-        if isExpanded { collapse() }
+        if isExpanded { collapse("click outside") }
     }
 
     func expand(focus: String? = nil) {
@@ -373,11 +373,14 @@ final class IslandViewModel {
         if !wasExpanded { Haptics.tap(.alignment) }
     }
 
-    func collapse() {
+    /// `reason` and the caller's place are logged, so an island that seems to close
+    /// by itself can be traced to what closed it.
+    func collapse(_ reason: StaticString = "requested", file: StaticString = #fileID, line: UInt = #line) {
         cancelExpand()
         cancelCollapse()
         openAcrossSpaceChange = false
         guard isExpanded else { return }
+        IslandLog.island.notice("Closed: \(reason, privacy: .public) (\(file, privacy: .public):\(line, privacy: .public))")
         withAnimation(.islandClose) {
             isExpanded = false
             focus = nil
@@ -540,7 +543,7 @@ final class IslandViewModel {
             #if DEBUG
             if self.isPinnedOpen { return }
             #endif
-            self.collapse()
+            self.collapse("pointer left the island")
         }
         collapseWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
