@@ -162,7 +162,7 @@ final class PrivacyMonitor {
         baseline.formUnion(Self.joiningRunningWatchers(from: watched, to: wanted))
         watched = wanted
 
-        for sensor in [Sensor.camera, .microphone, .screen] where running.contains(sensor) != before.contains(sensor) {
+        for sensor in [Sensor.camera, .microphone, .screen, .location] where running.contains(sensor) != before.contains(sensor) {
             let generation = (generations[sensor] ?? 0) &+ 1
             generations[sensor] = generation
             if running.contains(sensor) {
@@ -449,14 +449,15 @@ final class PrivacyMonitor {
     }
 
     /// What newly started between two readings: a sensor coming on, or a new app
-    /// on one already on. Only the camera, the microphone and the screen are
-    /// announced, the camera first. A camera no one can be named for borrows the app
-    /// that started recording at the same moment, as a call starts both.
+    /// on one already on. The camera, the microphone, the screen and location are
+    /// announced, the camera first; location is watched only when the person asked
+    /// for it, so its starts are wanted too. A camera no one can be named for borrows
+    /// the app that started recording at the same moment, as a call starts both.
     nonisolated static func start(from old: PrivacyUsage, to new: PrivacyUsage, ignoring quiet: Set<Sensor>) -> Start? {
         func newApp(_ sensor: Sensor) -> PrivacyApp? {
             quiet.contains(sensor) ? nil : new[sensor].apps.first { !old[sensor].apps.contains($0) }
         }
-        for sensor in [Sensor.camera, .microphone, .screen] where !quiet.contains(sensor) && new[sensor].inUse {
+        for sensor in [Sensor.camera, .microphone, .screen, .location] where !quiet.contains(sensor) && new[sensor].inUse {
             let app = newApp(sensor) ?? (sensor == .camera && !old.camera.inUse ? newApp(.microphone) : nil)
             if !old[sensor].inUse { return Start(sensor: sensor, app: app) }
             if let app = newApp(sensor) { return Start(sensor: sensor, app: app) }

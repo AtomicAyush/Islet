@@ -101,7 +101,7 @@ from Safari, Chrome or another browser, Google Images results included, arrives 
 ordinary image file under the name the site gave it; the shelf keeps its own copy and
 deletes it when the picture comes off the shelf. Ordinary links and text selections leave
 the island shut. Shelved files show on the home page and drag back out wherever they are
-needed.
+needed; right-click one to save a copy to Downloads.
 
 Every feature can be turned off, and each has previews in the menu bar item, so you can see
 what it looks like without waiting for the real thing.

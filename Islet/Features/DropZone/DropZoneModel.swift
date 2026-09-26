@@ -189,6 +189,39 @@ final class DropZoneModel {
         }
     }
 
+    /// Copies the item into the Downloads folder, under a free name, and shows it
+    /// there. A picture dropped from a web page lives in Islet's own shelf storage,
+    /// which is no place to look for it, and dragging it out is not always handy.
+    func saveToDownloads(_ item: ShelfItem) {
+        guard let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        else { return }
+        let source = item.url
+        let copy = Self.freeURL(for: source.lastPathComponent, in: downloads)
+        do {
+            try FileManager.default.copyItem(at: source, to: copy)
+        } catch {
+            // Most likely the file has gone; take it off the shelf.
+            shelf.refresh()
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([copy])
+        onHandOff()
+    }
+
+    /// `name` in `folder`, or "name 2", "name 3"… when it is taken, as Finder does.
+    private static func freeURL(for name: String, in folder: URL) -> URL {
+        let base = (name as NSString).deletingPathExtension
+        let ext = (name as NSString).pathExtension
+        var candidate = folder.appendingPathComponent(name)
+        var number = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let numbered = ext.isEmpty ? "\(base) \(number)" : "\(base) \(number).\(ext)"
+            candidate = folder.appendingPathComponent(numbered)
+            number += 1
+        }
+        return candidate
+    }
+
     func reveal(_ item: ShelfItem) {
         NSWorkspace.shared.activateFileViewerSelecting([item.url])
         onHandOff()

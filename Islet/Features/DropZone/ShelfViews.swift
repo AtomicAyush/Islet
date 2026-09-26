@@ -95,6 +95,7 @@ private struct ShelfItemView: View {
         .onDrag { item.dragProvider() }
         .contextMenu {
             Button("Open") { model.open(item) }
+            Button("Save to Downloads") { model.saveToDownloads(item) }
             Button("Show in Finder") { model.reveal(item) }
             Button("AirDrop") { model.share(item) }
             Divider()
