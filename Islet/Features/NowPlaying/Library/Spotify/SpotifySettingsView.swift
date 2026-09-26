@@ -13,6 +13,9 @@ struct SpotifySettingsView: View {
                 if library.state != .ready {
                     Button("Connect…") { library.connect() }
                         .disabled(library.trimmedClientID.isEmpty || library.isFinishingSignIn)
+                } else if library.needsNewScopes {
+                    Button("Reconnect…") { library.connect() }
+                        .disabled(library.isFinishingSignIn)
                 }
                 // Offered whenever a sign-in is kept, even one for a client ID that has
                 // since been changed or cleared, so the tokens can always be removed.
@@ -39,7 +42,11 @@ struct SpotifySettingsView: View {
 
     private var status: String {
         switch library.state {
-        case .ready: "Connected. The opened island shows what's up next and your playlists."
+        case .ready where library.isFinishingSignIn: "Connecting…"
+        case .ready where library.isWaitingForBrowser: "Waiting for you to allow access in your browser…"
+        case .ready where library.needsNewScopes:
+            "Connected before Islet could like songs and add them to playlists. Reconnect to allow it."
+        case .ready: "Connected. The opened island shows what's up next and your playlists, with a heart for Liked Songs."
         case .unavailable: "Not set up. Follow the steps below."
         case .needsConnection:
             if library.isFinishingSignIn {

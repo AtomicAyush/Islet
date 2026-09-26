@@ -116,7 +116,10 @@ struct SpotifyQueue: Decodable {
 
 /// One of the person's playlists, from `GET /me/playlists`.
 struct SpotifyPlaylist: Decodable {
-    struct Owner: Decodable { var displayName: String? }
+    struct Owner: Decodable {
+        var id: String?
+        var displayName: String?
+    }
     struct Count: Decodable { var total: Int? }
 
     var uri: String
@@ -126,6 +129,10 @@ struct SpotifyPlaylist: Decodable {
     /// The number of songs: `items` since February 2026, which Spotify only fills in
     /// for the person's own playlists, and `tracks` before it.
     var count: Int?
+    /// Its owner lets others add to it.
+    var collaborative: Bool?
+    /// Changes whenever the playlist does.
+    var snapshotId: String?
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -136,10 +143,21 @@ struct SpotifyPlaylist: Decodable {
         let items = try? container.decodeIfPresent(Count.self, forKey: .items)
         let tracks = try? container.decodeIfPresent(Count.self, forKey: .tracks)
         count = items?.total ?? tracks?.total
+        collaborative = try? container.decodeIfPresent(Bool.self, forKey: .collaborative)
+        snapshotId = try? container.decodeIfPresent(String.self, forKey: .snapshotId)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case uri, name, images, owner, items, tracks
+        case uri, name, images, owner, items, tracks, collaborative, snapshotId
+    }
+
+    /// Whether the person can add songs to it: their own, or a collaborative one.
+    /// Anything Spotify or someone else made is only followed, and can only be
+    /// played. Without knowing who the person is, only collaborative ones count.
+    func canAdd(asUser userID: String?) -> Bool {
+        if collaborative == true { return true }
+        guard let userID, let owner = owner?.id else { return false }
+        return owner == userID
     }
 
     /// Whether the player's context is this playlist. The player has been known to
@@ -152,20 +170,22 @@ struct SpotifyPlaylist: Decodable {
         return id == Self.playlistID(in: uri)
     }
 
-    private static func playlistID(in uri: String) -> Substring? {
+    /// The id in a playlist's URI, which the playlist endpoints go by.
+    static func playlistID(in uri: String) -> Substring? {
         let parts = uri.split(separator: ":")
         guard parts.count >= 3, parts[parts.count - 2] == "playlist" else { return nil }
         return parts.last
     }
 
     /// Its URI serves as the id, which is what playing it needs.
-    func mediaPlaylist(isCurrent: Bool) -> MediaPlaylist {
+    func mediaPlaylist(isCurrent: Bool, canAdd: Bool = false) -> MediaPlaylist {
         MediaPlaylist(
             id: uri,
             name: name,
             detail: detail,
             artworkURL: images?.url(fitting: SpotifyQueue.artworkPixels),
-            isCurrent: isCurrent
+            isCurrent: isCurrent,
+            canAdd: canAdd
         )
     }
 
@@ -197,6 +217,47 @@ struct SpotifyPlayback: Decodable {
         if shuffleState == true { return .shuffled }
         return .listed(repeats: repeatState == "context")
     }
+}
+
+/// `GET /me/player/currently-playing`: the track or episode playing, if any. An
+/// advert has no item.
+struct SpotifyCurrentlyPlaying: Decodable {
+    struct Item: Decodable {
+        var uri: String
+        var name: String
+        var isLocal: Bool?
+    }
+
+    var item: Item?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        item = try? container.decodeIfPresent(Item.self, forKey: .item)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case item
+    }
+
+    /// The item, when it is a track or an episode from Spotify's catalogue: a local
+    /// file cannot be saved or added to a playlist through the Web API.
+    var savable: Item? {
+        guard let item, item.isLocal != true else { return nil }
+        let parts = item.uri.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "spotify", parts[1] == "track" || parts[1] == "episode", !parts[2].isEmpty
+        else { return nil }
+        return item
+    }
+}
+
+/// `GET /me`, for its id: whose playlists are the person's own.
+struct SpotifyUser: Decodable {
+    var id: String
+}
+
+/// The reply to adding to a playlist: the playlist's version with the song in it.
+struct SpotifySnapshot: Decodable {
+    var snapshotId: String?
 }
 
 /// A playlist's or album's track, for telling queued songs from the rest. Read

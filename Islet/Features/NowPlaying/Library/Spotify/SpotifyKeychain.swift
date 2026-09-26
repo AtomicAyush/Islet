@@ -1,6 +1,14 @@
 import Foundation
 import Security
 
+/// Where the Web API keeps its sign-in between launches: the keychain in the app,
+/// and memory in tests, which must never touch the real sign-in.
+protocol SpotifyTokenStore: Sendable {
+    func load() -> SpotifyTokens?
+    func save(_ tokens: SpotifyTokens) throws
+    func delete()
+}
+
 /// Where the sign-in is kept between launches: one generic password whose account
 /// is the client ID it belongs to and whose data is the tokens, as JSON.
 ///
@@ -8,7 +16,7 @@ import Security
 /// an entitlement that an ad-hoc signed build cannot carry. Only the data is
 /// guarded there, so `storedClientID()` can say whether Islet is signed in without
 /// ever showing a keychain prompt.
-struct SpotifyKeychain: Sendable {
+struct SpotifyKeychain: SpotifyTokenStore {
     static let service = "com.ayush.Islet.spotify"
 
     /// The client ID a stored sign-in belongs to, or nil when there is none.

@@ -26,7 +26,8 @@ Video gets its own look — YouTube in a browser, the TV app, QuickTime, IINA, V
 thumbnail and a progress ring beside the notch, and 15-second jumps in the player.
 
 With a music app that has a library, the player also opens **Up Next** (tap a track to jump
-to it) and **Playlists** (tap one to switch):
+to it) and **Playlists** (tap one to switch, or its **+** to add the song playing to it), and
+a heart at the start of the controls saves the song:
 
 - *Spotify* needs a one-time sign-in through a Spotify app of your own, since Spotify only
   lets registered apps read your queue: create one at
@@ -34,9 +35,15 @@ to it) and **Playlists** (tap one to switch):
   API, add the redirect URI `islet://nowplaying/spotify-callback`, paste its client ID in
   Settings → Activities → Now Playing, and click Connect. Spotify requires the app's owner
   to have Premium. Spotify's Jam has no public API, so the Jam button brings Spotify
-  forward.
-- *Music* asks once for permission to control Music. It offers playlists; Music does not
-  expose Up Next to other apps.
+  forward. The heart adds the song to Liked Songs, and **+** sits beside your own playlists
+  and ones you collaborate on. Both need permissions a sign-in from before they arrived was
+  not given, so if you connected Spotify earlier, the player asks you to reconnect the first
+  time you open it on a Spotify song, and Settings offers it too from then on. Spotify would
+  put a song in a playlist twice; Islet only holds back a second add of its own while the
+  playlist is otherwise unchanged.
+- *Music* asks once for permission to control Music. It offers playlists, and a star for
+  Favourites; Music does not expose Up Next to other apps, and adding to playlists is left
+  to Music, since a song streamed from Apple Music has to be in your library first.
 
 **Timer.** Start one from the opened island (or `islet://timer/start?minutes=5`) and it counts
 down beside the notch in the Clock app's orange; opened, it pauses and cancels. When it ends

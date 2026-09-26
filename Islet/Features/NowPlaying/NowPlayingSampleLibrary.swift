@@ -4,18 +4,24 @@ import UniformTypeIdentifiers
 
 /// The library the previews show: made-up songs and playlists, handed over after a
 /// moment as a real library's would be. It speaks for no app and never talks to
-/// one; playing or queueing something only changes its own lists.
+/// one; playing, queueing, liking or adding something only changes its own lists.
 @MainActor
 final class NowPlayingSampleLibrary: MediaLibrary {
     let bundleIdentifiers: Set<String> = []
     let displayName = "Sample"
     let state = MediaLibraryState.ready
-    let capabilities: MediaLibraryCapabilities = [.upNext, .playFromQueue, .playNext, .playlists, .listeningTogether]
+    let capabilities: MediaLibraryCapabilities = [
+        .upNext, .playFromQueue, .playNext, .playlists, .listeningTogether, .save, .addToPlaylist,
+    ]
 
     /// Each preview starts from the full lists.
     private var queued = NowPlayingSampleLibrary.sampleQueued
     private var upcoming = NowPlayingSampleLibrary.sampleUpcoming
     private var lists = NowPlayingSampleLibrary.samplePlaylists
+    /// Songs liked in this preview, by title; none to begin with.
+    private var liked: Set<String> = []
+    /// Songs added in this preview, by playlist.
+    private var added: [String: Set<String>] = [:]
 
     /// Long enough to see the panel load.
     private static let delay = Duration.milliseconds(450)
@@ -59,6 +65,28 @@ final class NowPlayingSampleLibrary: MediaLibrary {
         queued.append(item)
     }
 
+    /// Whatever the preview is playing, as a song of its own.
+    func playingItem(titled title: String) async throws -> MediaPlayingItem? {
+        try await Task.sleep(for: Self.delay)
+        return MediaPlayingItem(id: "sample.song.\(title)", title: title, isSaved: liked.contains(title))
+    }
+
+    func setSaved(_ saved: Bool, _ item: MediaPlayingItem) async throws {
+        try await Task.sleep(for: Self.delay)
+        if saved { liked.insert(item.title) } else { liked.remove(item.title) }
+    }
+
+    /// Adds once to each playlist, and counts the song in its detail.
+    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist) async throws -> MediaPlaylistAddition {
+        try await Task.sleep(for: Self.delay)
+        guard added[playlist.id, default: []].insert(item.id).inserted else { return .alreadyThere }
+        if let index = lists.firstIndex(where: { $0.id == playlist.id }),
+           let count = lists[index].detail?.split(separator: " ").first.flatMap({ Int($0) }) {
+            lists[index].detail = "\(count + 1) songs"
+        }
+        return .added
+    }
+
     // MARK: Samples
 
     /// Queued by hand, as it were. Drawn once, the first time a preview asks.
@@ -77,17 +105,19 @@ final class NowPlayingSampleLibrary: MediaLibrary {
         ("Quiet Machines", "Mara Vey", 0.74, 179),
     ])
 
+    /// The person's own, but for Liked Songs, which the heart fills, and one they
+    /// only follow.
     private static let samplePlaylists: [MediaPlaylist] = ([
-        ("Late Night Drive", "32 songs", 0.8),
-        ("Sunday Morning", "18 songs", 0.12),
-        ("Deep Focus", "64 songs", 0.55),
-        ("Running Club", "40 songs", 0.0),
-        ("Liked Songs", "512 songs", 0.7),
-        ("Road Trip 2026", "27 songs", 0.3),
-    ] as [(String, String, CGFloat)]).enumerated().map { index, playlist in
+        ("Late Night Drive", "32 songs", 0.8, true),
+        ("Sunday Morning", "18 songs", 0.12, true),
+        ("Deep Focus", "64 songs", 0.55, false),
+        ("Running Club", "40 songs", 0.0, true),
+        ("Liked Songs", "512 songs", 0.7, false),
+        ("Road Trip 2026", "27 songs", 0.3, true),
+    ] as [(String, String, CGFloat, Bool)]).enumerated().map { index, playlist in
         MediaPlaylist(
             id: "sample.playlist.\(index)", name: playlist.0, detail: playlist.1,
-            artworkURL: cover(hue: playlist.2), isCurrent: index == 0
+            artworkURL: cover(hue: playlist.2), isCurrent: index == 0, canAdd: playlist.3
         )
     }
 

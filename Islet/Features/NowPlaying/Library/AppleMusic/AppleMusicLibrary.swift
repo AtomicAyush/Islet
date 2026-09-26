@@ -1,14 +1,19 @@
 import AppKit
 import Observation
 
-/// The Music app's playlists, read and switched over AppleScript.
+/// The Music app's playlists, read and switched over AppleScript, and its
+/// favourites.
 ///
-/// Music's scripting dictionary has no Up Next and no SharePlay, so playlists are
-/// all it offers. Scripting it needs the person's permission, which macOS only
-/// gives for an app that is running; `state` follows both, re-read when Music opens
-/// or quits and when the person leaves System Settings, where the permission is
-/// changed. Those notifications are all the library keeps running: they arrive only
-/// when an app opens, quits or loses focus, and nothing is polled.
+/// Music's scripting dictionary has no Up Next and no SharePlay, so playlists and
+/// favouriting the song playing are all it offers. Adding the song to a playlist is
+/// left to Music: a song streamed from Apple Music has to be in the library before
+/// a script can put it in a playlist, and Islet will not add it there unasked.
+///
+/// Scripting Music needs the person's permission, which macOS only gives for an app
+/// that is running; `state` follows both, re-read when Music opens or quits and when
+/// the person leaves System Settings, where the permission is changed. Those
+/// notifications are all the library keeps running: they arrive only when an app
+/// opens, quits or loses focus, and nothing is polled.
 @MainActor
 @Observable
 final class AppleMusicLibrary: MediaLibrary {
@@ -16,7 +21,8 @@ final class AppleMusicLibrary: MediaLibrary {
 
     let bundleIdentifiers: Set<String> = [AppleMusicScripting.bundleIdentifier]
     let displayName = "Music"
-    let capabilities: MediaLibraryCapabilities = .playlists
+    let capabilities: MediaLibraryCapabilities = [.playlists, .save]
+    let saveStyle = MediaSaveStyle.favourite
 
     /// `nil` until macOS has answered the first time.
     private(set) var access: AppleMusicAccess?
@@ -111,6 +117,22 @@ final class AppleMusicLibrary: MediaLibrary {
 
     func playFromQueue(_ item: MediaItem, at index: Int) async throws {
         throw MediaLibraryError(message: Self.noUpNext)
+    }
+
+    func playingItem(titled title: String) async throws -> MediaPlayingItem? {
+        do {
+            return try await AppleMusicScripting.playingItem(titled: title)
+        } catch {
+            throw failure(error)
+        }
+    }
+
+    func setSaved(_ saved: Bool, _ item: MediaPlayingItem) async throws {
+        do {
+            try await AppleMusicScripting.setFavourite(saved, trackID: item.id)
+        } catch {
+            throw failure(error)
+        }
     }
 
     // MARK: Private

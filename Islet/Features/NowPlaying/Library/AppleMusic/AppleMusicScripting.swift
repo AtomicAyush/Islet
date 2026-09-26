@@ -32,6 +32,8 @@ struct AppleMusicScriptError: Error, Equatable {
     static let libraryChanged = 9002
     /// The answer was not in the shape the script returns.
     static let unreadable = 9003
+    /// The song to favourite is neither playing nor in the library.
+    static let songGone = 9004
 
     var message: String {
         switch code {
@@ -42,6 +44,7 @@ struct AppleMusicScriptError: Error, Equatable {
         case Self.playlistGone: "That playlist isn’t in your library any more."
         case Self.libraryChanged: "Your playlists changed while they were loading. Try again."
         case Self.unreadable: "Music’s answer couldn’t be read."
+        case Self.songGone: "That song isn’t playing any more."
         default: "Music couldn’t do that (error \(code))."
         }
     }
@@ -98,6 +101,30 @@ enum AppleMusicScripting {
         try await onQueue {
             try requireAccess()
             _ = try run(playSource, arguments: [playlistID])
+        }
+    }
+
+    /// The song playing, if it is the one titled `title`, with whether it is a
+    /// favourite. nil when Music is playing nothing, or something else.
+    static func playingItem(titled title: String) async throws -> MediaPlayingItem? {
+        try await onQueue {
+            try requireAccess()
+            guard let fields = Answer(try run(playingSource)).fields else {
+                throw AppleMusicScriptError(code: AppleMusicScriptError.unreadable)
+            }
+            guard let id = fields["id"]?.text, !id.isEmpty, let name = fields["name"]?.text,
+                  MediaPlayingItem.sameTitle(name, title)
+            else { return nil }
+            return MediaPlayingItem(id: id, title: name, isSaved: fields["saved"]?.flag == true)
+        }
+    }
+
+    /// Makes the song with this persistent ID a favourite, or not: the one playing,
+    /// or else the library's copy.
+    static func setFavourite(_ favourite: Bool, trackID: String) async throws {
+        try await onQueue {
+            try requireAccess()
+            _ = try run(favouriteSource, arguments: [trackID, favourite ? "true" : "false"])
         }
     }
 
@@ -242,6 +269,46 @@ enum AppleMusicScripting {
             set end of rows to {|id|:item i of theIDs, |name|:item i of theNames, |class|:item i of theClasses, |kind|:item i of theKinds, |visible|:item i of theVisible, |count|:trackCount}
         end repeat
         return {|current|:currentID, |playlists|:rows}
+        """
+
+    /// Music called a favourite "loved" before macOS 14.1 and "favorited" since,
+    /// under the same code, so the scripts use the code, which both understand.
+    private static let favouriteProperty = "«class pLov»"
+
+    private static let playingSource = """
+        if application id "\(bundleIdentifier)" is not running then error number \(procNotFound)
+        with timeout of 10 seconds
+            tell application id "\(bundleIdentifier)"
+                try
+                    set theTrack to current track
+                on error number -1728
+                    return {|id|:""}
+                end try
+                return {|id|:persistent ID of theTrack, |name|:name of theTrack, |saved|:\(favouriteProperty) of theTrack}
+            end tell
+        end timeout
+        """
+
+    /// The song playing is looked at first: one streamed from Apple Music may not
+    /// be in the library to be found there.
+    private static let favouriteSource = """
+        on run {trackID, wanted}
+            if application id "\(bundleIdentifier)" is not running then error number \(procNotFound)
+            with timeout of 10 seconds
+                tell application id "\(bundleIdentifier)"
+                    set theTrack to missing value
+                    try
+                        if persistent ID of current track is trackID then set theTrack to current track
+                    end try
+                    if theTrack is missing value then
+                        set matches to (every track of library playlist 1 whose persistent ID is trackID)
+                        if matches is {} then error number \(AppleMusicScriptError.songGone)
+                        set theTrack to item 1 of matches
+                    end if
+                    set \(favouriteProperty) of theTrack to (wanted is "true")
+                end tell
+            end timeout
+        end run
         """
 
     private static let playSource = """

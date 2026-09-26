@@ -10,6 +10,16 @@ actor SpotifyWebAPI {
     /// allows, or refused even when freshly renewed. Connecting again is the fix.
     struct SignedOut: Error {}
 
+    /// The sign-in works but was not given the scope this request needs: it was
+    /// made before Islet asked for it. Connecting again grants it. Known from the
+    /// scopes Spotify said it granted, before anything is asked; failing that, from
+    /// Spotify's refusal.
+    struct MissingScope: Error {}
+
+    /// How a request reaches Spotify and its reply comes back: a URLSession in the
+    /// app, a stand-in in tests, which must never reach the real Spotify.
+    typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
     /// The accounts service turned down a code or a refresh token.
     private struct Refused: Error {
         var detail: String?
@@ -35,9 +45,11 @@ actor SpotifyWebAPI {
     /// A 429 asking for longer than this is not waited out with someone watching.
     private static let longestRetryWait: TimeInterval = 10
 
-    private let session: URLSession
-    private let keychain = SpotifyKeychain()
+    private let transport: Transport
+    private let keychain: any SpotifyTokenStore
     private let decoder: JSONDecoder
+    /// How long Spotify's player is given to catch up with a change of song.
+    private let catchUpDelay: Duration
 
     private var tokens: SpotifyTokens?
     private var hasLoadedTokens = false
@@ -55,12 +67,44 @@ actor SpotifyWebAPI {
     /// cannot.
     private var hints = SpotifyQueueHints()
 
-    init() {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 15
-        session = URLSession(configuration: configuration)
+    /// A sign-in stored without its scopes has been renewed once to learn them, so
+    /// it is not renewed early again when Spotify does not say.
+    private var hasAskedForScopes = false
+
+    /// The person's Spotify id, once asked for: whose playlists are their own.
+    private var userID: String?
+    /// Each playlist's version as last listed, or as adding to it left it.
+    private var snapshots: [String: String] = [:]
+    /// What Islet has added to each playlist while it has not otherwise changed, by
+    /// playlist URI, so a second tap does not add the song twice.
+    private var additions: [String: PlaylistAdditions] = [:]
+
+    /// The songs Islet added to a playlist, and every version of it those adds went
+    /// through: the one it was listed at, then the one each add made, the latest
+    /// last. Spotify's listing can trail its writes, and a listing still at one of
+    /// these is behind Islet's adds rather than a sign of a change made elsewhere.
+    private struct PlaylistAdditions {
+        var uris: Set<String> = []
+        var versions: [String] = []
+    }
+
+    init(
+        keychain: any SpotifyTokenStore = SpotifyKeychain(),
+        transport: Transport? = nil,
+        catchUpDelay: Duration = .seconds(1)
+    ) {
+        self.keychain = keychain
+        self.catchUpDelay = catchUpDelay
+        if let transport {
+            self.transport = transport
+        } else {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.urlCache = nil
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            configuration.timeoutIntervalForRequest = 15
+            let session = URLSession(configuration: configuration)
+            self.transport = { try await session.data(for: $0) }
+        }
         decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
     }
@@ -104,17 +148,44 @@ actor SpotifyWebAPI {
         hasLoadedTokens = true
         listings = [:]
         hints = SpotifyQueueHints()
+        userID = nil
+        snapshots = [:]
+        additions = [:]
+        hasAskedForScopes = false
     }
 
     // MARK: Library
 
-    /// The first 50 playlists, marking the one playing now. What is playing is
-    /// asked for alongside, and not knowing it is no reason to fail.
+    /// The first 50 playlists, marking the one playing now and the ones the person
+    /// can add to. What is playing, and who the person is, are asked for alongside,
+    /// and not knowing either is no reason to fail.
     func playlists() async throws -> [MediaPlaylist] {
         async let playing = playingContextURI()
+        async let user = currentUserID()
         let page: SpotifyPage<SpotifyPlaylist>? = try await get("me/playlists?limit=50")
         let current = await playing
-        return (page?.items.elements ?? []).map { $0.mediaPlaylist(isCurrent: $0.isPlaying(context: current)) }
+        let me = await user
+        let playlists = page?.items.elements ?? []
+        for playlist in playlists {
+            if let listed = playlist.snapshotId, additions[playlist.uri]?.versions.contains(listed) == true {
+                // Behind or level with Islet's own adds: nothing has changed elsewhere.
+                continue
+            }
+            snapshots[playlist.uri] = playlist.snapshotId
+        }
+        return playlists.map {
+            $0.mediaPlaylist(isCurrent: $0.isPlaying(context: current), canAdd: $0.canAdd(asUser: me))
+        }
+    }
+
+    /// Asked for once per sign-in. nil when Spotify could not say, which only costs
+    /// the person's own playlists their add buttons until the next listing.
+    private func currentUserID() async -> String? {
+        if let userID { return userID }
+        let generation = generation
+        let user: SpotifyUser? = try? await get("me")
+        if generation == self.generation, let id = user?.id { userID = id }
+        return user?.id
     }
 
     func play(contextURI: String) async throws {
@@ -144,6 +215,81 @@ actor SpotifyWebAPI {
     func addToQueue(_ uri: String) async throws {
         _ = try await send("POST", "me/player/queue?" + SpotifyAuthorization.formEncoded([("uri", uri)]))
         hints.add(uri)
+    }
+
+    // MARK: Saving
+
+    /// The track or episode playing, if it is the one titled `title` and one that
+    /// can be saved, with whether it is in the person's library. Spotify's player
+    /// takes a moment to catch up with a change of song, so when it names another,
+    /// it is asked once more after that moment; if it still does, something else is
+    /// playing (on another device, say), and nil comes back rather than the wrong song.
+    func playingItem(titled title: String) async throws -> MediaPlayingItem? {
+        try await requireScopes(["user-library-read"])
+        var item = try await playingSavable()
+        if item.map({ !MediaPlayingItem.sameTitle($0.name, title) }) ?? true {
+            try await Task.sleep(for: catchUpDelay)
+            item = try await playingSavable()
+        }
+        guard let item, MediaPlayingItem.sameTitle(item.name, title) else { return nil }
+        let saved: [Bool]? = try await get("me/library/contains?" + SpotifyAuthorization.formEncoded([("uris", item.uri)]))
+        return MediaPlayingItem(id: item.uri, title: item.name, isSaved: saved?.first == true)
+    }
+
+    private func playingSavable() async throws -> SpotifyCurrentlyPlaying.Item? {
+        let playing: SpotifyCurrentlyPlaying? = try await get("me/player/currently-playing?additional_types=track,episode")
+        return playing?.savable
+    }
+
+    /// Saves to Liked Songs (or Your Episodes), or removes from it.
+    func setSaved(_ saved: Bool, uri: String) async throws {
+        try await requireScopes(["user-library-modify"])
+        _ = try await send(saved ? "PUT" : "DELETE", "me/library?" + SpotifyAuthorization.formEncoded([("uris", uri)]))
+    }
+
+    /// Adds a track or episode to the end of a playlist. Spotify would add a second
+    /// copy of a song already there, and seeing whether it is means reading the
+    /// whole playlist; instead Islet remembers what it added, and while the playlist
+    /// is unchanged since, as far as its last listing says, adding the same song
+    /// again does nothing.
+    func add(_ uri: String, toPlaylist playlistURI: String) async throws -> MediaPlaylistAddition {
+        guard let id = SpotifyPlaylist.playlistID(in: playlistURI) else {
+            throw MediaLibraryError(message: "Spotify couldn't find that playlist")
+        }
+        try await requireScopes(SpotifyAuthorization.playlistScopes)
+        let listed = snapshots[playlistURI]
+        let known = additions[playlistURI].flatMap { $0.versions.last == listed ? $0 : nil }
+        if known?.uris.contains(uri) == true { return .alreadyThere }
+        let generation = generation
+        let body = try JSONEncoder().encode(["uris": [uri]])
+        // Spotify turns down a playlist the person may not change (one they only
+        // follow, say) without giving a reason, and here that is not about Premium.
+        let data = try await send(
+            "POST", "playlists/\(id)/items", json: body, refusal: "Spotify won't let you add to this playlist"
+        )
+        let reply = data.isEmpty ? nil : try? decoder.decode(SpotifySnapshot.self, from: data)
+        if generation == self.generation, let snapshot = reply?.snapshotId {
+            // Only what Islet added since the playlist last changed elsewhere counts.
+            var record = known ?? PlaylistAdditions(versions: listed.map { [$0] } ?? [])
+            record.uris.insert(uri)
+            record.versions.append(snapshot)
+            additions[playlistURI] = record
+            snapshots[playlistURI] = snapshot
+        }
+        return .added
+    }
+
+    /// Throws `MissingScope` before anything is asked when the sign-in was not given
+    /// `needed`. A sign-in kept by an earlier Islet does not say what it was given,
+    /// so it is renewed early, once, since Spotify says with every token; and when
+    /// Spotify still does not say, the request goes ahead and its refusal tells.
+    private func requireScopes(_ needed: [String]) async throws {
+        _ = try await accessToken()
+        if tokens?.scope == nil, !hasAskedForScopes {
+            _ = try await renewedTokens()
+            hasAskedForScopes = true
+        }
+        if tokens?.grants(needed) == false { throw MissingScope() }
     }
 
     private func queue() async throws -> SpotifyQueue {
@@ -296,8 +442,11 @@ actor SpotifyWebAPI {
 
     /// Sends a request with the current access token and returns the body of a
     /// successful reply. A 401 renews the token and tries once more; a 429 waits
-    /// as long as Spotify asks, once.
-    private func send(_ method: String, _ path: String, json: Data? = nil) async throws -> Data {
+    /// as long as Spotify asks, once. `refusal` is what a 403 that gives no reason
+    /// means for this request.
+    private func send(
+        _ method: String, _ path: String, json: Data? = nil, refusal: String = SpotifyWebAPI.premiumNeeded
+    ) async throws -> Data {
         guard let url = URL(string: Self.apiBase + path) else {
             throw MediaLibraryError(message: "Spotify couldn't do that")
         }
@@ -320,6 +469,10 @@ actor SpotifyWebAPI {
                 return Data()
             case 200..<300:
                 return data
+            case let status where [401, 403].contains(status) && isMissingScope(data):
+                // Before a 401's renewal: a new token has the same scopes, and a
+                // second 401 would sign out a sign-in that works.
+                throw MissingScope()
             case 401 where !renewed:
                 renewed = true
                 token = try await renewedAccessToken(replacing: token)
@@ -330,14 +483,14 @@ actor SpotifyWebAPI {
                 waited = true
                 try await waitOut(response)
             default:
-                throw failure(status: response.statusCode, data: data)
+                throw failure(status: response.statusCode, data: data, refusal: refusal)
             }
         }
     }
 
     private func load(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await transport(request)
             guard let http = response as? HTTPURLResponse else {
                 throw MediaLibraryError(message: "Can't reach Spotify")
             }
@@ -367,8 +520,22 @@ actor SpotifyWebAPI {
         try await Task.sleep(for: .seconds(max(0, seconds)))
     }
 
-    /// Spotify's refusals, as the island says them.
-    private func failure(status: Int, data: Data) -> APIError {
+    /// Spotify says "Insufficient client scope" (403), or on some endpoints
+    /// "Permissions missing" (401), when the sign-in was not given what a request
+    /// needs.
+    private func isMissingScope(_ data: Data) -> Bool {
+        guard let message = (try? decoder.decode(SpotifyErrorBody.self, from: data))?.message?.lowercased()
+        else { return false }
+        return message.contains("scope") || message.contains("permissions missing")
+    }
+
+    /// Most of what Islet asks is player control, which Spotify keeps for Premium,
+    /// and it has been known to refuse without saying so.
+    private static let premiumNeeded = "Spotify Premium is needed for this"
+
+    /// Spotify's refusals, as the island says them; `refusal` stands for a 403 that
+    /// gives no reason.
+    private func failure(status: Int, data: Data, refusal: String = SpotifyWebAPI.premiumNeeded) -> APIError {
         let body = try? decoder.decode(SpotifyErrorBody.self, from: data)
         let reason = body?.reason ?? ""
         let message = body?.message?.lowercased() ?? ""
@@ -376,8 +543,10 @@ actor SpotifyWebAPI {
         case 403 where message.contains("registered"):
             // A development-mode app only answers the accounts on its allowlist.
             "Add your Spotify account under User Management in the Spotify dashboard"
-        case 403 where reason == "PREMIUM_REQUIRED" || (reason.isEmpty && !message.contains("restriction")):
-            "Spotify Premium is needed for this"
+        case 403 where reason == "PREMIUM_REQUIRED":
+            Self.premiumNeeded
+        case 403 where reason.isEmpty && !message.contains("restriction"):
+            refusal
         case 403:
             "Spotify won't allow that right now"
         case 404 where reason == "NO_ACTIVE_DEVICE" || message.contains("no active device"):
@@ -444,7 +613,7 @@ actor SpotifyWebAPI {
             ("refresh_token", stale.refreshToken),
             ("client_id", stale.clientID),
         ])
-        return SpotifyTokens(response, clientID: stale.clientID, keeping: stale.refreshToken)
+        return SpotifyTokens(response, clientID: stale.clientID, keeping: stale.refreshToken, scope: stale.scope)
     }
 
     /// A form POST to the accounts service. A 400 or 401 there means the code or

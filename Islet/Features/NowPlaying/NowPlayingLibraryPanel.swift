@@ -3,7 +3,7 @@ import Observation
 
 /// The opened player's window onto the playing app's library: buttons for what it
 /// offers, and a panel below the player listing what is up next or the person's
-/// playlists.
+/// playlists, which the song playing can be added to.
 ///
 /// The library does its own talking to its app off the main thread; this only keeps
 /// what the panel shows, and drops any answer that arrives for a panel, a library
@@ -25,6 +25,15 @@ final class NowPlayingLibraryModel {
         case queue(MediaQueue)
         case playlists([MediaPlaylist])
         case failed(String)
+        /// The sign-in has to be given again for what was asked; `prompt` says so.
+        case reconnect(String)
+    }
+
+    /// A moment's word over the list on how an add went.
+    struct Notice: Equatable {
+        var text: String
+        var symbol: String
+        var id = UUID()
     }
 
     /// The playing app's library (a sample one during previews), if it has one.
@@ -33,12 +42,20 @@ final class NowPlayingLibraryModel {
     private(set) var listing = Listing.loading
     /// The row just picked, shown busy until the app has acted on it.
     private(set) var pendingRow: String?
+    private(set) var notice: Notice?
+    /// Whether the song playing is saved, for the player's heart, and the song
+    /// itself, for adding it to a playlist.
+    let saving = NowPlayingSaveModel()
 
     /// Called when the panel opens or closes, which changes the card's height.
     @ObservationIgnored var onPanelChange: () -> Void = {}
 
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var actionTask: Task<Void, Never>?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
+
+    /// Long enough to read "Added to Late Night Drive".
+    private static let noticeLength = Duration.milliseconds(2200)
 
     /// A moment for the app to move its queue on after a track change, so the
     /// refreshed list is the new one.
@@ -67,6 +84,7 @@ final class NowPlayingLibraryModel {
         actionTask = nil
         pendingRow = nil
         library = newLibrary
+        saving.use(newLibrary)
     }
 
     /// A new track can move the queue on and change which playlist is playing.
@@ -103,6 +121,7 @@ final class NowPlayingLibraryModel {
         loadTask = nil
         withAnimation(.islandMorph) { panel = nil }
         listing = .loading
+        dismissNotice()
         onPanelChange()
     }
 
@@ -132,6 +151,84 @@ final class NowPlayingLibraryModel {
         library?.openListeningTogether()
     }
 
+    /// Adds `track`, the song on show, to the end of the playlist, and says so for a
+    /// moment. The song is the one the heart has, or read now, so a song that ends
+    /// while it is being added is still the one added.
+    func add(to playlist: MediaPlaylist, track: NowPlayingTrack?) {
+        guard let library, actionTask == nil else { return }
+        let saving = saving
+        pendingRow = Self.playlistRow(playlist)
+        actionTask = Task { [weak self] in
+            let outcome: Result<MediaPlaylistAddition, Error>
+            do {
+                guard let track else { throw MediaLibraryError(message: "Nothing to add is playing") }
+                let item: MediaPlayingItem
+                do {
+                    item = try await saving.item(for: track)
+                } catch is MediaLibraryNeedsReconnect {
+                    // Reading the song asks for the scope liking needs, but it is
+                    // adding that the person tried.
+                    throw MediaLibraryNeedsReconnect(prompt: "Reconnect \(library.displayName) to add songs to playlists")
+                }
+                outcome = .success(try await library.add(item, to: playlist))
+            } catch {
+                outcome = .failure(error)
+            }
+            guard let self, !Task.isCancelled, self.library === library else { return }
+            self.actionTask = nil
+            self.pendingRow = nil
+            guard self.panel != nil else { return }
+            switch outcome {
+            case .success(.added):
+                self.show(Notice(text: "Added to \(playlist.name)", symbol: "checkmark.circle.fill"))
+                // The playlist's count has gone up.
+                self.load(quietly: true)
+            case .success(.alreadyThere):
+                self.show(Notice(text: "Already in \(playlist.name)", symbol: "checkmark.circle"))
+            case .failure(let reconnect as MediaLibraryNeedsReconnect):
+                self.loadTask?.cancel()
+                self.loadTask = nil
+                self.listing = .reconnect(reconnect.prompt)
+            case .failure(let error):
+                self.show(Notice(text: error.localizedDescription, symbol: "exclamationmark.circle.fill"))
+            }
+        }
+    }
+
+    /// Opens the panel on why the library has to be connected again, with the button
+    /// that does it: the heart's way to say so, having no room of its own.
+    func showReconnect(_ prompt: String) {
+        guard library != nil else { return }
+        loadTask?.cancel()
+        loadTask = nil
+        dismissNotice()
+        if panel == nil || panel == .output {
+            withAnimation(.islandMorph) {
+                panel = .playlists
+                listing = .reconnect(prompt)
+            }
+            onPanelChange()
+        } else {
+            listing = .reconnect(prompt)
+        }
+    }
+
+    private func show(_ newNotice: Notice) {
+        noticeTask?.cancel()
+        withAnimation(.smooth(duration: 0.25)) { notice = newNotice }
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.noticeLength)
+            guard let self, !Task.isCancelled, self.notice == newNotice else { return }
+            withAnimation(.smooth(duration: 0.25)) { self.notice = nil }
+        }
+    }
+
+    private func dismissNotice() {
+        noticeTask?.cancel()
+        noticeTask = nil
+        notice = nil
+    }
+
     /// Rows are told apart by position in the queue, where a song can appear twice.
     static func queueRow(_ index: Int) -> String { "queue.\(index)" }
     static func playlistRow(_ playlist: MediaPlaylist) -> String { "playlist.\(playlist.id)" }
@@ -142,6 +239,9 @@ final class NowPlayingLibraryModel {
     /// the new one arrives, and keeps it if that fails; a loud one shows the spinner
     /// and any error.
     private func load(after delay: TimeInterval = 0, quietly: Bool) {
+        // Asking to reconnect stays up through a new song: the list would come back
+        // without what was asked for. Connecting, or opening the panel afresh, loads.
+        if quietly, case .reconnect = listing { return }
         loadTask?.cancel()
         loadTask = nil
         guard let library, let panel, panel != .output, library.state == .ready else { return }
@@ -171,7 +271,7 @@ final class NowPlayingLibraryModel {
     private var isShowingList: Bool {
         switch listing {
         case .queue, .playlists: true
-        case .loading, .failed: false
+        case .loading, .failed, .reconnect: false
         }
     }
 
@@ -211,6 +311,7 @@ struct NowPlayingLibraryButtons: View {
     let library: NowPlayingLibraryModel
 
     var body: some View {
+        let question = NowPlayingSaveQuestion(model: model, library: library)
         HStack(spacing: 8) {
             if library.offers(.upNext) {
                 LibraryChip(title: "Up Next", symbol: "list.bullet", isSelected: library.panel == .upNext) {
@@ -230,6 +331,11 @@ struct NowPlayingLibraryButtons: View {
             }
         }
         .frame(maxWidth: .infinity)
+        // Whether the song is saved, read while the island is open, for each song;
+        // see `NowPlayingSaveQuestion` for why here.
+        .task(id: question) {
+            library.saving.refresh(track: question.track)
+        }
     }
 }
 
@@ -293,13 +399,25 @@ struct NowPlayingLibraryPanel: View {
             if let source = library.library {
                 let state = source.state
                 content(source, state: state)
-                    // A library that has just been connected lists straight away.
+                    // A library that has just been connected lists straight away,
+                    // and one connected again lists what it can now do.
                     .onChange(of: state) { _, new in
                         if new == .ready { library.reload() }
                     }
+                    .onChange(of: source.signInCount) { library.reload() }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottom) {
+            if let notice = library.notice {
+                PanelNotice(notice: notice)
+                    .id(notice.id)
+                    .padding(.bottom, 6)
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+                    // Only to be read: the row under it still takes its clicks.
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     @ViewBuilder
@@ -327,6 +445,10 @@ struct NowPlayingLibraryPanel: View {
                 .controlSize(.small)
         case .failed(let message):
             PanelMessage(text: message, button: "Retry") { library.reload() }
+        case .reconnect(let prompt):
+            if let source = library.library {
+                PanelMessage(text: prompt, button: "Reconnect") { source.connect() }
+            }
         case .queue(let queue):
             if queue.all.isEmpty {
                 PanelMessage(text: "Nothing up next")
@@ -356,7 +478,9 @@ struct NowPlayingLibraryPanel: View {
                             artworkURL: playlist.artworkURL,
                             placeholder: "music.note.list",
                             isBusy: library.pendingRow == NowPlayingLibraryModel.playlistRow(playlist),
-                            action: { library.play(playlist) }
+                            action: { library.play(playlist) },
+                            add: canAdd(to: playlist) ? { library.add(to: playlist, track: model.track) } : nil,
+                            addTitle: addTitle(playlist)
                         ) {
                             if playlist.isCurrent {
                                 CurrentMark(model: model)
@@ -366,6 +490,20 @@ struct NowPlayingLibraryPanel: View {
                 }
             }
         }
+    }
+
+    /// The song playing can go into the person's own playlists and ones they share,
+    /// once the library knows what is playing: not an advert, a local file or a
+    /// song on another device, for which the heart is gone too.
+    private func canAdd(to playlist: MediaPlaylist) -> Bool {
+        guard playlist.canAdd, library.offers(.addToPlaylist), !model.isVideo, model.track != nil else { return false }
+        return library.saving.state != .hidden
+    }
+
+    /// "Add “Midnight Drive” to Late Night Drive".
+    private func addTitle(_ playlist: MediaPlaylist) -> String {
+        guard let title = model.track?.title, !title.isEmpty else { return "Add to \(playlist.name)" }
+        return "Add “\(title)” to \(playlist.name)"
     }
 
     private func queueRow(_ item: MediaItem, at index: Int, canPlayNext: Bool, joinsQueue: Bool) -> some View {
@@ -499,6 +637,11 @@ private struct LibraryRow<Accessory: View>: View {
     /// Songs are already queued, so a queued song goes after them: "Add to Queue"
     /// rather than "Play Next".
     var joinsQueue = false
+    /// Adds the song playing to the playlist: a button at the end of the row,
+    /// always there so the rows that take songs are plain to see, and the row's menu.
+    var add: (() -> Void)?
+    /// What adding does, for its tooltip and menu item.
+    var addTitle = ""
     @ViewBuilder let accessory: Accessory
     @State private var isHovering = false
 
@@ -529,6 +672,8 @@ private struct LibraryRow<Accessory: View>: View {
                     // shift when the button comes and goes.
                     accessory
                         .opacity(showsPlayNext ? 0 : 1)
+                        // Clear of the add button over the row's end.
+                        .padding(.trailing, showsAdd ? RowButton.diameter + 6 : 0)
                 }
             }
             .padding(.horizontal, 8)
@@ -545,19 +690,78 @@ private struct LibraryRow<Accessory: View>: View {
             if showsPlayNext, let playNext {
                 PlayNextButton(joinsQueue: joinsQueue, action: playNext)
                     .padding(.trailing, 6)
+            } else if showsAdd, let add {
+                RowButton(symbol: "plus", title: addTitle, action: add)
+                    .padding(.trailing, 6)
             }
         }
         .contextMenu {
             if let playNext {
                 Button(PlayNextButton.title(joinsQueue), systemImage: PlayNextButton.symbol(joinsQueue), action: playNext)
             }
+            if let add {
+                Button(addTitle, systemImage: "plus", action: add)
+                    .disabled(isBusy)
+            }
         }
-        .allowsHitTesting(action != nil || playNext != nil)
+        .allowsHitTesting(action != nil || playNext != nil || add != nil)
         .onHover { isHovering = $0 }
     }
 
     private var showsPlayNext: Bool {
         isHovering && playNext != nil && !isBusy
+    }
+
+    private var showsAdd: Bool {
+        add != nil && !isBusy
+    }
+}
+
+/// A round button over the end of a row, such as adding to a playlist.
+private struct RowButton: View {
+    let symbol: String
+    let title: String
+    let action: () -> Void
+    @State private var isHovering = false
+
+    static let diameter: CGFloat = 26
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white.opacity(isHovering ? 1 : 0.85))
+                .frame(width: Self.diameter, height: Self.diameter)
+                .background(Circle().fill(.white.opacity(isHovering ? 0.22 : 0.12)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(title)
+        .accessibilityLabel(title)
+    }
+}
+
+/// How an add went, for a moment, over the bottom of the list.
+private struct PanelNotice: View {
+    let notice: NowPlayingLibraryModel.Notice
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: notice.symbol)
+                .font(.system(size: 12, weight: .semibold))
+            Text(notice.text)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .background(Capsule().fill(Color(white: 0.2)))
+        .overlay(Capsule().strokeBorder(.white.opacity(0.1)))
+        .shadow(color: .black.opacity(0.5), radius: 8, y: 2)
+        .padding(.horizontal, 24)
+        .accessibilityElement(children: .combine)
     }
 }
 

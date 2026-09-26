@@ -1,7 +1,7 @@
 import AppKit
 import Observation
 
-/// Spotify's queue and playlists, through the Spotify Web API.
+/// Spotify's queue, playlists and Liked Songs, through the Spotify Web API.
 ///
 /// Spotify only lends its API to apps registered by the people using them, so
 /// there is no Islet-wide key: the person makes an app in Spotify's dashboard,
@@ -20,7 +20,9 @@ final class SpotifyLibrary: MediaLibrary {
     let displayName = "Spotify"
     /// Jam has no public API; `openListeningTogether()` brings Spotify forward instead.
     /// Nor can queued songs be reordered or removed, so Play Next is how one moves up.
-    let capabilities: MediaLibraryCapabilities = [.upNext, .playFromQueue, .playNext, .playlists, .listeningTogether]
+    let capabilities: MediaLibraryCapabilities = [
+        .upNext, .playFromQueue, .playNext, .playlists, .listeningTogether, .save, .addToPlaylist,
+    ]
 
     /// As typed in Settings; used trimmed.
     var clientID: String {
@@ -34,11 +36,17 @@ final class SpotifyLibrary: MediaLibrary {
     private(set) var isFinishingSignIn = false
     /// Why the last sign-in did not work, for Settings.
     private(set) var signInError: String?
+    /// Goes up with every sign-in, so the heart and the panel read again with it.
+    private(set) var signInCount = 0
+    /// The sign-in was made before Islet asked for Liked Songs and adding to
+    /// playlists, as found the first time the player asks about either. Settings
+    /// then offers to connect again, which grants them.
+    private(set) var needsNewScopes = false
 
     /// A sign-in waiting for the browser to come back. Its verifier never leaves here
     /// except to Spotify's token endpoint.
     private var pendingAuthorization: SpotifyAuthorization?
-    private let api = SpotifyWebAPI()
+    private let api: SpotifyWebAPI
 
     /// Spotify takes a moment to pass a queued song on to the device playing, and
     /// the list read again straight after would not have it yet.
@@ -48,6 +56,16 @@ final class SpotifyLibrary: MediaLibrary {
         clientID = UserDefaults.standard.string(forKey: Self.clientIDKey) ?? ""
         // Reads only the item's account, which never shows a keychain prompt.
         connectedClientID = SpotifyKeychain().storedClientID()
+        api = SpotifyWebAPI()
+    }
+
+    /// A library over a Web API of the caller's, signed in with `clientID`, for
+    /// tests: it reads nothing from the keychain or the defaults, and `connect()`
+    /// must not be called on it.
+    init(api: SpotifyWebAPI, signedInWith clientID: String) {
+        self.clientID = clientID
+        connectedClientID = clientID
+        self.api = api
     }
 
     var trimmedClientID: String {
@@ -88,6 +106,7 @@ final class SpotifyLibrary: MediaLibrary {
         pendingAuthorization = nil
         connectedClientID = nil
         signInError = nil
+        needsNewScopes = false
         Task { await api.signOut() }
     }
 
@@ -118,6 +137,8 @@ final class SpotifyLibrary: MediaLibrary {
                 try await api.signIn(code: code, authorization: authorization)
                 connectedClientID = authorization.clientID
                 signInError = nil
+                needsNewScopes = false
+                signInCount += 1
             } catch {
                 signInError = error.localizedDescription
             }
@@ -156,6 +177,24 @@ final class SpotifyLibrary: MediaLibrary {
         try? await Task.sleep(for: Self.queueSettleDelay)
     }
 
+    // MARK: Saving
+
+    func playingItem(titled title: String) async throws -> MediaPlayingItem? {
+        try await call(reconnectingTo: Self.toLike) { try await $0.playingItem(titled: title) }
+    }
+
+    func setSaved(_ saved: Bool, _ item: MediaPlayingItem) async throws {
+        try await call(reconnectingTo: Self.toLike) { try await $0.setSaved(saved, uri: item.id) }
+    }
+
+    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist) async throws -> MediaPlaylistAddition {
+        try await call(reconnectingTo: "Reconnect Spotify to add songs to playlists") {
+            try await $0.add(item.id, toPlaylist: playlist.id)
+        }
+    }
+
+    private static let toLike = "Reconnect Spotify to like songs"
+
     /// Jam can only be started inside Spotify, so this brings Spotify forward,
     /// where it is a click away.
     func openListeningTogether() {
@@ -164,8 +203,12 @@ final class SpotifyLibrary: MediaLibrary {
         NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    /// Runs a request once signed in, and notices when the sign-in has gone.
-    private func call<T: Sendable>(_ request: @Sendable (SpotifyWebAPI) async throws -> T) async throws -> T {
+    /// Runs a request once signed in, and notices when the sign-in has gone or
+    /// lacks a scope, saying `prompt` for the latter.
+    private func call<T: Sendable>(
+        reconnectingTo prompt: String = "Reconnect Spotify in Settings",
+        _ request: @Sendable (SpotifyWebAPI) async throws -> T
+    ) async throws -> T {
         switch state {
         case .ready: break
         case .needsConnection: throw MediaLibraryError(message: "Connect Spotify first")
@@ -176,6 +219,9 @@ final class SpotifyLibrary: MediaLibrary {
         } catch is SpotifyWebAPI.SignedOut {
             connectedClientID = nil
             throw MediaLibraryError(message: "Reconnect Spotify in Settings")
+        } catch is SpotifyWebAPI.MissingScope {
+            needsNewScopes = true
+            throw MediaLibraryNeedsReconnect(prompt: prompt)
         }
     }
 }

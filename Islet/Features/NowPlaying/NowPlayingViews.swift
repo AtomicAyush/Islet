@@ -814,7 +814,8 @@ struct NowPlayingMinimal: View {
 /// when it has one, and the library's panel below them when one is open. While the
 /// panel is open the player folds down to a single row, so the list has the room.
 /// The output button ends the controls row, or the folded player, and opens the
-/// outputs in the same place.
+/// outputs in the same place; the heart, for a library that saves songs, starts the
+/// controls row, or sits beside the output button in the folded player.
 struct NowPlayingExpanded: View {
     let model: NowPlayingModel
     let library: NowPlayingLibraryModel
@@ -836,6 +837,7 @@ struct NowPlayingExpanded: View {
             if library.panel != nil {
                 HStack(spacing: 10) {
                     NowPlayingMiniPlayer(model: model)
+                    NowPlayingSaveButton(model: model, library: library)
                     outputButton
                 }
                 .transition(.opacity)
@@ -845,6 +847,7 @@ struct NowPlayingExpanded: View {
                     .transition(.opacity)
             } else {
                 NowPlayingMusicPlayer(model: model)
+                    .overlay(alignment: .bottomLeading) { NowPlayingSaveButton(model: model, library: library).frame(height: 38) }
                     .overlay(alignment: .bottomTrailing) { outputButton.frame(height: 38) }
                     .transition(.opacity)
             }
