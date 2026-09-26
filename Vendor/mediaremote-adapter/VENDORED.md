@@ -32,3 +32,34 @@ framework and print now-playing updates as JSON lines on stdout.
   Apple's own Music, Podcasts or Books, and logs "missing entitlement needed to
   send command … to arbitrary apps. Sending to NowPlayingApp instead". So Islet checks
   that the app it shows is the elected one straight before sending, instead.
+- `src/adapter/sessions.m` (new), `include/MediaRemoteAdapter.h`,
+  `bin/mediaremote-adapter.pl`: a `sessions` function, which reports every
+  now-playing session MediaRemote knows, not only the elected one the stream
+  follows: `{"type":"session","id":ID,"diff":BOOL,"payload":{…}}` per session, ID
+  being `PID/BUNDLE_ID`, with the stream's keys plus `elected`, diffed as the stream
+  diffs; `{"type":"sessionEnded","id":ID}` once one is gone; and
+  `{"type":"sessionsListed"}` after each reading that changed anything, and after
+  the first in any case, so a reader takes the list whole and knows when it is
+  empty. It lists them with `MRMediaRemoteGetNowPlayingClients` and reads each one's
+  information and playback state for its player path
+  (`MRMediaRemoteGetNowPlayingInfoForPlayer`, `…GetPlaybackStateForPlayer`, the
+  client's active player); these answer perl, as the stream's calls do, and a plain
+  executable gets nothing. It reads them all again on the per-player notifications
+  (`kMRMediaRemotePlayerNowPlayingInfoDidChange…`, `…PlayerIsPlayingDidChange…`,
+  `…PlayerPlaybackStateDidChange…`), which are posted for every player and not only
+  the elected one's; when the elected app changes; and when an application quits.
+  Every 10 seconds, while anything is listed, it also looks without artwork, and
+  reads in full only if something changed that no notification told of or a session
+  still waits for its artwork. Listing the clients once after registering is also
+  what gets the non-elected players' information notifications, not only their play
+  and pause ones. When MediaRemote names a session's artwork but has not handed over
+  the image yet, as on the first reading after a session appears, it reads once more
+  half a second later. A client whose process has gone is left out, and a listing
+  MediaRemote fails or does not answer within 2 seconds is not reported as an empty
+  one. Islet runs it as a process of its own beside the stream: those functions'
+  signatures were only checked on macOS 26 and 27 (26A428), so when one of them or
+  `-[MRPlayerPath initWithOrigin:client:player:]` is missing, or throws, it exits
+  with 13 (`kMRAExitCannotListSessions`), and if one crashes it goes alone; either
+  way the stream carries on. Checked on macOS 27 with a YouTube video in Safari and
+  Spotify: both are listed, whichever is elected. It only reads: a command still
+  reaches the elected application alone, as `expect` checks.

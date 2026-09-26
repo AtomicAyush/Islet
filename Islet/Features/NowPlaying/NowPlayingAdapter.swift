@@ -1,11 +1,14 @@
 import Foundation
 
-/// Talks to the system's now-playing session through the bundled mediaremote-adapter.
+/// Talks to the system's now-playing sessions through the bundled mediaremote-adapter.
 ///
 /// Since macOS 15.4 MediaRemote only answers Apple's own processes, so the adapter
 /// framework is loaded by `/usr/bin/perl` (which qualifies) and reports on stdout as
-/// JSON lines. One long-lived process streams changes; each command is a short-lived
-/// process of its own.
+/// JSON lines. Two long-lived processes stream changes: one to the session MediaRemote
+/// has elected, one to the list of every session. They are kept apart because the
+/// list leans on more of MediaRemote's private functions: should one of them be
+/// missing or crash on some system, the list goes and the elected session's stream
+/// carries on. Each command is a short-lived process of its own.
 ///
 /// Everything mutable is confined to `queue`. Snapshots are delivered on the main
 /// queue.
@@ -16,26 +19,49 @@ final class NowPlayingAdapter: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.ayush.Islet.nowPlaying", qos: .utility)
 
     private var onUpdate: (@Sendable (NowPlayingSnapshot?) -> Void)?
-    private var stream: Process?
-    private var reader: DispatchSourceRead?
-    private var parser = NowPlayingStreamParser()
-    /// Bumped for every stream launched and on stop, so callbacks from a process
-    /// that has since been replaced are ignored.
-    private var generation = 0
-    private var launchedAt = Date.distantPast
-    private var failures = 0
-    private var restartWork: DispatchWorkItem?
+    private var onSessions: (@Sendable (NowPlayingMediaRemoteSessions) -> Void)?
+    /// The elected session's stream.
+    private let stream = Channel(function: "stream")
+    /// Every session, elected or not (a local change to the adapter, see its
+    /// VENDORED.md).
+    private let list = Channel(function: "sessions")
     private var emptyWork: DispatchWorkItem?
     private var commands: Set<Process> = []
 
     /// Consecutive early exits before giving up: the adapter may be broken for good
     /// on this system, and relaunching it forever would only burn CPU.
     private static let maxFailures = 6
-    /// A stream that ran this long was healthy, so its exit starts the count afresh.
+    /// A process that ran this long was healthy, so its exit starts the count afresh.
     private static let healthyRun: TimeInterval = 60
     /// "Nothing playing" is held back this long. The stream reports an empty state
     /// whenever it starts, and in passing when a player hands over to another.
     private static let emptyDelay: TimeInterval = 0.6
+    /// The list's exit status when this system's MediaRemote cannot list sessions
+    /// (the adapter's `kMRAExitCannotListSessions`). Launching it again would only
+    /// fail again, so the island does without it.
+    static let cannotListStatus: Int32 = 13
+
+    /// One long-lived adapter process and what it has said so far. Confined to
+    /// `queue`, as the adapter is.
+    private final class Channel: @unchecked Sendable {
+        /// The adapter function it runs.
+        let function: String
+        var process: Process?
+        var reader: DispatchSourceRead?
+        var parser = NowPlayingStreamParser()
+        /// Bumped for every process launched and on stop, so callbacks from one that
+        /// has since been replaced are ignored.
+        var generation = 0
+        var launchedAt = Date.distantPast
+        var failures = 0
+        var restartWork: DispatchWorkItem?
+        /// This process has printed the list whole at least once.
+        var hasListed = false
+
+        init(function: String) {
+            self.function = function
+        }
+    }
 
     /// `nil` when the adapter is not in the app bundle; the feature then does nothing.
     init?(bundle: Bundle = .main) {
@@ -49,27 +75,38 @@ final class NowPlayingAdapter: @unchecked Sendable {
 
     // MARK: Stream
 
-    /// Starts streaming. `onUpdate` receives each new state on the main queue, `nil`
-    /// meaning nothing is playing.
-    func startStream(onUpdate: @escaping @Sendable (NowPlayingSnapshot?) -> Void) {
+    /// Starts streaming. `onUpdate` receives each new state of the session MediaRemote
+    /// has elected on the main queue, `nil` meaning nothing is playing; `onSessions`
+    /// every session's, elected or not, each time the list changes, and an empty list
+    /// when it cannot be had.
+    func startStream(
+        onUpdate: @escaping @Sendable (NowPlayingSnapshot?) -> Void,
+        onSessions: @escaping @Sendable (NowPlayingMediaRemoteSessions) -> Void
+    ) {
         queue.async { [self] in
             self.onUpdate = onUpdate
-            failures = 0
-            launch()
+            self.onSessions = onSessions
+            for channel in [stream, list] {
+                channel.failures = 0
+                launch(channel)
+            }
         }
     }
 
-    /// Stops the stream and any commands still running. Synchronous, so the child
+    /// Stops the streams and any commands still running. Synchronous, so the child
     /// processes are gone before the app quits.
     func stop() {
         queue.sync {
             onUpdate = nil
-            generation += 1
-            restartWork?.cancel()
-            restartWork = nil
+            onSessions = nil
+            for channel in [stream, list] {
+                channel.generation += 1
+                channel.restartWork?.cancel()
+                channel.restartWork = nil
+                terminate(channel)
+            }
             emptyWork?.cancel()
             emptyWork = nil
-            terminateStream()
             for command in commands where command.isRunning {
                 command.terminate()
             }
@@ -77,37 +114,40 @@ final class NowPlayingAdapter: @unchecked Sendable {
         }
     }
 
-    private func launch() {
+    private func launch(_ channel: Channel) {
         guard onUpdate != nil else { return }
-        terminateStream()
-        generation += 1
-        let generation = self.generation
-        parser = NowPlayingStreamParser()
+        terminate(channel)
+        channel.generation += 1
+        let generation = channel.generation
+        channel.parser = NowPlayingStreamParser()
+        channel.hasListed = false
 
         let process = Process()
         process.executableURL = perl
         // --micros: exact timestamps; the default ISO 8601 ones are whole seconds, so
         //   the extrapolated position could be up to a second out.
         // --debounce: players often report a track in several quick steps.
-        process.arguments = [script.path, framework.path, "stream", "--micros", "--debounce=60"]
+        process.arguments = [script.path, framework.path, channel.function, "--micros", "--debounce=60"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
-        process.terminationHandler = { [weak self] _ in
-            self?.queue.async { self?.streamExited(generation: generation) }
+        process.terminationHandler = { [weak self] process in
+            // Stopped by a signal, a crash among them, is no exit status at all.
+            let status = process.terminationReason == .exit ? process.terminationStatus : nil
+            self?.queue.async { self?.exited(channel, generation: generation, status: status) }
         }
 
         // Stamped before launching, so a launch that fails at once counts as an early
         // exit and the backoff grows.
-        launchedAt = Date()
+        channel.launchedAt = Date()
         do {
             try process.run()
         } catch {
-            streamExited(generation: generation)
+            exited(channel, generation: generation, status: nil)
             return
         }
-        stream = process
+        channel.process = process
 
         // Read on this queue with plain read(2): closing the pipe from here can then
         // never race a read in progress, which FileHandle turns into an exception.
@@ -115,54 +155,69 @@ final class NowPlayingAdapter: @unchecked Sendable {
         let descriptor = output.fileDescriptor
         let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
         source.setEventHandler { [weak self] in
-            self?.read(descriptor, generation: generation)
+            self?.read(descriptor, from: channel, generation: generation)
         }
         source.setCancelHandler {
             // Closing the read end also stops a child that ignores SIGTERM: its next
             // write fails.
             try? output.close()
         }
-        reader = source
+        channel.reader = source
         source.resume()
     }
 
-    private func terminateStream() {
-        reader?.cancel()
-        reader = nil
-        if let process = stream, process.isRunning { process.terminate() }
-        stream = nil
+    private func terminate(_ channel: Channel) {
+        channel.reader?.cancel()
+        channel.reader = nil
+        if let process = channel.process, process.isRunning { process.terminate() }
+        channel.process = nil
     }
 
-    private func read(_ descriptor: Int32, generation: Int) {
+    private func read(_ descriptor: Int32, from channel: Channel, generation: Int) {
         var chunk = [UInt8](repeating: 0, count: 1 << 16)
         let count = chunk.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
         // Always drain, so a source can never spin on data nobody takes.
-        guard generation == self.generation else { return }
+        guard generation == channel.generation else { return }
         if count > 0 {
-            if parser.consume(Data(chunk[..<count])) { emit(parser.snapshot()) }
+            let changes = channel.parser.consume(Data(chunk[..<count]))
+            if changes.contains(.system) { emit(channel.parser.snapshot()) }
+            if changes.contains(.sessions) {
+                channel.hasListed = true
+                deliver(channel.parser.sessions())
+            }
         } else if count == 0 || (errno != EAGAIN && errno != EINTR) {
             // End of file. The termination handler decides whether to relaunch.
-            reader?.cancel()
-            reader = nil
+            channel.reader?.cancel()
+            channel.reader = nil
         }
     }
 
-    private func streamExited(generation: Int) {
-        guard generation == self.generation, onUpdate != nil else { return }
-        terminateStream()
-        if Date().timeIntervalSince(launchedAt) > Self.healthyRun { failures = 0 }
-        failures += 1
-        guard failures <= Self.maxFailures else {
-            emit(nil)
+    private func exited(_ channel: Channel, generation: Int, status: Int32?) {
+        guard generation == channel.generation, onUpdate != nil else { return }
+        terminate(channel)
+        if channel === list {
+            // A list the last process printed whole stands until the next one prints
+            // its own; without one, nothing says which sessions are still there.
+            if !channel.hasListed { deliver(NowPlayingMediaRemoteSessions()) }
+            guard status != Self.cannotListStatus else { return }
+        }
+        if Date().timeIntervalSince(channel.launchedAt) > Self.healthyRun { channel.failures = 0 }
+        channel.failures += 1
+        guard channel.failures <= Self.maxFailures else {
+            if channel === stream {
+                emit(nil)
+            } else {
+                deliver(NowPlayingMediaRemoteSessions())
+            }
             return
         }
         // 1, 2, 4 … 32 s.
-        let delay = pow(2, Double(failures - 1))
+        let delay = pow(2, Double(channel.failures - 1))
         let work = DispatchWorkItem { [weak self] in
-            self?.restartWork = nil
-            self?.launch()
+            channel.restartWork = nil
+            self?.launch(channel)
         }
-        restartWork = work
+        channel.restartWork = work
         queue.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
@@ -184,6 +239,11 @@ final class NowPlayingAdapter: @unchecked Sendable {
     private func deliver(_ snapshot: NowPlayingSnapshot?) {
         guard let onUpdate else { return }
         DispatchQueue.main.async { onUpdate(snapshot) }
+    }
+
+    private func deliver(_ sessions: NowPlayingMediaRemoteSessions) {
+        guard let onSessions else { return }
+        DispatchQueue.main.async { onSessions(sessions) }
     }
 
     // MARK: Commands
@@ -261,32 +321,68 @@ final class NowPlayingAdapter: @unchecked Sendable {
     }
 }
 
-/// Turns the adapter's stdout into snapshots.
+/// MediaRemote's sessions for every app, not only the one it has elected, as the
+/// adapter lists them: one per app.
+struct NowPlayingMediaRemoteSessions: Sendable {
+    /// By app: the browser rather than its helper process for web media.
+    var snapshots: [String: NowPlayingSnapshot] = [:]
+    /// The app MediaRemote delivers commands to, as the list last found it.
+    var elected: String?
+
+    /// Which of two sessions of one app to show, as with two tabs playing in one
+    /// browser: one that plays over one that does not, then the one MediaRemote has
+    /// elected, then the one reported most recently.
+    static func prefers(
+        _ candidate: NowPlayingSnapshot, elected candidateIsElected: Bool,
+        over other: NowPlayingSnapshot, elected otherIsElected: Bool
+    ) -> Bool {
+        if candidate.isPlaying != other.isPlaying { return candidate.isPlaying }
+        if candidateIsElected != otherIsElected { return candidateIsElected }
+        return candidate.timing.timestamp > other.timing.timestamp
+    }
+}
+
+/// Turns the adapter's stdout into snapshots: the elected session's from the stream's
+/// lines, and every session's from the list's.
 ///
-/// Each line is `{"type":"data","diff":Bool,"payload":{…}}`. A full payload replaces
-/// the state; a diff is merged into it, a `null` value meaning the key is gone. Lines
-/// carrying artwork run to hundreds of kilobytes, so bytes are buffered and split on
-/// newlines before any decoding.
+/// A stream line is `{"type":"data","diff":Bool,"payload":{…}}`; a list line is the
+/// same with `"type":"session"` and the session's `"id"`, and
+/// `{"type":"sessionEnded","id":…}` says one is gone. A full payload replaces the
+/// state; a diff is merged into it, a `null` value meaning the key is gone. The list
+/// counts as changed only at `{"type":"sessionsListed"}`, which ends each of its
+/// readings: a reading's lines can arrive in several chunks, and the sessions in an
+/// early one alone are not the list. Lines carrying artwork run to hundreds of
+/// kilobytes, so bytes are buffered and split on newlines before any decoding.
 struct NowPlayingStreamParser {
+    /// Which states a chunk of output changed.
+    struct Changes: OptionSet {
+        let rawValue: Int
+
+        /// The session MediaRemote has elected, from the stream's own lines.
+        static let system = Changes(rawValue: 1 << 0)
+        /// The list of every session, read whole.
+        static let sessions = Changes(rawValue: 1 << 1)
+    }
+
     private var buffer = Data()
     /// How far into `buffer` has been searched for a newline already.
     private var scanned = 0
-    private var state: [String: Any] = [:]
-    private var artworkSource: String?
-    private var artwork: NowPlayingArtwork?
+    private var system = NowPlayingPayloadState()
+    /// Each session in the list by the adapter's id for it, its process and bundle.
+    private var listed: [String: NowPlayingPayloadState] = [:]
 
     /// A line longer than this is not the adapter talking; drop it.
     private static let maxLine = 32 << 20
 
-    /// Takes the next chunk of output. Returns whether any complete line changed
-    /// the state.
-    mutating func consume(_ data: Data) -> Bool {
+    /// Takes the next chunk of output. Returns which states its complete lines
+    /// changed.
+    mutating func consume(_ data: Data) -> Changes {
         buffer.append(data)
-        var changed = false
+        var changes: Changes = []
         var start = buffer.startIndex
         var searchFrom = buffer.startIndex + scanned
         while let newline = buffer[searchFrom...].firstIndex(of: 0x0A) {
-            if newline > start, apply(line: buffer[start..<newline]) { changed = true }
+            if newline > start { changes.formUnion(apply(line: buffer[start..<newline])) }
             start = newline + 1
             searchFrom = start
         }
@@ -296,17 +392,71 @@ struct NowPlayingStreamParser {
             buffer.removeAll()
             scanned = 0
         }
-        return changed
+        return changes
     }
 
-    private mutating func apply(line: Data) -> Bool {
-        guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              message["type"] as? String == "data",
-              let payload = message["payload"] as? [String: Any]
-        else { return false }
+    private mutating func apply(line: Data) -> Changes {
+        guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return [] }
+        let diff = message["diff"] as? Bool == true
+        switch message["type"] as? String {
+        case "data":
+            guard let payload = message["payload"] as? [String: Any] else { return [] }
+            system.apply(payload, diff: diff)
+            return .system
+        case "session":
+            guard let id = message["id"] as? String, let payload = message["payload"] as? [String: Any] else { return [] }
+            listed[id, default: NowPlayingPayloadState()].apply(payload, diff: diff)
+            return []
+        case "sessionEnded":
+            if let id = message["id"] as? String { listed.removeValue(forKey: id) }
+            return []
+        case "sessionsListed":
+            return .sessions
+        default:
+            return []
+        }
+    }
 
+    /// The elected session's state, or `nil` when no player is reporting. Decodes new
+    /// artwork, so call it off the main thread.
+    mutating func snapshot() -> NowPlayingSnapshot? {
+        system.snapshot()
+    }
+
+    /// Every listed session, one per app (see `NowPlayingMediaRemoteSessions.prefers`).
+    /// Decodes new artwork, so call it off the main thread. A session without an app
+    /// is left out: only the elected one can be unnamed, and the stream has it.
+    mutating func sessions() -> NowPlayingMediaRemoteSessions {
+        var result = NowPlayingMediaRemoteSessions()
+        var electedApps: Set<String> = []
+        for id in listed.keys.sorted() {
+            guard let snapshot = listed[id]?.snapshot(), let app = snapshot.track.bundleID else { continue }
+            let isElected = listed[id]?.isElected == true
+            if isElected { result.elected = app }
+            if let other = result.snapshots[app], !NowPlayingMediaRemoteSessions.prefers(
+                snapshot, elected: isElected, over: other, elected: electedApps.contains(app)
+            ) { continue }
+            result.snapshots[app] = snapshot
+            if isElected { electedApps.insert(app) } else { electedApps.remove(app) }
+        }
+        return result
+    }
+}
+
+/// One session's state as the adapter reports it, full payloads and diffs merged,
+/// and the snapshot it makes.
+struct NowPlayingPayloadState {
+    private var state: [String: Any] = [:]
+    private var artworkSource: String?
+    private var artwork: NowPlayingArtwork?
+
+    /// MediaRemote delivers commands to this session's app, as the list says; the
+    /// stream's own lines never say.
+    var isElected: Bool { state[Key.elected] as? Bool ?? false }
+
+    mutating func apply(_ payload: [String: Any], diff: Bool) {
         let previous = state
-        if message["diff"] as? Bool == true {
+        if diff {
             for (key, value) in payload {
                 state[key] = value is NSNull ? nil : value
             }
@@ -329,7 +479,6 @@ struct NowPlayingStreamParser {
             state[Key.timestamp] = now
         }
         reanchorIfNeeded(previous: previous)
-        return true
     }
 
     /// When playback starts or stops, the player's new position often arrives in a
@@ -418,6 +567,7 @@ struct NowPlayingStreamParser {
         static let repeatMode = "repeatMode"
         static let jumpsBack = "supportsRewind15Seconds"
         static let jumpsForward = "supportsFastForward15Seconds"
+        static let elected = "elected"
     }
 }
 

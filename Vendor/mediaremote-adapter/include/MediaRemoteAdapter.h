@@ -139,4 +139,24 @@ typedef enum {
 extern void adapter_expect(NSString *bundleIdentifier);
 extern void adapter_expect_env();
 
+// Local change (Islet), see VENDORED.md.
+// Streams every now playing session MediaRemote knows, the elected one and all
+// others, to stdout until the process receives a SIGTERM signal. Each line is a
+// JSON dictionary: {"type":"session","id":ID,"diff":BOOL,"payload":{...}} for
+// a session that is new or changed, where ID is "PID/BUNDLE_ID", the payload
+// has the stream's keys plus "elected" (whether MediaRemote delivers commands
+// to it), and a diff holds only the changed keys, null for one that is gone;
+// {"type":"sessionEnded","id":ID} for one no longer listed; and
+// {"type":"sessionsListed"} once the lines of a reading are all out, after
+// every reading that changed anything and after the first one in any case, so
+// that a reader can take the list whole and knows when it is empty. Exits with
+// kMRAExitCannotListSessions when this system's MediaRemote lacks a function
+// or method it needs, or one of them throws.
+typedef enum {
+    kMRAExitCannotListSessions = 13,
+} MRASessionsExitCode;
+
+extern void adapter_sessions();
+extern void adapter_sessions_env();
+
 #endif // MEDIAREMOTEADAPTER_ADAPTER_H

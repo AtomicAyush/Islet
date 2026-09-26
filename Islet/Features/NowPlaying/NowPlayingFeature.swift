@@ -81,9 +81,14 @@ final class NowPlayingFeature: Feature {
         isRunning = true
         streamToken += 1
         let token = streamToken
-        adapter?.startStream { [weak self] snapshot in
-            MainActor.assumeIsolated { self?.receive(snapshot, token: token) }
-        }
+        adapter?.startStream(
+            onUpdate: { [weak self] snapshot in
+                MainActor.assumeIsolated { self?.receive(snapshot, token: token) }
+            },
+            onSessions: { [weak self] sessions in
+                MainActor.assumeIsolated { self?.receive(sessions, token: token) }
+            }
+        )
         broadcasts.start()
         sync()
     }
@@ -165,6 +170,11 @@ final class NowPlayingFeature: Feature {
     private func receive(_ snapshot: NowPlayingSnapshot?, token: Int) {
         guard isRunning, token == streamToken else { return }
         model.ingest(snapshot)
+    }
+
+    private func receive(_ sessions: NowPlayingMediaRemoteSessions, token: Int) {
+        guard isRunning, token == streamToken else { return }
+        model.ingest(sessions: sessions)
     }
 
     /// A control goes to the app the island shows and to no other (see
@@ -470,7 +480,8 @@ final class NowPlayingActivity: IslandActivity {
 
     var expandedHeight: CGFloat {
         NowPlayingExpanded.height(
-            isVideo: model.isVideo, hasButtons: library.hasButtons, isPanelOpen: library.panel != nil
+            isVideo: model.isVideo, hasButtons: library.hasButtons, isPanelOpen: library.panel != nil,
+            hasControlsHint: !model.canControl
         )
     }
 

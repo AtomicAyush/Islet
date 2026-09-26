@@ -35,6 +35,9 @@ FUNCTION:
   expect   Exits with 0 if the given application is the one MediaRemote
            currently sends commands to, 10 if another one is, 11 if none is
            (local change, see VENDORED.md)
+  sessions Streams every now playing session, not only the one MediaRemote
+           sends commands to; exits with 13 if MediaRemote cannot list them
+           on this system (local change, see VENDORED.md)
 
 PARAMS:
   send(command)
@@ -67,6 +70,9 @@ OPTIONS:
   stream
     --no-diff: Disable diffing and always dump all metadata
     --debounce=N: Delay in milliseconds to prevent spam (0 by default)
+  sessions
+    --debounce=N: Delay in milliseconds to prevent spam (0 by default)
+    --micros, --no-artwork: As for "get" and "stream".
   get, stream
     --micros: Replaces the following time keys with microsecond equivalents:
       "duration" -> "durationMicros"
@@ -137,7 +143,8 @@ fail "Invalid function name: '$function_name'"
   || $function_name eq "repeat"
   || $function_name eq "speed"
   || $function_name eq "test"
-  || $function_name eq "expect";
+  || $function_name eq "expect"
+  || $function_name eq "sessions";
 
 sub parse_options {
   my ($start_index) = @_;
@@ -310,6 +317,25 @@ elsif ($function_name eq "expect") {
   fail "Missing bundle identifier for '$function_name' command"
     unless defined $bundle_id && $bundle_id ne "";
   set_env_param($symbol_name, 0, "bundle", "$bundle_id");
+  $symbol_name = env_func($symbol_name);
+}
+# Local change (Islet), see VENDORED.md.
+elsif ($function_name eq "sessions") {
+  my $options = parse_options(0);
+  foreach my $key (keys %{$options}) {
+    if ($key eq "debounce") {
+      set_env_option_value($options, $key);
+    }
+    elsif ($key eq "micros") {
+      set_env_option($options, $key);
+    }
+    elsif ($key eq "no-artwork") {
+      set_env_option($options, $key);
+    }
+    else {
+      fail "Unrecognized option '$key'";
+    }
+  }
   $symbol_name = env_func($symbol_name);
 }
 

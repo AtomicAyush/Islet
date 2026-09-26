@@ -33,9 +33,12 @@ enum NowPlayingDelivery: Equatable, Sendable {
 /// app is paused even as another plays on. A targeted send goes there too unless the
 /// sender holds MediaRemote's private entitlement, which the adapter's perl does not,
 /// or the target is Music, Podcasts or Books. The island can show another app — a
-/// player's own notifications, the session the person picked, the last one kept
-/// after it went quiet — so a control goes by the app on show, never simply to
-/// whatever MediaRemote elected.
+/// player's own notifications, another app's session from MediaRemote's list, the
+/// session the person picked, the last one kept after it went quiet — so a control
+/// goes by the app on show, never simply to whatever MediaRemote elected. Where no
+/// way reaches a listed session's app — any control for an app that is neither
+/// elected nor Spotify or Music, and shuffle, repeat or a player's own jumps for
+/// those two — the island sends nothing at all (see `NowPlayingReports.reaches`).
 enum NowPlayingRouting {
     /// Each control, what decided its way and how it went, under the subsystem
     /// `com.ayush.Islet`, category `NowPlaying`; bundle identifiers only, no titles.

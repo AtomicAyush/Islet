@@ -504,6 +504,7 @@ struct NowPlayingProgress: View {
         }
         .frame(height: 14)
         .allowsHitTesting(duration > 0)
+        .nowPlayingControl(enabled: model.canControl)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: dragFraction == nil)
     }
 }
@@ -580,7 +581,20 @@ struct NowPlayingPlayButton: View {
         RoundButton(symbol: model.isPlaying ? "pause.fill" : "play.fill", tint: .white, diameter: diameter) {
             model.togglePlayPause()
         }
+        .nowPlayingControl(enabled: model.canControl)
         .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
+    }
+}
+
+extension View {
+    /// A control that can act, or one shown dimmed that cannot: a jump with no
+    /// position to jump from, or any control while the app on show is out of the
+    /// controls' reach (see `NowPlayingModel.canControl`). It stays in its place, so
+    /// the player keeps its shape.
+    func nowPlayingControl(enabled: Bool) -> some View {
+        opacity(enabled ? 1 : 0.35)
+            .allowsHitTesting(enabled)
+            .disabled(!enabled)
     }
 }
 
@@ -599,6 +613,7 @@ struct NowPlayingTransport: View {
                 jump(forward: false)
             } else {
                 RoundButton(symbol: "backward.fill", tint: .white, diameter: small) { model.previous() }
+                    .nowPlayingControl(enabled: model.canControl)
                     .accessibilityLabel("Previous")
             }
             NowPlayingPlayButton(model: model, diameter: large)
@@ -606,18 +621,17 @@ struct NowPlayingTransport: View {
                 jump(forward: true)
             } else {
                 RoundButton(symbol: "forward.fill", tint: .white, diameter: small) { model.next() }
+                    .nowPlayingControl(enabled: model.canControl)
                     .accessibilityLabel("Next")
             }
         }
     }
 
     private func jump(forward: Bool) -> some View {
-        let enabled = model.canJump(forward: forward)
-        return RoundButton(symbol: forward ? "goforward.15" : "gobackward.15", tint: .white, diameter: small) {
+        RoundButton(symbol: forward ? "goforward.15" : "gobackward.15", tint: .white, diameter: small) {
             model.jump(forward: forward)
         }
-        .opacity(enabled ? 1 : 0.35)
-        .allowsHitTesting(enabled)
+        .nowPlayingControl(enabled: model.canControl && model.canJump(forward: forward))
         .accessibilityLabel(forward ? "Forward 15 seconds" : "Back 15 seconds")
     }
 }
@@ -635,6 +649,55 @@ private struct ModeToggle: View {
             .accessibilityLabel(label)
             .accessibilityValue(isOn ? "On" : "Off")
             .animation(.easeOut(duration: 0.2), value: isOn)
+    }
+}
+
+/// Under dimmed controls, how to get them back. MediaRemote delivers commands to the
+/// app it has elected, the one that most recently started playing, which macOS shows
+/// as Now Playing; the app on show is another, with no other way in (see
+/// `NowPlayingModel.canControl`). Starting it again in its own app elects it. One
+/// line, so the player grows by a fixed height.
+struct NowPlayingControlsHint: View {
+    let model: NowPlayingModel
+
+    /// The line and the space above it.
+    static let height: CGFloat = 20
+
+    /// What to do, in the app itself, for the island's controls to reach it.
+    static func text(for model: NowPlayingModel) -> String {
+        let app = NowPlayingModel.appName(for: model.track?.bundleID) ?? "its app"
+        return model.isPlaying
+            ? "Pause and play in \(app) to control it here"
+            : "Play it in \(app) to control it here"
+    }
+
+    var body: some View {
+        Text(Self.text(for: model))
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.white.opacity(0.45))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity)
+            .frame(height: 14)
+            .padding(.top, Self.height - 14)
+    }
+}
+
+extension View {
+    /// The hint's words on hover and to VoiceOver, where there is no room for its line
+    /// under dimmed controls (see `NowPlayingControlsHint`).
+    func nowPlayingControlsHelp(_ model: NowPlayingModel) -> some View {
+        overlay {
+            if !model.canControl {
+                // The dimmed controls take no pointer, so something must, for the
+                // tooltip to show.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .help(NowPlayingControlsHint.text(for: model))
+                    .accessibilityElement()
+                    .accessibilityLabel(NowPlayingControlsHint.text(for: model))
+            }
+        }
     }
 }
 
@@ -756,12 +819,13 @@ struct NowPlayingExpanded: View {
 
     /// The card's height for what it is showing. The island body can be about 250 pt
     /// at most (the island's window is 330 pt tall); the open panel takes it all.
-    static func height(isVideo: Bool, hasButtons: Bool, isPanelOpen: Bool) -> CGFloat {
+    static func height(isVideo: Bool, hasButtons: Bool, isPanelOpen: Bool, hasControlsHint: Bool = false) -> CGFloat {
         if isPanelOpen { return 244 }
         // 4 above the player; the artwork, then 10 + 14 of scrubber and 6 + 38 of
-        // controls; 8 + 24 for the library's buttons.
+        // controls; when those are dimmed, the line on how to get them back; 8 + 24
+        // for the library's buttons.
         let player: CGFloat = 4 + (isVideo ? 62 : 60) + 24 + 44
-        return player + (hasButtons ? 32 : 0)
+        return player + (hasControlsHint ? NowPlayingControlsHint.height : 0) + (hasButtons ? 32 : 0)
     }
 
     var body: some View {
@@ -774,6 +838,11 @@ struct NowPlayingExpanded: View {
                     .transition(.opacity)
             } else {
                 NowPlayingMusicPlayer(model: model)
+                    .transition(.opacity)
+            }
+
+            if library.panel == nil, !model.canControl {
+                NowPlayingControlsHint(model: model)
                     .transition(.opacity)
             }
 
@@ -925,6 +994,7 @@ struct NowPlayingHomeTile: View {
                 NowPlayingTransport(model: model, spacing: 3, small: 24, large: 28)
                 NowPlayingPlayButton(model: model, diameter: 28)
             }
+            .nowPlayingControlsHelp(model)
             .frame(maxWidth: .infinity)
         }
     }
