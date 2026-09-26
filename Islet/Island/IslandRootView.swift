@@ -490,6 +490,7 @@ private struct ExpandedHeader: View {
                 banner.trailing
             }
             .frame(height: layout.notch.height)
+            .environment(\.isInIslandHeader, true)
             .transition(.opacity)
         } else {
             HStack(spacing: 8) {

@@ -1,0 +1,208 @@
+import AppKit
+import SwiftUI
+
+/// Show in Islet: banners that shortcuts, scripts and tools put up — a build finishing,
+/// tests passing or failing, Claude Code done with a long task — through
+/// `islet://banner?title=…` (`BannerRequest`) or the Show in Islet action in Shortcuts
+/// (`ShowInIsletIntent`).
+///
+/// Anything on the Mac can open a URL, so what arrives is checked (`CustomBanner`),
+/// shows as text only, and is kept to a pace a person can read (`BannerThrottle`): what
+/// arrives faster than that is held, the newest in place of the rest, and shown when
+/// the pace allows. Turning the feature off in Settings turns every one of them away.
+@MainActor
+final class BannerFeature: Feature {
+    let id = "banner"
+    let title = "Show in Islet"
+    let symbol = "bell.badge.fill"
+    let summary = "Banners your shortcuts, scripts and tools put up, with islet://banner or the Show in Islet action."
+
+    /// What became of a banner that was asked for.
+    enum Outcome: Equatable {
+        /// It is up.
+        case shown
+        /// It came too soon after others. It shows when the throttle allows, unless
+        /// something newer arrives first and takes its place.
+        case held
+        /// It was passive, and a Focus asks for quiet.
+        case quieted
+        /// The feature is turned off.
+        case off
+    }
+
+    /// Every banner gets an id of its own under this prefix, so each one arrives as a
+    /// new banner rather than silently rewriting the last, and a dismissal can tell
+    /// the feature's banners from the rest of the island's.
+    static let bannerPrefix = "banner.custom."
+
+    private let presenter: any BannerPresenter
+    private let playSound: @MainActor (String) -> Void
+    /// Whether any island is open, when a card cannot be seen.
+    private let isIslandOpen: @MainActor () -> Bool
+    private var throttle: BannerThrottle
+    private var isRunning = false
+    private var serial = 0
+    /// The newest banner waiting for the throttle, and the wait.
+    private var held: CustomBanner?
+    private var release: Task<Void, Never>?
+
+    /// `presenter` is the island's `ActivityCenter` unless a test hands in its own, as it
+    /// may a throttle with a shorter window, a sound player that only takes notes, and
+    /// its own say on whether the island is open.
+    init(
+        presenter: (any BannerPresenter)? = nil,
+        throttle: BannerThrottle = BannerThrottle(),
+        playSound: @escaping @MainActor (String) -> Void = { NSSound(named: NSSound.Name($0))?.play() },
+        isIslandOpen: @escaping @MainActor () -> Bool = {
+            IslandManager.shared.controllers.values.contains { $0.model.isExpanded }
+        }
+    ) {
+        self.presenter = presenter ?? ActivityCenter.shared
+        self.throttle = throttle
+        self.playSound = playSound
+        self.isIslandOpen = isIslandOpen
+    }
+
+    func start() {
+        isRunning = true
+    }
+
+    func stop() {
+        isRunning = false
+        dismiss()
+    }
+
+    /// Samples of either style. They skip the throttle and make no sound, and show
+    /// whether or not the feature is on; `islet://preview` runs them for anyone who
+    /// asks, so they say they are samples rather than read like a real result.
+    var previews: [FeaturePreview] {
+        [
+            FeaturePreview(title: "Custom banner (compact)") { [weak self] in
+                self?.present(.sampleCompact)
+            },
+            FeaturePreview(title: "Custom banner (card)") { [weak self] in
+                self?.present(.sampleCard)
+            },
+        ]
+    }
+
+    /// `islet://banner?title=…` puts a banner up, and `islet://banner/dismiss` takes
+    /// down the one showing and anything held. Both are understood, and do nothing,
+    /// while the feature is off.
+    func handle(_ url: URL) -> Bool {
+        guard let request = BannerRequest(url: url) else { return false }
+        switch request {
+        case .show(let banner):
+            show(banner)
+        case .dismiss:
+            if isRunning { dismiss() }
+        }
+        return true
+    }
+
+    // MARK: Showing
+
+    /// Puts `banner` up now, or once the throttle allows.
+    @discardableResult
+    func show(_ banner: CustomBanner) -> Outcome {
+        guard isRunning else { return .off }
+        if isQuieted(banner) { return .quieted }
+        // Something already waiting goes out first, so this takes its place rather
+        // than jumping ahead of it and being replaced by an older banner a moment later.
+        if held != nil || throttle.admit(at: .now) != nil {
+            hold(banner)
+            return .held
+        }
+        present(banner)
+        return .shown
+    }
+
+    /// Takes the feature's banner down, if one is showing, and forgets anything held.
+    /// Other features' banners are left where they are.
+    func dismiss() {
+        held = nil
+        release?.cancel()
+        release = nil
+        if let id = presenter.bannerID, id.hasPrefix(Self.bannerPrefix) {
+            presenter.dismissBanner(id: id)
+        }
+    }
+
+    private func isQuieted(_ banner: CustomBanner) -> Bool {
+        banner.interruption == .passive && presenter.silencesPassiveBanners
+    }
+
+    private func present(_ banner: CustomBanner) {
+        var banner = banner
+        // The opened island shows a compact banner in its header, but a card nowhere:
+        // it would wait out its time under the page. There the card goes up as its
+        // compact self, which the header shows, title and all.
+        if banner.style == .card, isIslandOpen() { banner.style = .compact }
+        serial += 1
+        presenter.present(banner.islandBanner(id: "\(Self.bannerPrefix)\(serial)"))
+        if let sound = banner.sound { playSound(sound) }
+    }
+
+    /// Keeps `banner` in place of whatever was waiting, and waits for the throttle.
+    private func hold(_ banner: CustomBanner) {
+        held = banner
+        guard release == nil else { return }
+        scheduleRelease()
+    }
+
+    private func scheduleRelease() {
+        var probe = throttle
+        let due = probe.admit(at: .now) ?? .now
+        release = Task { [weak self] in
+            try? await Task.sleep(until: due, clock: .continuous)
+            guard !Task.isCancelled else { return }
+            self?.releaseHeld()
+        }
+    }
+
+    private func releaseHeld() {
+        release = nil
+        guard let banner = held, isRunning else {
+            held = nil
+            return
+        }
+        // Woken a hair early, it waits the rest.
+        guard throttle.admit(at: .now) == nil else {
+            scheduleRelease()
+            return
+        }
+        held = nil
+        // A Focus may have come on while it waited.
+        if !isQuieted(banner) { present(banner) }
+    }
+}
+
+/// Where the feature's banners go: the island, or a stand-in that takes notes in tests.
+@MainActor
+protocol BannerPresenter: AnyObject {
+    /// The banner on screen, if any.
+    var bannerID: String? { get }
+    /// Whether a Focus asks for quiet, so passive banners are dropped.
+    var silencesPassiveBanners: Bool { get }
+    func present(_ banner: IslandBanner)
+    func dismissBanner(id: String?)
+}
+
+extension ActivityCenter: BannerPresenter {
+    var bannerID: String? { banner?.id }
+}
+
+/// Samples for previews, shaped like what a test run and a Claude Code hook send, and
+/// saying they are samples.
+extension CustomBanner {
+    static let sampleCompact = CustomBanner(
+        title: "Sample banner", subtitle: "From a script", symbol: "checkmark.circle.fill", tint: .named(.green),
+        duration: defaultDuration(for: .compact), style: .compact, sound: nil, interruption: .active
+    )
+    static let sampleCard = CustomBanner(
+        title: "Sample card",
+        subtitle: "What a script puts up with style=card: a title, and up to three lines of subtitle under it.",
+        symbol: "sparkles", tint: .named(.orange),
+        duration: defaultDuration(for: .card), style: .card, sound: nil, interruption: .active
+    )
+}

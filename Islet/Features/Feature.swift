@@ -61,6 +61,7 @@ final class FeatureRegistry {
         PrivacyFeature(),
         FocusFeature(),
         ShortcutsFeature(),
+        BannerFeature(),
         DropZoneFeature(),
     ]
 

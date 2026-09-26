@@ -8,6 +8,7 @@ import AppKit
 ///     islet://settings?tab=activities
 ///     islet://preview?feature=battery&index=0
 ///     islet://<feature>/…          handed to that feature, e.g. islet://timer/start?minutes=5
+///     islet://banner?title=Done    a banner of your own (see `BannerRequest` for the rest)
 @MainActor
 enum URLRouter {
     /// URLs that arrived before launch finished (the one that launched Islet, say),

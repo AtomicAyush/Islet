@@ -97,6 +97,12 @@ island shows only the runs Islet starts, and shortcuts by name on a plain tile. 
 shows its own indicator in the menu bar while a shortcut runs, whoever started it (Islet
 included), and has no setting to hide it; it goes a few seconds after the shortcut ends.
 
+**Show in Islet.** Banners of your own, from anything that can open a URL or run a shortcut:
+a build finishing, tests passing or failing, Claude Code done with a long task. A symbol and a
+title beside the notch, with a subtitle on the right, or a card with a few lines under the
+title, in the colour you choose. They are text only, with nothing to click, and kept to a pace
+you can read; see [Banners from scripts](#banners-from-scripts).
+
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
 bubble beside the island. macOS has no per-app volume, so Islet makes one with Core Audio
@@ -184,10 +190,73 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
 | `islet://shortcuts/run?name=Morning%20Lights` | Runs a shortcut (`id=` takes the identifier `shortcuts list --show-identifiers` prints) |
+| `islet://banner?title=Build%20finished` | Puts up a banner of your own (below) |
+| `islet://banner/dismiss` | Takes it down |
 | `islet://settings?tab=activities` | Opens Settings on a tab |
 
 ```bash
 open "islet://timer/start?minutes=25"
+```
+
+### Banners from scripts
+
+`islet://banner` puts up a banner. Only `title` is needed:
+
+| Parameter | |
+|---|---|
+| `title` | Beside the notch, or the card's first line |
+| `subtitle` | Right of the notch, in the banner's colour or grey without one; or up to three lines under a card's title |
+| `symbol` | An SF Symbol, such as `checkmark.circle.fill`; a bell if macOS has none by that name, or for Apple's logo |
+| `tint` | `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `brown`, `gray` or `white`, or hex as `ff9500` or `%23ff9500` (`colour` and `color` work too) |
+| `duration` | Seconds, from 1 to 30: 4 beside the notch and 6 for a card if left out |
+| `style` | `compact`, beside the notch, or `card` |
+| `sound` | One of the Mac's alert sounds (`Glass`, `Ping`, `Basso` and the rest of /System/Library/Sounds); silent without |
+| `interruption` | `passive` lets a Focus that asks for quiet hold it back, as it does a song change |
+
+Spaces go in as `%20` (a `+` stays a plus), and a `#` as `%23`, since a bare one ends the
+query. Titles are cut at 60 characters and subtitles at 120, and a colour too dark to see on
+the island's black is lightened until it shows. Nothing in a banner can be clicked, whatever
+the URL says. Banners that come faster than one a second, or more than five in ten seconds,
+wait their turn, and only the newest of those waiting is shown, so a script stuck in a loop
+cannot keep the island flickering. With the island open, a banner shows in its header, and a
+card comes as a compact one instead. Settings → Activities → Show in Islet turns them all off.
+
+`open -g` hands the URL over without bringing anything to the front:
+
+```bash
+open -g "islet://banner?title=Build%20finished&subtitle=12%20s&symbol=hammer.fill&tint=orange"
+```
+
+In Shortcuts, the **Show in Islet** action puts up the same banner, with title, subtitle,
+symbol, colour, style and duration as fields. It runs in the background, starting Islet if it
+is not running, and fails with a reason if Show in Islet is turned off.
+
+A Stop hook in `~/.claude/settings.json` flashes the island whenever Claude Code finishes. That
+is after every reply, short ones too, so you may rather put it in the `.claude/settings.json`
+of the projects where it works on long tasks:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "open -g 'islet://banner?title=Claude%20finished&symbol=checkmark.circle.fill&tint=green'"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+And a test run can say how it went:
+
+```bash
+swift test && open -g "islet://banner?title=Tests%20passed&symbol=checkmark.circle.fill&tint=green" \
+           || open -g "islet://banner?title=Tests%20failed&symbol=xmark.octagon.fill&tint=red&sound=Basso"
 ```
 
 ## Layout of the code
