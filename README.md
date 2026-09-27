@@ -280,7 +280,9 @@ bar, the agents at work in it now, any it has given up on or is trying again, an
 each agent sent off in the background with what it is doing ("Editing Store.swift") and how
 many steps it has taken, marked quiet once it has written nothing for ten minutes; and each
 command left running. A workflow that has ended shows how it ended until Claude Code next says
-so. Click a session to bring forward the app it runs in — Terminal, iTerm, VS Code or the
+so. Past what the island can hold, the list scrolls, the line at its foot fading to show there
+is more; a session that starts waiting for you brings it back to the top, where that session
+is listed. Click a session to bring forward the app it runs in — Terminal, iTerm, VS Code or the
 Claude app. It never takes the island from music or a timer, and sits in the bubble beside them
 instead, behind the Sound Mixer unless a session is waiting for you. Claude Code tells Islet
 all this through hooks, with the script in `Scripts/` (see

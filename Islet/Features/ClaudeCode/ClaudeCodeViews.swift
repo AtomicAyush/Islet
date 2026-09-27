@@ -40,11 +40,19 @@ enum ClaudeCodeLayout {
     static let taskDetailHeight: CGFloat = 15
     /// The width of a workflow's progress bar.
     static let barWidth: CGFloat = 76
-    /// Past this the rows scroll; or where a task under a session has a second line, past
-    /// the taller height, so a session with a handful of workflows fits whole.
-    static let maxListHeight: CGFloat = 200
-    static let maxListHeightWithDetail: CGFloat = 280
+    /// The tallest the page grows before its rows scroll: as tall as Up Next, the tallest
+    /// page. The island is kept inside its window, which leaves no more room than this
+    /// for a page under a notch 40 points deep; past it, the island's edge would cut the
+    /// page's foot off.
+    static let maxPageHeight: CGFloat = 244
     static let scrollFade: CGFloat = 18
+    /// How far the page's foot cuts into the last line it shows, once the rows scroll:
+    /// the fade then always lies across the top of a line of words, so there is plainly
+    /// more below, never over the gap between two lines or two sessions.
+    static let scrollPeek: CGFloat = 12
+    /// The fade at the head of the rows once they are scrolled down, so a line going up
+    /// under the page's header fades rather than showing a sliver of its words.
+    static let topFade: CGFloat = 10
 
     /// Between the spinner and the island's outer end, in a row `rowHeight` tall: the
     /// sparkle on the left is centred in the default wing, so the spinner is centred in
@@ -83,13 +91,50 @@ enum ClaudeCodeLayout {
         return rows + CGFloat(sessions.count - 1) * sessionSpacing
     }
 
-    /// The most the rows take before they scroll.
-    static func listLimit(_ sessions: [ClaudeSession]) -> CGFloat {
-        sessions.contains { detailCount($0) > 0 } ? maxListHeightWithDetail : maxListHeight
+    /// The most the rows take before they scroll. The little room below rows that fit
+    /// gives way before they do; rows that scroll end in their fade instead.
+    static var listLimit: CGFloat { maxPageHeight - topInset }
+
+    /// Where each line of the rows begins, from the top of the list, in the order the
+    /// rows show them: each session's title and what was asked, then its tasks' lines.
+    static func lineTops(_ sessions: [ClaudeSession], showsText: Bool) -> [CGFloat] {
+        var tops: [CGFloat] = []
+        var rowTop: CGFloat = 0
+        for session in sessions {
+            var y = rowTop + rowPadding
+            func line(_ height: CGFloat) {
+                tops.append(y)
+                y += height
+            }
+            line(titleHeight)
+            if ClaudeCodeText.detail(session, showsText: showsText) != nil { line(textHeight) }
+            if tasksHeight(session) > 0 { y += workflowsTop }
+            for workflow in session.runningWorkflows {
+                line(workflowHeight)
+                if session.progress(of: workflow).map({ !$0.isEnded }) ?? false { line(taskDetailHeight) }
+            }
+            for agent in session.runningAgents {
+                line(workflowHeight)
+                if session.progress(of: agent) != nil { line(taskDetailHeight) }
+            }
+            for _ in session.runningOthers { line(workflowHeight) }
+            rowTop += rowHeight(session, showsText: showsText) + sessionSpacing
+        }
+        return tops
+    }
+
+    /// How much of the rows the page shows: all of them where they fit; otherwise as
+    /// much as fits that ends `scrollPeek` into a line, so the fade lies across its words.
+    static func visibleHeight(_ sessions: [ClaudeSession], showsText: Bool) -> CGFloat {
+        let list = listHeight(sessions, showsText: showsText)
+        guard list > listLimit else { return list }
+        return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= listLimit } ?? listLimit
     }
 
     static func pageHeight(for sessions: [ClaudeSession], showsText: Bool) -> CGFloat {
-        topInset + min(listHeight(sessions, showsText: showsText), listLimit(sessions)) + bottomInset
+        let list = listHeight(sessions, showsText: showsText)
+        guard list > listLimit else { return min(topInset + list + bottomInset, maxPageHeight) }
+        return topInset + visibleHeight(sessions, showsText: showsText)
     }
 }
 
@@ -523,44 +568,87 @@ struct ClaudeCodeExpanded: View {
     let model: ClaudeCodeModel
     let open: (ClaudeSession) -> Void
     @AppStorage(ClaudeCodePrefs.showPrompt) private var showsText = true
+    /// How deep the fade at the head of the rows is: as far as they are scrolled down,
+    /// up to `ClaudeCodeLayout.topFade`.
+    @State private var headFade: CGFloat = 0
+
+    private static let listSpace = "claudeCodeList"
 
     var body: some View {
         let sessions = model.shown
-        let list = ClaudeCodeLayout.listHeight(sessions, showsText: showsText)
+        let height = ClaudeCodeLayout.visibleHeight(sessions, showsText: showsText)
+        // The rows' heights are worked out line by line, each line a fixed height, so
+        // the sum says whether they overflow. Were it ever short, the rows would still
+        // scroll, being in a scroll view at their own heights; only the fade would be
+        // missing.
+        let scrolls = ClaudeCodeLayout.listHeight(sessions, showsText: showsText) > height + 0.5
+        let waiting = Set(sessions.filter(\.state.needsYou).map(\.id))
 
-        Group {
-            // A scroll view only once the rows need one. Its foot fades, so the row cut
-            // off there reads as more to come; the last row can scroll clear of it.
-            if list > ClaudeCodeLayout.listLimit(sessions) {
-                ScrollView(.vertical, showsIndicators: false) {
-                    rows(sessions)
-                        .padding(.bottom, ClaudeCodeLayout.scrollFade)
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                .mask {
-                    VStack(spacing: 0) {
-                        Color.black
-                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                            .frame(height: ClaudeCodeLayout.scrollFade)
-                    }
-                }
-            } else {
+        // Always in a scroll view, so the list keeps its place as the rows refresh. Its
+        // foot fades while the rows overflow, so the line cut off there reads as more to
+        // come; the last row can scroll clear of it.
+        ScrollViewReader { reader in
+            ScrollView(.vertical) {
                 rows(sessions)
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        min(max(-proxy.frame(in: .named(Self.listSpace)).minY, 0), ClaudeCodeLayout.topFade)
+                    } action: { headFade = $0 }
+                    .padding(.bottom, scrolls ? ClaudeCodeLayout.scrollFade : 0)
+            }
+            .coordinateSpace(.named(Self.listSpace))
+            // No scroller: the fade says there is more, as on the clipboard's page.
+            .scrollIndicators(.never)
+            .scrollBounceBehavior(.basedOnSize)
+            .modifier(ClaudeCodeListFade(head: scrolls ? headFade : 0, foot: scrolls ? ClaudeCodeLayout.scrollFade : 0))
+            // Those waiting on you are listed first: one starting to wait while the list
+            // is scrolled down would be out of sight, so the list goes back to the top.
+            // At once: after a gliding scroll there, the next scroll snapped back to it.
+            .onChange(of: waiting) { before, now in
+                guard !now.subtracting(before).isEmpty, let first = sessions.first else { return }
+                withAnimation(nil) { reader.scrollTo(first.id, anchor: .top) }
             }
         }
-        .frame(height: min(list, ClaudeCodeLayout.listLimit(sessions)), alignment: .top)
+        .frame(height: height, alignment: .top)
         .padding(.top, ClaudeCodeLayout.topInset)
         .frame(maxHeight: .infinity, alignment: .top)
         .animation(.islandMorph, value: sessions.map(\.id))
     }
 
+    /// The rows at their own heights, which `ClaudeCodeLayout.rowHeight` works out.
     private func rows(_ sessions: [ClaudeSession]) -> some View {
         VStack(spacing: ClaudeCodeLayout.sessionSpacing) {
             ForEach(sessions) { session in
                 ClaudeSessionRow(session: session, showsText: showsText) { open(session) }
-                    .frame(height: ClaudeCodeLayout.rowHeight(session, showsText: showsText))
                     .transition(.opacity)
             }
+        }
+    }
+}
+
+/// The rows' fades, at their head and foot. Rows that fit have neither, and no mask at
+/// all, so their spinners are not composited through one as they turn. Going from one
+/// to the other makes a new list, at its top as the old one was or would have come to
+/// be; it takes the old one's place at once rather than fading in over it.
+private struct ClaudeCodeListFade: ViewModifier {
+    let head: CGFloat
+    let foot: CGFloat
+
+    func body(content: Content) -> some View {
+        if head == 0 && foot == 0 {
+            content
+                .transition(.identity)
+        } else {
+            content
+                .mask {
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                            .frame(height: head)
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: foot)
+                    }
+                }
+                .transition(.identity)
         }
     }
 }
@@ -617,7 +705,7 @@ private struct ClaudeSessionRow: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, ClaudeCodeLayout.rowPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
             .background(shape.fill(.white.opacity(isHovering && host != nil ? 0.08 : 0)))
             .contentShape(shape)
         }
