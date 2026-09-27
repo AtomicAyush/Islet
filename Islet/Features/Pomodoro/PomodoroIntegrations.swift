@@ -53,10 +53,14 @@ final class FocusShortcutRunner: PomodoroShortcutRunner {
 /// run of its own, what that run did counts over the Focus database, which lags, until
 /// the database says the same.
 ///
-/// That Pomodoro turned a Focus on is kept in the defaults, with which Focus it was,
-/// until it is turned off again. Islet waits a few seconds on quitting for that; if it
-/// could not wait long enough, the next launch turns the same Focus off, if it is still
-/// the one on.
+/// Which Focus Pomodoro turned on is kept in the defaults once the Focus database shows
+/// it, until it is turned off again, so the next launch can tell it from someone's own.
+/// A Focus left on as Islet quits, for a focus running on past the quit, is kept for it
+/// if the next launch picks it back up still running, and otherwise turned off then, if
+/// it is still the one on. One that had yet to show as Islet quit, or crashed, was never
+/// noted, and so is left as it is: the Focus on at the next launch may as well be
+/// someone's own. Islet waits a few seconds on quitting for a run under way to finish,
+/// and for a Focus just turned on to show.
 @MainActor
 final class PomodoroFocusSwitch {
     /// How long a run's word counts over a Focus database that says otherwise: time
@@ -69,6 +73,12 @@ final class PomodoroFocusSwitch {
     private(set) var turnedOn = false
     /// Whether a run is under way.
     var isBusy: Bool { running != nil }
+    /// Whether a run turned a Focus on a moment ago that the database has yet to show,
+    /// so which one it was is not yet noted for the next launch.
+    var awaitsFocus: Bool {
+        guard turnedOn, ownFocus == nil, let ran, ran.on else { return false }
+        return Date().timeIntervalSince(ran.at) < Self.confirmWithin
+    }
 
     private let runner: any PomodoroShortcutRunner
     /// The Focus as the database has it; `nil` when that cannot be told.
@@ -83,6 +93,9 @@ final class PomodoroFocusSwitch {
     /// finding nothing to do: until it changes again, nothing more is run.
     private var handled = false
     private var running: Task<Void, Never>?
+    /// Whether `decide` is under way, which a change to the defaults it makes can ask for
+    /// again.
+    private var deciding = false
     /// What the last run did, and when, until the database says the same.
     private var ran: (on: Bool, at: Date)?
     /// Which Focus Pomodoro turned on, once the database showed it, by identifier.
@@ -96,8 +109,9 @@ final class PomodoroFocusSwitch {
         self.runner = runner
         self.reading = reading
         self.defaults = defaults
-        // Left on by a quit that could not wait: owed still.
-        if let own = defaults.string(forKey: PomodoroPrefs.focusTurnedOn) {
+        // Left on as Islet quit: owed still, or kept for a focus picked back up. Only one
+        // named: a Focus that cannot be told from someone's own is not Pomodoro's to touch.
+        if let own = defaults.string(forKey: PomodoroPrefs.focusTurnedOn), !own.isEmpty {
             ownFocus = own
             turnedOn = true
         }
@@ -105,8 +119,10 @@ final class PomodoroFocusSwitch {
 
     /// Turns Focus on (`true`) or back off, running the shortcut called `name` if that
     /// changes anything. A `name` of `nil` (none chosen) turns nothing on, and gives up
-    /// turning off what Pomodoro turned on.
-    func want(_ on: Bool, shortcut name: String?) {
+    /// turning off what Pomodoro turned on. Without `turningOn`, for a focus picked back
+    /// up at launch, a Focus Pomodoro turned on before Islet quit is kept, but none is
+    /// turned on afresh: nobody asked for this focus just now.
+    func want(_ on: Bool, shortcut name: String?, turningOn: Bool = true) {
         shortcut = name
         if !asked {
             asked = true
@@ -116,7 +132,7 @@ final class PomodoroFocusSwitch {
         }
         if on != wanted {
             wanted = on
-            handled = false
+            handled = on && !turningOn
         }
         decide()
     }
@@ -129,8 +145,11 @@ final class PomodoroFocusSwitch {
     // MARK: Private
 
     private func decide() {
-        // As the run under way ends, this is called again.
-        guard asked, running == nil, !handled else { return }
+        // As the run under way ends, this is called again. Not from within itself: noting
+        // the Focus it sees changes the defaults, and the feature asks again as they do.
+        guard asked, running == nil, !handled, !deciding else { return }
+        deciding = true
+        defer { deciding = false }
         let focus = look()
         if wanted {
             if turnedOn { handled = true; return }

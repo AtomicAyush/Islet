@@ -12,12 +12,17 @@ import SwiftUI
 /// Focus's settings, and turns it off again for the break; and keeps the Mac awake with
 /// a power assertion of its own, given back as the focus ends or pauses.
 ///
-/// A session lasts only as long as Islet runs, as the timer's countdown does. Stopping
-/// it, turning the feature off or quitting Islet ends it, and nothing is picked back up
-/// at the next launch: a focus resumed after a relaunch would be timing someone who may
-/// long since have left, and would turn Focus on again with nobody there. Today's count
-/// is kept, and survives a relaunch until midnight; and so does a Focus it turned on and
-/// could not turn off as Islet quit, which the next launch turns off.
+/// A session outlasts Islet: it is saved as it changes, and picked back up at the next
+/// launch, with the time Islet was not running caught up as after sleep, so a focus
+/// that should have started meanwhile waits for a click rather than timing someone who
+/// may long since have left. A change that came due while Islet was closed is told
+/// only if it did so in the minute before the launch. A Focus turned on for a focus
+/// still running as Islet quits is left on, and kept for it if the next launch picks it
+/// back up still running; otherwise it is turned off then, and none is turned on afresh
+/// at launch. For a focus paused, Islet turns its Focus off as it quits, and running it
+/// again turns Focus back on. The assertion is taken again for a focus still running.
+/// Stopping the session or turning the feature off ends it for good. Today's count is
+/// kept too, and survives a relaunch until midnight.
 @MainActor
 final class PomodoroFeature: Feature {
     let id = "pomodoro"
@@ -39,8 +44,9 @@ final class PomodoroFeature: Feature {
     static let bannerID = "pomodoro.change"
     /// Between the timer's tile and Keep Awake's, until the person moves it.
     static let tileOrder = 32
-    /// How long quitting waits for a Focus this turned on to be turned off again: time
-    /// for a Set Focus shortcut, and within the five seconds a SIGTERM allows a quit.
+    /// How long quitting waits for the Focus shortcut, and for a Focus it turned on to
+    /// show: time for a Set Focus shortcut, and within the five seconds a SIGTERM allows
+    /// a quit.
     static let quitGrace: TimeInterval = 3
     static let bannerDuration: TimeInterval = 5
     private static let previewLength: TimeInterval = 8
@@ -53,6 +59,12 @@ final class PomodoroFeature: Feature {
     private let defaults: UserDefaults
     private let sounds: any PomodoroSoundPlayer
     private var isRunning = false
+    /// Whether Focus and the assertion follow the session: from when the feature starts,
+    /// once the session saved has been picked back up, until it stops.
+    private var integrates = false
+    /// A focus picked back up paused, or paused as Islet quits, has no Focus until it
+    /// runs again: nobody is there to want the quiet.
+    private var focusWaitsToRun = false
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var previewEnd: Task<Void, Never>?
 
@@ -85,6 +97,8 @@ final class PomodoroFeature: Feature {
     func start() {
         isRunning = true
         model.apply(.read(from: defaults))
+        model.restore()
+        integrates = true
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification) { $0.model.settle() }
         observe(.default, .NSSystemClockDidChange) { $0.model.settle() }
         observe(.default, .NSSystemTimeZoneDidChange) { $0.model.settle() }
@@ -97,7 +111,7 @@ final class PomodoroFeature: Feature {
                 self?.startSession()
             })
         ))
-        sync()
+        sync(pickingUp: true)
     }
 
     func stop() {
@@ -106,10 +120,21 @@ final class PomodoroFeature: Feature {
         observers.removeAll()
         previewEnd?.cancel()
         previewEnd = nil
-        // Ends the session without a word; `sync` gives back the assertion, and turns
-        // off a Focus this turned on.
-        model.stop()
-        sync()
+        if PomodoroPrefs.bool(Prefs.Key.featureEnabled(id), default: enabledByDefault, in: defaults) {
+            // Still on in Settings: Islet is quitting. The session is kept for the next
+            // launch, and so is a Focus turned on for it; the assertion goes with Islet
+            // anyway, and is given back now.
+            integrates = false
+            focusWaitsToRun = false
+            awakeHold.want(false)
+            model.close()
+        } else {
+            // Turned off: the session ends without a word, and is forgotten; `sync` gives
+            // back the assertion, and turns off a Focus this turned on.
+            model.stop()
+            sync()
+            integrates = false
+        }
         let center = ActivityCenter.shared
         center.end(id: activity.id)
         center.removeHomeWidget(id: id)
@@ -122,18 +147,31 @@ final class PomodoroFeature: Feature {
         AnyView(PomodoroSettingsView())
     }
 
-    /// Whether quitting should wait: a Focus this turned on is to be turned off again,
-    /// or a run of the shortcut is under way.
-    var needsTimeToQuit: Bool { focusSwitch.turnedOn || focusSwitch.isBusy }
+    /// Whether quitting should wait: a run of the Focus shortcut is under way; a Focus
+    /// just turned on has yet to show, to be noted for the next launch; or a focus is
+    /// paused with a Focus Pomodoro turned on, which goes off as Islet quits.
+    var needsTimeToQuit: Bool {
+        focusSwitch.isBusy || focusSwitch.awaitsFocus || (focusSwitch.turnedOn && isPausedFocus)
+    }
 
-    /// Ends the session, and waits, `limit` at most, for a Focus it turned on to be
-    /// turned off again, before the shortcuts still running are ended with Islet. What
-    /// is still owed after that is turned off at the next launch.
-    func endBeforeQuitting(within limit: TimeInterval) async {
-        model.stop()
-        sync()
+    private var isPausedFocus: Bool {
+        guard let session = model.session else { return false }
+        return session.phase == .focus && session.isPaused
+    }
+
+    /// Readies Focus for the quit, and waits, `limit` at most, for it, before the
+    /// shortcuts still running are ended with Islet. The session carries on past the
+    /// quit, to be picked back up at the next launch. A Focus turned on for a focus
+    /// running stays on, once the database has shown which it was; one for a focus paused
+    /// is turned off, since nobody may be back for hours, and comes on again as the focus
+    /// runs. What a run cut short leaves owed is put right at the next launch.
+    func settleBeforeQuitting(within limit: TimeInterval) async {
+        if isPausedFocus {
+            focusWaitsToRun = true
+            sync()
+        }
         let deadline = Date().addingTimeInterval(limit)
-        while focusSwitch.isBusy, Date() < deadline {
+        while focusSwitch.isBusy || focusSwitch.awaitsFocus, Date() < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
@@ -172,10 +210,12 @@ final class PomodoroFeature: Feature {
     /// `islet://pomodoro/start` starts a session with a focus of the length in Settings,
     /// or `minutes=` (up to two hours) for this first one; or carries on with one paused
     /// or waiting. `/pause`, `/resume`, `/skip` and `/stop` do as the buttons do, and
-    /// `/toggle` pauses one running and otherwise starts or resumes. A length that
-    /// cannot be read, or a query with anything else in it, is not understood and
-    /// changes nothing. They are understood, and bar `/stop` do nothing, while the
-    /// feature is off.
+    /// `/toggle` pauses one running and otherwise starts or resumes. `/forward` moves
+    /// the phase on a minute, or `minutes=`, as dragging its bar does, finishing it at
+    /// its end, and `/back` gives it as much more time, up to its whole length; neither
+    /// moves a phase waiting for a click. A length that cannot be read, or a query with
+    /// anything else in it, is not understood and changes nothing. They are understood,
+    /// and bar `/stop` do nothing, while the feature is off.
     func handle(_ url: URL) -> Bool {
         let query = (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? [])
             .filter { !($0.name.isEmpty && $0.value == nil) }
@@ -183,6 +223,12 @@ final class PomodoroFeature: Feature {
         if path == "/start" {
             guard let minutes = Self.minutes(in: query) else { return false }
             return startSession(focusMinutes: minutes) != .refused
+        }
+        if path == "/forward" || path == "/back" {
+            guard let minutes = Self.minutes(in: query) else { return false }
+            let seconds = TimeInterval((minutes ?? 1) * 60)
+            if isRunning { model.move(by: path == "/forward" ? seconds : -seconds) }
+            return true
         }
         guard query.isEmpty else { return false }
         switch path {
@@ -196,9 +242,10 @@ final class PomodoroFeature: Feature {
         return true
     }
 
-    /// The focus length a `/start` URL asks for: `.some(nil)` for none, the one in
-    /// Settings, and `nil` for one that is not a whole number of minutes within what
-    /// Settings offers, or for anything in the query besides `minutes`.
+    /// The minutes a `/start`, `/forward` or `/back` URL asks for: `.some(nil)` for none,
+    /// the focus in Settings or a single minute, and `nil` for a number that is not a
+    /// whole number of minutes within what Settings offers for a focus, or for anything
+    /// in the query besides `minutes`.
     static func minutes(in query: [URLQueryItem]) -> Int?? {
         guard !query.isEmpty else { return .some(nil) }
         guard query.count == 1, query[0].name == "minutes",
@@ -240,8 +287,10 @@ final class PomodoroFeature: Feature {
     }
 
     /// Shows the activity while a session (or a sample) is under way, and puts Focus and
-    /// the assertion in line with the session and Settings.
-    private func sync() {
+    /// the assertion in line with the session and Settings. `pickingUp`, as the feature
+    /// starts, keeps a Focus turned on for a focus picked back up running, but turns none
+    /// on; for anything else, a focus paused included, one left on is turned off.
+    private func sync(pickingUp: Bool = false) {
         let center = ActivityCenter.shared
         if model.shown != nil {
             if !center.isShowing(id: activity.id) { center.show(activity) }
@@ -249,19 +298,28 @@ final class PomodoroFeature: Feature {
             center.end(id: activity.id)
         }
 
+        guard integrates else { return }
         let session = isRunning ? model.session : nil
         let focusing = session?.phase == .focus
+        let running = session?.isRunning == true
+        let paused = focusing && session?.isPaused == true
+        if pickingUp {
+            focusWaitsToRun = paused
+        } else if !paused {
+            focusWaitsToRun = false
+        }
         // Kept awake only while the clock runs: a focus paused and left for the night
         // lets the Mac sleep.
-        awakeHold.want(focusing && session?.isRunning == true
+        awakeHold.want(focusing && running
             && PomodoroPrefs.bool(PomodoroPrefs.keepAwake, default: false, in: defaults))
         // Focus stays on through a pause, a moment's interruption of the same session,
-        // and goes off with the break.
+        // and goes off with the break; but not through a pause Islet quit in.
         let shortcut = defaults.string(forKey: FocusPrefs.shortcut).flatMap { $0.isEmpty ? nil : $0 }
         focusSwitch.want(
-            focusing && session?.isWaiting == false
+            focusing && (running || (paused && !focusWaitsToRun))
                 && PomodoroPrefs.bool(PomodoroPrefs.turnOnFocus, default: false, in: defaults),
-            shortcut: shortcut
+            shortcut: shortcut,
+            turningOn: !pickingUp
         )
     }
 
@@ -326,7 +384,8 @@ final class PomodoroActivity: IslandActivity {
 
     /// Room for "24:59", as the timer has.
     var compactTrailingWidth: CGFloat? { 58 }
-    var expandedHeight: CGFloat { 76 }
+    /// The timer's height, and room for the bar under the time left.
+    var expandedHeight: CGFloat { PomodoroExpanded.height }
 
     func compactLeading() -> AnyView { AnyView(PomodoroCompactLeading(model: model)) }
     func compactTrailing() -> AnyView { AnyView(PomodoroCompactTrailing(model: model)) }
@@ -351,6 +410,8 @@ enum PomodoroPrefs {
     static let countedDay = "pomodoro.countedDay"
     /// The Focus Pomodoro turned on and has yet to turn off, by identifier.
     static let focusTurnedOn = "pomodoro.focusTurnedOn"
+    /// The session under way, for the next launch to pick back up.
+    static let session = "pomodoro.session"
 
     static func bool(_ key: String, default value: Bool, in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: key) as? Bool ?? value

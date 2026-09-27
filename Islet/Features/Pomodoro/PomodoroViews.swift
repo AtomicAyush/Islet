@@ -68,6 +68,17 @@ enum PomodoroWords {
         session.phase.isBreak ? "\(minutes(session.length)) minute break" : "Back to it"
     }
 
+    /// "18 minutes 25 seconds left of 25 minutes", for VoiceOver, rounded up as the
+    /// time is.
+    static func left(_ remaining: TimeInterval, of length: TimeInterval) -> String {
+        let total = Int(min(max(0, remaining.isFinite ? remaining : 0), 24 * 3600).rounded(.up))
+        let m = total / 60, s = total % 60
+        var words: [String] = []
+        if m > 0 { words.append(m == 1 ? "1 minute" : "\(m) minutes") }
+        if s > 0 || m == 0 { words.append(s == 1 ? "1 second" : "\(s) seconds") }
+        return words.joined(separator: " ") + " left of \(minutes(length)) minutes"
+    }
+
     /// "3 today", or "None yet today".
     static func today(_ count: Int) -> String {
         count == 0 ? "None yet today" : "\(count) today"
@@ -80,10 +91,15 @@ struct PomodoroTimeText: View {
     let session: PomodoroModel.Session
     var size: CGFloat
     var weight: Font.Weight = .semibold
+    /// The time left at the scrubber's knob while it is dragged, shown in place of the
+    /// countdown, and undimmed: it is what letting go will set.
+    var held: TimeInterval?
 
     var body: some View {
         Group {
-            if case .running(let end) = session.clock, end > Date() {
+            if let held {
+                Text(PomodoroWords.clock(held))
+            } else if case .running(let end) = session.clock, end > Date() {
                 Text(timerInterval: Date()...end, countsDown: true, showsHours: true)
             } else {
                 Text(PomodoroWords.clock(session.remaining(at: Date())))
@@ -91,7 +107,7 @@ struct PomodoroTimeText: View {
         }
         .font(.system(size: size, weight: weight, design: .rounded))
         .monospacedDigit()
-        .foregroundStyle(session.phase.tint.opacity(session.isRunning ? 1 : 0.55))
+        .foregroundStyle(session.phase.tint.opacity(session.isRunning || held != nil ? 1 : 0.55))
         .lineLimit(1)
         .minimumScaleFactor(0.6)
     }
@@ -102,11 +118,18 @@ struct PomodoroTimeText: View {
 struct PomodoroRing: View {
     let session: PomodoroModel.Session
     var lineWidth: CGFloat = 3
+    /// The time left at the scrubber's knob while it is dragged, which the ring follows.
+    var held: TimeInterval?
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1, paused: !session.isRunning)) { context in
-            ProgressRing(fraction: session.progress(at: context.date), lineWidth: lineWidth, tint: session.phase.tint)
+        TimelineView(.animation(minimumInterval: 1, paused: !session.isRunning || held != nil)) { context in
+            ProgressRing(fraction: fraction(at: context.date), lineWidth: lineWidth, tint: session.phase.tint)
         }
+    }
+
+    private func fraction(at date: Date) -> Double {
+        guard let held else { return session.progress(at: date) }
+        return session.length > 0 ? min(1, max(0, held / session.length)) : 0
     }
 }
 
@@ -115,9 +138,10 @@ private struct PomodoroBadge: View {
     let session: PomodoroModel.Session
     var lineWidth: CGFloat
     var symbolSize: CGFloat
+    var held: TimeInterval?
 
     var body: some View {
-        PomodoroRing(session: session, lineWidth: lineWidth)
+        PomodoroRing(session: session, lineWidth: lineWidth, held: held)
             .overlay(
                 Image(systemName: session.phase.symbol)
                     .font(.system(size: symbolSize, weight: .bold))
@@ -217,15 +241,30 @@ struct PomodoroMinimal: View {
     }
 }
 
-/// The opened island: which phase, the time left, the cycle so far, and the three
-/// things to do with it.
+/// The opened island: which phase, the time left with a bar under it to move through
+/// the phase, the cycle so far, and the three things to do with it.
 struct PomodoroExpanded: View {
     let model: PomodoroModel
+    /// Where the bar's knob is held while it is dragged, as the fraction of the phase
+    /// gone: the time and the ring show the time left there until it is let go.
+    @State private var dragging: Double?
+    private let hovering: Bool
+
+    /// The timer's height, and room for the bar.
+    static let height: CGFloat = 92
+
+    /// `hovering` and `dragging` start the bar so, for pictures of it.
+    init(model: PomodoroModel, hovering: Bool = false, dragging: Double? = nil) {
+        self.model = model
+        self.hovering = hovering
+        _dragging = State(initialValue: dragging)
+    }
 
     var body: some View {
         if let session = model.shown {
+            let held = dragging.map { PomodoroScrubber.remaining(at: $0, of: session.length) }
             HStack(spacing: 16) {
-                PomodoroBadge(session: session, lineWidth: 5, symbolSize: 20)
+                PomodoroBadge(session: session, lineWidth: 5, symbolSize: 20, held: held)
                     .frame(width: 58, height: 58)
 
                 VStack(alignment: .leading, spacing: 0) {
@@ -236,10 +275,20 @@ struct PomodoroExpanded: View {
                             .lineLimit(1)
                         PomodoroCycleDots(session: session, rounds: model.settings.rounds)
                     }
-                    PomodoroTimeText(session: session, size: 40, weight: .medium)
+                    PomodoroTimeText(session: session, size: 40, weight: .medium, held: held)
+                    PomodoroScrubber(
+                        session: session,
+                        dragging: $dragging,
+                        isEnabled: model.preview == nil && !session.isWaiting,
+                        hovering: hovering,
+                        grab: { model.hold() },
+                        release: { gone in
+                            model.letGo(atRemaining: gone.map { PomodoroScrubber.remaining(at: $0, of: session.length) })
+                        },
+                        nudge: { minutes in model.move(by: TimeInterval(minutes * 60)) }
+                    )
                 }
-
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 RoundButton(symbol: session.isRunning ? "pause.fill" : "play.fill", tint: session.phase.tint) {
                     act { model.toggle() }
@@ -262,6 +311,183 @@ struct PomodoroExpanded: View {
     /// A preview's buttons only end the preview: there is nothing real to pause.
     private func act(_ action: () -> Void) {
         if model.preview != nil { model.endPreview() } else { action() }
+    }
+}
+
+/// Where the phase has got to, as a bar under the time left that fills as it runs, and
+/// that can be dragged to move through it, as Now Playing's can: on to skip ahead, back
+/// for more time, between the phase's start and its end. A knob shows under the pointer
+/// and while dragging, and letting go at the very end finishes the phase as if its time
+/// had run out. The phase is held still while the knob is held, so it cannot run out
+/// under it. A drag called off, by the bar going or being disabled under the pointer,
+/// or one whose phase gave way to another meanwhile, moves nothing. A phase waiting for
+/// a click has not begun, so its bar stays empty and cannot be moved. VoiceOver, and
+/// Full Keyboard Access, move it a minute at a time.
+struct PomodoroScrubber: View {
+    let session: PomodoroModel.Session
+    /// Where the knob is held, as the fraction of the phase gone, while it is dragged,
+    /// for the time and the ring to show.
+    @Binding var dragging: Double?
+    let isEnabled: Bool
+    /// Taken hold of: the phase is held still until let go.
+    let grab: () -> Void
+    /// Let go, at a fraction of the phase gone, or `nil` for a drag that moves nothing.
+    let release: (Double?) -> Void
+    /// A minute on (1) or back (-1).
+    let nudge: (Int) -> Void
+    @State private var hovering: Bool
+    /// The knob's place as it is dragged. SwiftUI puts it back to `nil` as the drag ends,
+    /// and also as it is called off, when no word of the end ever comes.
+    @GestureState private var live: Double?
+    /// Which phase the knob was taken hold of in, until let go.
+    @State private var grabbed: Grip?
+
+    /// A phase as far as a drag is concerned: one that gives way to another, or to a
+    /// click, mid-drag is not the one being moved.
+    struct Grip: Equatable {
+        var phase: PomodoroModel.Phase
+        var round: Int
+        var length: TimeInterval
+        var isWaiting: Bool
+
+        init(_ session: PomodoroModel.Session) {
+            phase = session.phase
+            round = session.round
+            length = session.length
+            isWaiting = session.isWaiting
+        }
+    }
+
+    /// Room to take hold of the bar, and the bar itself, thicker under the pointer.
+    static let height: CGFloat = 14
+    static let thickness: CGFloat = 4
+    static let raisedThickness: CGFloat = 6
+    static let knob: CGFloat = 12
+
+    init(
+        session: PomodoroModel.Session,
+        dragging: Binding<Double?>,
+        isEnabled: Bool,
+        hovering: Bool = false,
+        grab: @escaping () -> Void,
+        release: @escaping (Double?) -> Void,
+        nudge: @escaping (Int) -> Void
+    ) {
+        self.session = session
+        _dragging = dragging
+        self.isEnabled = isEnabled
+        self.grab = grab
+        self.release = release
+        self.nudge = nudge
+        _hovering = State(initialValue: hovering)
+    }
+
+    /// The time left with the knob at `gone`, the fraction of the phase gone, to the
+    /// whole second, so letting go sets the time the knob showed.
+    static func remaining(at gone: Double, of length: TimeInterval) -> TimeInterval {
+        (length * (1 - min(1, max(0, gone.isFinite ? gone : 0)))).rounded()
+    }
+
+    /// The fraction of the phase gone at `x` along a bar `width` wide, kept to the bar.
+    static func fraction(atX x: CGFloat, width: CGFloat) -> Double {
+        width > 0 ? min(1, max(0, Double(x / width))) : 0
+    }
+
+    /// The minutes VoiceOver's increment (on) or decrement (back) moves the phase by, or
+    /// nil while the bar cannot be moved.
+    static func minutes(for direction: AccessibilityAdjustmentDirection, isEnabled: Bool) -> Int? {
+        guard isEnabled else { return nil }
+        switch direction {
+        case .increment: return 1
+        case .decrement: return -1
+        @unknown default: return nil
+        }
+    }
+
+    private var isRaised: Bool { isEnabled && (hovering || dragging != nil) }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1, paused: !session.isRunning || dragging != nil)) { context in
+            let gone = dragging ?? 1 - session.progress(at: context.date)
+            bar(gone: gone)
+                .accessibilityElement()
+                .accessibilityLabel("Time left")
+                .accessibilityValue(PomodoroWords.left(
+                    PomodoroScrubber.remaining(at: gone, of: session.length), of: session.length
+                ))
+                .accessibilityHint("Moves the phase on or back a minute")
+                .accessibilityAdjustableAction { direction in
+                    if let minutes = Self.minutes(for: direction, isEnabled: isEnabled) { nudge(minutes) }
+                }
+        }
+        .frame(height: Self.height)
+        .allowsHitTesting(isEnabled)
+        .disabled(!isEnabled)
+        .onHover { hovering = $0 }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isRaised)
+        .onChange(of: live) { _, place in
+            if let place {
+                dragging = place
+            } else {
+                // Called off, if the end never came; on the next turn, since the end may be
+                // told after this.
+                DispatchQueue.main.async { callOff() }
+            }
+        }
+        .onChange(of: Grip(session)) { callOff() }
+        .onDisappear { callOff() }
+    }
+
+    /// Ends a drag without moving the phase, if one is under way.
+    private func callOff() {
+        guard grabbed != nil else { return }
+        grabbed = nil
+        dragging = nil
+        release(nil)
+    }
+
+    private func bar(gone: Double) -> some View {
+        let thickness = isRaised ? Self.raisedThickness : Self.thickness
+        let lit = session.isRunning || dragging != nil
+        return GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let x = width * min(1, max(0, gone))
+            ZStack(alignment: .leading) {
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(.white.opacity(isEnabled ? 0.18 : 0.1))
+                    Rectangle().fill(session.phase.tint.opacity(lit ? 1 : 0.55)).frame(width: x)
+                }
+                .frame(height: thickness)
+                .clipShape(Capsule())
+                if isRaised {
+                    Circle()
+                        .fill(.white)
+                        .frame(width: Self.knob, height: Self.knob)
+                        .shadow(color: .black.opacity(0.4), radius: 2)
+                        .offset(x: x - Self.knob / 2)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .updating($live) { value, place, _ in
+                        place = Self.fraction(atX: value.location.x, width: width)
+                    }
+                    .onChanged { _ in
+                        guard grabbed == nil else { return }
+                        grabbed = Grip(session)
+                        grab()
+                    }
+                    .onEnded { value in
+                        guard let grip = grabbed else { return }
+                        grabbed = nil
+                        dragging = nil
+                        release(grip == Grip(session) ? Self.fraction(atX: value.location.x, width: width) : nil)
+                    }
+            )
+        }
     }
 }
 

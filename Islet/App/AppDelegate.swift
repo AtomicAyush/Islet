@@ -48,8 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A Focus that Pomodoro turned on is turned off by a shortcut, which takes a moment,
-    /// and would be ended with Islet mid-run: Islet waits for it, a few seconds at most.
+    /// Pomodoro turns Focus on and off with a shortcut, which takes a moment, and would be
+    /// ended with Islet mid-run: Islet waits, a few seconds at most, for a run under way,
+    /// for one turning off the Focus of a focus paused, and for a Focus just turned on to
+    /// show, so the next launch knows it as Pomodoro's.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let pomodoro = FeatureRegistry.shared.feature(PomodoroFeature.self), pomodoro.needsTimeToQuit else {
             return .terminateNow
@@ -57,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let wait = QuitWait { sender.reply(toApplicationShouldTerminate: true) }
         Task {
             wait.began = true
-            await pomodoro.endBeforeQuitting(within: PomodoroFeature.quitGrace)
+            await pomodoro.settleBeforeQuitting(within: PomodoroFeature.quitGrace)
             wait.reply()
         }
         wait.arm(limit: PomodoroFeature.quitGrace + 1)

@@ -5,8 +5,8 @@ import Foundation
 /// already under way carries on, resuming if paused.
 ///
 /// It runs inside Islet, in the background, as Keep Mac Awake does, and Shortcuts
-/// launches Islet first if it is not running. A session lasts only while Islet runs, so
-/// a shortcut that quits Islet afterwards ends it.
+/// launches Islet first if it is not running, picking back up a session Islet had as
+/// it last quit, which this then carries on with.
 struct StartPomodoroIntent: AppIntent {
     static let title: LocalizedStringResource = "Start Pomodoro"
     static let description = IntentDescription(

@@ -91,7 +91,9 @@ Pomodoro. While it runs, the phase's symbol sits left of the camera, red for foc
 a break, with the time left on the right, or "Ready" when the next phase waits for your click;
 beside music it waits in the bubble as a draining ring, and the song keeps the island. Opened,
 it says which focus of the cycle it is ("Focus 2 of 4"), and pauses, skips or stops; a pause
-holds the time left. As each phase ends a sound plays and a word shows beside the notch, or in a
+holds the time left. Drag the bar under the time left to move through the phase, on to skip
+ahead or back for more time; the phase holds still while you drag, and if you let go at its end
+it finishes as if its time had run out. As each phase ends a sound plays and a word shows beside the notch, or in a
 row under the music: "Focus done — 5 minute break", "Break over — Back to it". Breaks start by
 themselves and the next focus waits for your click, unless you change either in Settings. The
 home tile counts the focus sessions you finished today, from nought again at midnight. Phases
@@ -99,11 +101,17 @@ end at the time they said, even if the Mac slept through it, but a focus never s
 while the Mac is asleep, and none that came and went then is counted. If you ask, a focus
 session turns on Focus with the shortcut chosen in Focus's settings and turns it off for the
 break. The shortcut toggles, so this needs the Focus feature on, with Full Disk Access, to see
-what it will do: a Focus that was already on is left as it was. Quitting Islet ends a session,
-and it is not picked back up when Islet next opens; Islet waits a few seconds as it quits to
-turn off a Focus it turned on, and if the shortcut cannot finish in time, turns that Focus off
-at the next launch. It can also keep the Mac awake with a power assertion of its own, "Islet:
-Pomodoro", given back as the focus ends or pauses.
+what it will do: a Focus that was already on is left as it was. It can also keep the Mac
+awake with a power assertion of its own, "Islet: Pomodoro", given back as the focus ends or
+pauses. A session survives quitting Islet, or a restart: it is picked back up when Islet next
+opens, with the time in between caught up as after sleep, so a focus that ran out meanwhile is
+counted if it ended today, a break after it carries on, and a focus that should have started
+more than a minute ago waits for your click. The sound and the word for a change that came due
+while Islet was closed play only if it came in the minute before Islet opened. A Focus turned
+on for a focus still running as Islet quits stays on, and is kept if that focus is still running
+at the next launch, or turned off then if not; for a focus paused, Islet turns its Focus off as
+it quits, and back on when you resume. The Mac is kept awake again for a focus still running.
+Stopping the session, or turning Pomodoro off, ends it for good.
 
 **Battery.** The iPhone's charging flash when you plug in — "Charging" on one side, the
 level and a green battery on the other — and warnings as the battery runs low. Full charge,
@@ -487,6 +495,8 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://pomodoro/start?minutes=50` | Starts a focus of 50 minutes (1 to 120; with no length, as in Settings), or carries on |
 | `islet://pomodoro/pause`, `/resume`, `/skip`, `/stop` | As the opened island's buttons do |
 | `islet://pomodoro/toggle` | Pauses a session running, or starts or resumes one |
+| `islet://pomodoro/forward?minutes=5` | Moves the phase on 5 minutes (1 to 120; with no length, one), finishing it at its end |
+| `islet://pomodoro/back?minutes=5` | Gives the phase 5 more minutes (1 to 120; with no length, one), up to its whole length |
 | `islet://preview?feature=battery&index=0` | Runs a feature's preview |
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
