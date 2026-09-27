@@ -53,14 +53,16 @@ a heart at the start of the controls saves the song:
 Every song also gets a **Lyrics** button, with words from [LRCLIB](https://lrclib.net), a
 free, open collection: timed lyrics light up as they are sung (click a line to play from
 there; − and + fix lyrics that run early or late, and are remembered), and untimed ones show
-marked "Not synced". The panel's microphone puts the line being sung in a slim row under the
-island, karaoke style. Nothing is sent until you first tap Lyrics (or turn Lyrics on in
-Settings); after that, each track's title, artist, album and length go to lrclib.net, and
-nothing else. That covers any audio reporting a title and artist, which in a music app or a
-browser can include a podcast, but never the Podcasts or Books apps or other podcast and
-audiobook apps, and videos only if you turn that on in Settings → Activities → Now Playing
-(for titles like "Artist - Song"). Answers are kept in Application Support/Islet/Lyrics, so a
-track played again sends nothing.
+marked "Not synced". The line being sung also shows in a slim row under the island, karaoke
+style, whenever there are timed lyrics, without opening anything; the panel's microphone
+turns it off. Lyrics written in Devanagari show in Hinglish — "dil", "pyaar", "zindagi" —
+unless you pick the original script in Settings. Nothing is sent until you first tap Lyrics
+(or turn on "Look up lyrics for every song" in Settings); after that, each track's title,
+artist, album and length go to lrclib.net, and nothing else. That covers any audio reporting
+a title and artist, which in a music app or a browser can include a podcast, but never the
+Podcasts or Books apps or other podcast and audiobook apps, and videos only if you turn that
+on in Settings → Activities → Now Playing (for titles like "Artist - Song"). Answers are
+kept in Application Support/Islet/Lyrics, so a track played again sends nothing.
 
 **Timer.** Start one from the opened island (or `islet://timer/start?minutes=5`) and it counts
 down beside the notch in the Clock app's orange; opened, it pauses and cancels. When it ends

@@ -666,21 +666,33 @@ private struct KaraokeLine: View {
 
 // MARK: - Settings
 
-/// Under Now Playing in Settings: lyrics on or off, and what they cover.
+/// Under Now Playing in Settings: lyrics on or off, and what they cover. The first
+/// tap on the player's Lyrics button turns on the same look-ups, so this is on
+/// already for anyone who has tapped it; it is here for turning them on without
+/// opening the panel, and off again.
 struct NowPlayingLyricsSettings: View {
     /// Lets the feature pick up a change straight away.
     let onChange: () -> Void
     @AppStorage(NowPlayingPrefs.lyrics) private var isOn = false
-    @AppStorage(NowPlayingPrefs.lyricsInIsland) private var inIsland = false
+    @AppStorage(NowPlayingPrefs.lyricsInIsland) private var inIsland = NowPlayingPrefs.lyricsInIslandDefault
     @AppStorage(NowPlayingPrefs.lyricsForVideos) private var videos = false
+    @AppStorage(NowPlayingPrefs.hindiLyrics) private var hindi = LyricsScript.default
 
     var body: some View {
         Toggle(isOn: $isOn) {
-            Text("Lyrics")
-            Text("Looks up the song’s title, artist, album and length on lrclib.net")
+            Text("Look up lyrics for every song")
+            Text("Sends each song’s title, artist, album and length to lrclib.net as it plays.")
         }
         Toggle("Show the line being sung in the island", isOn: $inIsland)
             .disabled(!isOn)
+        Picker(selection: $hindi) {
+            Text("Hinglish").tag(LyricsScript.hinglish)
+            Text("Original script").tag(LyricsScript.original)
+        } label: {
+            Text("Hindi lyrics")
+            Text("Hinglish spells lyrics written in Devanagari in the Latin alphabet: “dil”, “pyaar”, “zindagi”.")
+        }
+        .disabled(!isOn)
         Toggle(isOn: $videos) {
             Text("Look up music videos too")
             Text("For videos titled like “Artist - Song”, and songs from an artist’s “Topic” channel.")
@@ -688,6 +700,7 @@ struct NowPlayingLyricsSettings: View {
         .disabled(!isOn)
         .onChange(of: isOn) { onChange() }
         .onChange(of: inIsland) { onChange() }
+        .onChange(of: hindi) { onChange() }
         .onChange(of: videos) { onChange() }
     }
 }

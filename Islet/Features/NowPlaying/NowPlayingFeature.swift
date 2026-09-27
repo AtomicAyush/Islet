@@ -69,6 +69,8 @@ final class NowPlayingFeature: Feature {
     private static let videoPauseDelay: TimeInterval = 4
     /// Long enough to move to the song, open the island and move back.
     private static let severalPlayersLength: TimeInterval = 13
+    /// Long enough to read a line or two under the island before it opens on the rest.
+    private static let hindiPreviewOpenDelay: TimeInterval = 8
     /// The shortest hold after a pause. Players pause for a moment between tracks,
     /// and the activity should not blink out and back for that.
     private static let pauseGrace: TimeInterval = 1.5
@@ -180,6 +182,9 @@ final class NowPlayingFeature: Feature {
             },
             FeaturePreview(title: "Karaoke in the island") { [weak self] in
                 self?.previewKaraoke()
+            },
+            FeaturePreview(title: "Hindi lyrics") { [weak self] in
+                self?.previewHindiLyrics()
             },
         ]
     }
@@ -589,6 +594,23 @@ final class NowPlayingFeature: Feature {
         )
     }
 
+    /// A made-up Hindi song, its lyrics written in Devanagari, in the compact island
+    /// with its line underneath, then opened on its lyrics: in Hinglish, or as
+    /// written, as Settings ask.
+    private func previewHindiLyrics() {
+        preview(
+            .chaiAurPatri(playing: true), library: NowPlayingSampleLibrary(), lyrics: NowPlayingLyricsSamples.chaiAurPatri,
+            inIsland: true, for: Self.libraryPreviewLength
+        )
+        previewSteps([
+            (Self.hindiPreviewOpenDelay, { [weak self] in
+                guard let self else { return }
+                IslandManager.shared.focusedController?.model.expand(focus: self.activity.id)
+                self.library.open(.lyrics)
+            }),
+        ])
+    }
+
     /// Hands the output picker back to the real outputs, closing its panel first if
     /// it was listing the samples: a click meant for them must not move the Mac's
     /// sound. A panel opened on the real outputs during a song's preview stays open.
@@ -672,6 +694,14 @@ private extension NowPlayingSnapshot {
             title: "Paper Planes Over Lisbon (Live from the Sunroom, 2026 Remaster)",
             artist: "Juniper & the Tides", album: "Sunroom Sessions", bundleID: "com.apple.Music",
             duration: 245, elapsed: 3, playing: playing, artwork: .sampleBay
+        )
+    }
+
+    /// A made-up Hindi song, a line into its lyrics.
+    static func chaiAurPatri(playing: Bool) -> NowPlayingSnapshot {
+        sample(
+            title: "Chai Aur Patri", artist: "Monsoon Mail", album: "Platform Nau", bundleID: "com.apple.Music",
+            duration: 184, elapsed: 17.5, playing: playing, artwork: .sampleBay
         )
     }
 

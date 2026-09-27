@@ -11,6 +11,11 @@ enum NowPlayingLyricsSamples {
     /// "Paper Planes Over Lisbon", with no times, to show plain lyrics.
     static var paperPlanes: LyricsResult { .plain(LyricsText.plain(paperPlanesText)) }
 
+    /// "Chai Aur Patri" by Monsoon Mail, timed, in Hindi written in Devanagari, to show
+    /// Hindi lyrics as Settings ask for them: in Hinglish or as written. One line mixes
+    /// in an English word, as Hindi songs often do, and one is long enough to scroll.
+    static var chaiAurPatri: LyricsResult { .synced(LyricsText.synced(chaiAurPatriLRC)) }
+
     private static let midnightDriveLRC = """
     [ti:Midnight Drive]
     [ar:Neon Harbour]
@@ -41,6 +46,24 @@ enum NowPlayingLyricsSamples {
     [02:33.20]No need to ask the reasons why
     [02:55.30]On a midnight drive
     [02:59.80]
+    """
+
+    private static let chaiAurPatriLRC = """
+    [ti:Chai Aur Patri]
+    [ar:Monsoon Mail]
+    [length:03:04]
+    [00:08.00]पटरी पे दौड़ती शाम की गाड़ी
+    [00:12.40]खिड़की से झाँकते पीले खेत
+    [00:16.80]चाय की प्याली में घुलती बातें
+    [00:21.20]हर station पे एक नया चेहरा
+    [00:25.60]धीरे धीरे पीछे छूटता शहर
+    [00:30.00]मैं और तुम, और ये लंबा सफ़र
+    [00:34.40]गिनते रहे हम पुल और नदियाँ
+    [00:38.80]रात की चादर में लिपटी पहाड़ियाँ, सपनों सी हल्की, बादलों सी भारी
+    [00:45.60]
+    [00:52.00]सुबह की पहली किरण पे उतरना है
+    [00:56.40]पर अभी तो बस चलते जाना है
+    [01:00.80]
     """
 
     private static let paperPlanesText = """

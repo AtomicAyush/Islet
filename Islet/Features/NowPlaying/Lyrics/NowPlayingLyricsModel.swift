@@ -3,13 +3,30 @@ import Observation
 import os
 
 extension NowPlayingPrefs {
-    /// Lyrics are looked up. Off until the person taps the player's Lyrics button,
-    /// or turns them on in Settings: nothing is sent to LRCLIB before then.
+    /// Lyrics are looked up, for every song as it plays. Off until the person taps the
+    /// player's Lyrics button, or turns them on in Settings: nothing is sent to LRCLIB
+    /// before then.
     static let lyrics = "nowPlaying.lyrics"
     /// The line being sung rides in a row under the compact island.
     static let lyricsInIsland = "nowPlaying.lyrics.inIsland"
     /// Music videos are looked up too, when their title names the artist and song.
     static let lyricsForVideos = "nowPlaying.lyrics.videos"
+    /// How lyrics written in Devanagari are shown (`LyricsScript`).
+    static let hindiLyrics = "nowPlaying.lyrics.hindi"
+
+    /// Lyrics that are on are there to be seen: the line being sung shows under the
+    /// island without the panel being opened, until the microphone turns it off.
+    static let lyricsInIslandDefault = true
+}
+
+/// How Hindi lyrics, written in Devanagari, are shown: spelled out in Hinglish (see
+/// `Hinglish`), as most people who listen to Hindi songs read and type them, or as
+/// written. Lines in any other script are shown as they are either way.
+enum LyricsScript: String, CaseIterable, Sendable {
+    case hinglish
+    case original
+
+    static let `default` = LyricsScript.hinglish
 }
 
 /// The lyrics of what is playing, and where in them playback is: the line the panel
@@ -19,6 +36,10 @@ extension NowPlayingPrefs {
 /// first, then LRCLIB once the song has held still for a moment), whether or not the
 /// panel is open, so they are there the moment it opens; a look-up still under way
 /// for the song before is cancelled, and its answer, should one come, dropped.
+///
+/// Lines written in Devanagari show in Hinglish unless Settings ask for the original
+/// script (see `LyricsScript`). Lyrics are kept, and cached, as they were found, so a
+/// change of mind shows them again at once, with nothing looked up.
 ///
 /// Nothing ticks. The position comes from the player's timing, as the scrubber's does,
 /// and a single timer is set for the next moment a line starts or is let go, set again
@@ -84,6 +105,10 @@ final class NowPlayingLyricsModel {
     private var storedShowsInIsland = false
     private var previewShowsInIsland = false
     @ObservationIgnored private var includesVideos = false
+    @ObservationIgnored private var script = LyricsScript.default
+    /// The lyrics as found, in the script they were written in, to show again in the
+    /// other when Settings change. Set whenever `status` is set from lyrics.
+    @ObservationIgnored private var found: LyricsResult?
     @ObservationIgnored private var watchesPanel = false
     @ObservationIgnored private var watchesIsland = false
 
@@ -125,12 +150,18 @@ final class NowPlayingLyricsModel {
     /// Reads the settings again, after they changed in Settings.
     func reloadSettings() {
         let enabled = defaults.bool(forKey: NowPlayingPrefs.lyrics)
-        let island = defaults.bool(forKey: NowPlayingPrefs.lyricsInIsland)
+        let island = defaults.object(forKey: NowPlayingPrefs.lyricsInIsland) as? Bool ?? NowPlayingPrefs.lyricsInIslandDefault
         let videos = defaults.bool(forKey: NowPlayingPrefs.lyricsForVideos)
-        guard enabled != isEnabled || island != storedShowsInIsland || videos != includesVideos else { return }
+        let script = defaults.string(forKey: NowPlayingPrefs.hindiLyrics).flatMap(LyricsScript.init) ?? .default
+        guard enabled != isEnabled || island != storedShowsInIsland || videos != includesVideos || script != self.script
+        else { return }
+        let rescripted = script != self.script
         isEnabled = enabled
         storedShowsInIsland = island
         includesVideos = videos
+        self.script = script
+        // The words on show again, in the other script: nothing is looked up again.
+        if rescripted, status.hasLyrics, let found { apply(found) }
         refresh()
         onChange()
     }
@@ -364,8 +395,10 @@ final class NowPlayingLyricsModel {
         onChange()
     }
 
+    /// Shows `result`, in the script Settings ask for.
     private func apply(_ result: LyricsResult) {
-        switch result {
+        found = result
+        switch result.shown(in: script) {
         case .synced(let lines):
             let timeline = LyricsTimeline(lines)
             setStatus(timeline.isEmpty ? .instrumental : .synced(timeline))
@@ -480,6 +513,20 @@ final class NowPlayingLyricsModel {
 }
 
 extension LyricsResult {
+    /// The lyrics as they are shown in `script`: in Hinglish, each line with
+    /// Devanagari in it spelled out, and the rest as they were.
+    func shown(in script: LyricsScript) -> LyricsResult {
+        guard script == .hinglish else { return self }
+        switch self {
+        case .synced(let lines):
+            return .synced(lines.map { LyricsLine(time: $0.time, text: Hinglish.romanise($0.text)) })
+        case .plain(let lines):
+            return .plain(lines.map(Hinglish.romanise))
+        case .instrumental, .notFound:
+            return self
+        }
+    }
+
     /// What was found, without the words, for the log.
     var summary: String {
         switch self {
