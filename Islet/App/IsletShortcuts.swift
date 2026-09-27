@@ -41,5 +41,14 @@ struct IsletShortcuts: AppShortcutsProvider {
             shortTitle: "Mute Microphone",
             systemImageName: "mic.slash.fill"
         )
+        AppShortcut(
+            intent: JoinMeetingIntent(),
+            phrases: [
+                "Join my next meeting with \(.applicationName)",
+                "Join the meeting in \(.applicationName)",
+            ],
+            shortTitle: "Join Meeting",
+            systemImageName: "video.fill"
+        )
     }
 }

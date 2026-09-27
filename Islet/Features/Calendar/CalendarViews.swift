@@ -84,22 +84,100 @@ struct CalendarCompactLeading: View {
     }
 }
 
+/// The countdown, with the Join button after it while the meeting can be joined from
+/// here (`CalendarModel.showsJoin`).
 struct CalendarCompactTrailing: View {
     let model: CalendarModel
 
     var body: some View {
         if let event = model.featured {
-            TimelineView(CalendarCountdownSchedule(start: event.start)) { context in
-                Text(CalendarCountdown.short(event, at: context.date))
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(event.color)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, 6)
+            let meeting = model.showsJoin ? event.meeting : nil
+            HStack(spacing: 0) {
+                TimelineView(CalendarCountdownSchedule(start: event.start)) { context in
+                    Text(CalendarCountdown.short(event, at: context.date))
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(event.color)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .id(event.start)
+                // The button brings its own inset to the island's end.
+                .padding(.trailing, meeting == nil ? CalendarCompactJoin.inset : 0)
+
+                if let meeting {
+                    CalendarCompactJoin(meeting: meeting) { model.join(event) }
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
             }
-            .id(event.start)
+        }
+    }
+}
+
+/// A small green camera beside the countdown, the way a call's button looks on the
+/// iPhone, that joins the meeting without opening the island.
+///
+/// Resting on it keeps the island shut (`IslandViewModel.pointer(onCompactButton:)`),
+/// so it can be reached when the island opens on hover. The camera brightens once the
+/// pointer has rested on it a moment, and only then does a click join: a quicker one,
+/// like a click meant to open the island that lands a little wide, opens the island
+/// instead, where the page has its own Join. The gap before the camera and the inset
+/// after it are the button's too, so the island swelling under the arriving pointer
+/// can't slide the camera out from under it.
+struct CalendarCompactJoin: View {
+    let meeting: MeetingLink
+    let join: () -> Void
+    @Environment(\.island) private var island
+    @State private var isArmed = false
+    @State private var arming: Task<Void, Never>?
+
+    static let size = CGSize(width: 30, height: 20)
+    /// Between the countdown and the camera, and between the camera and the island's end.
+    static let inset: CGFloat = 6
+    /// The compact island's trailing side with the button in it: room for "10m" or
+    /// "now", and the button with its insets.
+    static let width: CGFloat = 30 + inset + size.width + inset
+    /// How long the pointer rests on the camera before a click on it joins.
+    static let armDelay: Duration = .milliseconds(250)
+
+    var body: some View {
+        Button {
+            if isArmed {
+                island?.compactButtonClicked()
+                join()
+            } else {
+                island?.tap()
+            }
+        } label: {
+            Image(systemName: "video.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: Self.size.width, height: Self.size.height)
+                .background(Capsule().fill(CalendarPalette.green))
+                .brightness(isArmed ? 0.1 : 0)
+                .padding(.horizontal, Self.inset)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isOn in
+            island?.pointer(onCompactButton: isOn)
+            arming?.cancel()
+            isArmed = false
+            guard isOn else { return }
+            arming = Task { @MainActor in
+                try? await Task.sleep(for: Self.armDelay)
+                if !Task.isCancelled { isArmed = true }
+            }
+        }
+        .onDisappear {
+            arming?.cancel()
+            island?.pointer(onCompactButton: false)
+        }
+        .help("Join on \(meeting.service.name)")
+        .accessibilityRepresentation {
+            Button("Join on \(meeting.service.name)", action: join)
         }
     }
 }
@@ -171,7 +249,7 @@ struct CalendarExpanded: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 if showJoin, let meeting = event.meeting {
-                    JoinButton(meeting: meeting)
+                    JoinButton(meeting: meeting) { model.join(event) }
                 }
             }
             .padding(.horizontal, 6)
@@ -202,13 +280,18 @@ private struct EventTitleButton: View {
     }
 }
 
+/// Joins the meeting and closes the island, which has nothing more to offer once the
+/// call's app comes forward.
 private struct JoinButton: View {
     let meeting: MeetingLink
+    let join: () -> Void
+    @Environment(\.island) private var island
     @State private var isHovering = false
 
     var body: some View {
         Button {
-            CalendarApp.join(meeting)
+            join()
+            island?.collapse("joined a meeting")
         } label: {
             Label("Join", systemImage: "video.fill")
                 .font(.system(size: 13, weight: .semibold))

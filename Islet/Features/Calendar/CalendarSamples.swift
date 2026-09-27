@@ -3,6 +3,14 @@ import SwiftUI
 /// Stand-in events for the previews, placed around the current time so every
 /// presentation can be seen without calendar access.
 extension CalendarEvent {
+    /// Every sample's id starts with this, so a click on its Join button can tell the
+    /// meeting is made up.
+    private static let samplePrefix = "sample."
+
+    var isSample: Bool { Self.isSampleID(id) }
+
+    static func isSampleID(_ id: String) -> Bool { id.hasPrefix(samplePrefix) }
+
     private static func sample(
         _ title: String,
         start: Date,
@@ -13,7 +21,7 @@ extension CalendarEvent {
         meeting: String? = nil
     ) -> CalendarEvent {
         CalendarEvent(
-            id: "sample.\(title)",
+            id: Self.samplePrefix + title,
             eventIdentifier: nil,
             occurrence: nil,
             title: title,
@@ -33,6 +41,16 @@ extension CalendarEvent {
         return sample(
             "Design sync", start: Date().addingTimeInterval(5 * 60 - 1), minutes: 30,
             location: zoom, color: CalendarPalette.blue, meeting: zoom
+        )
+    }
+
+    /// A call that began three minutes ago, for someone running late: its Join button
+    /// is still beside the notch.
+    static func sampleMeetingUnderway() -> CalendarEvent {
+        let teams = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_SXNsZXQ%40thread.v2/0"
+        return sample(
+            "Quarterly planning", start: Date().addingTimeInterval(-3 * 60), minutes: 45,
+            location: "Harbour Room", color: CalendarPalette.purple, meeting: teams
         )
     }
 

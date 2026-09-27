@@ -118,6 +118,18 @@ final class IslandViewModel {
     }
     @ObservationIgnored private var peekWait = PeekWait.none
 
+    /// How the pointer is getting on with a button in the compact row that acts on a
+    /// click of its own, like Calendar's Join (see `pointer(onCompactButton:)`).
+    private enum CompactButton: Equatable {
+        case none
+        /// Resting on one, which keeps the island from opening.
+        case resting
+        /// One was clicked, and the island stays shut until the pointer leaves it: what
+        /// the click started (a call's app coming forward) is what was wanted.
+        case clicked
+    }
+    @ObservationIgnored private var compactButton = CompactButton.none
+
     /// The island was open over a full-screen app when the Space changed, and whether
     /// it closes waits on the full-screen watcher's next look (`spaceDidSettle`).
     @ObservationIgnored private var openAcrossSpaceChange = false
@@ -358,12 +370,13 @@ final class IslandViewModel {
             cancelEditingIdle()
             if !isExpanded, Prefs.expandOnHover, !isShowingCard {
                 if mode != .hidden {
-                    scheduleExpand(after: Prefs.hoverDelay)
+                    if compactButton == .none { scheduleExpand(after: Prefs.hoverDelay) }
                 } else if opensWhileSuppressed {
                     peek(at: point, buttonsDown: buttonsDown)
                 }
             }
         } else {
+            compactButton = .none
             cancelExpand()
             // Arranging the home page holds the island open: tiles are dragged about, and
             // a drag that strays past the edge must not close it. Only a long while away
@@ -374,6 +387,31 @@ final class IslandViewModel {
                 scheduleCollapse(after: 0.28)
             }
         }
+    }
+
+    /// The pointer came onto a button in the compact row that acts on a click of its
+    /// own (Calendar's Join), or left it. Resting there does not open the island, as
+    /// resting anywhere else on it does: that would take the button away before it
+    /// could be clicked. Moving on to the rest of the island starts the wait to open,
+    /// as arriving would. The button says so as it goes, too, since a view taken away
+    /// under the pointer may never hear it leave.
+    func pointer(onCompactButton isOn: Bool) {
+        if isOn {
+            if compactButton == .none { compactButton = .resting }
+            cancelExpand()
+        } else if compactButton == .resting {
+            compactButton = .none
+            if isHovering, !isExpanded, Prefs.expandOnHover, !isShowingCard, mode != .hidden {
+                scheduleExpand(after: Prefs.hoverDelay)
+            }
+        }
+    }
+
+    /// A button in the compact row did what it is for. The island stays shut until the
+    /// pointer has left it.
+    func compactButtonClicked() {
+        compactButton = .clicked
+        cancelExpand()
     }
 
     /// The pointer is on the notch (or the strip standing in for it) while the island
@@ -691,8 +729,9 @@ final class IslandViewModel {
     private func scheduleExpand(after delay: TimeInterval) {
         cancelExpand()
         let work = DispatchWorkItem { [weak self] in
-            // A card may have arrived while waiting.
-            guard let self, self.isHovering, !self.isShowingCard else { return }
+            // A card may have arrived while waiting, or the pointer moved on to a button
+            // that keeps the island shut.
+            guard let self, self.isHovering, !self.isShowingCard, self.compactButton == .none else { return }
             self.expand()
         }
         expandWork = work

@@ -129,7 +129,13 @@ traffic, by the name System Settings gives it where Islet can read that. Setting
 of these show.
 
 **Calendar.** Your next event counts down beside the notch from ten minutes before it
-starts, with a Join button when there is a Zoom, Meet, Teams, Webex or FaceTime link.
+starts, with a Join button when there is a Zoom, Meet, Teams, Webex, FaceTime or Slack huddle
+link in its URL, location or notes, Outlook's Safe Links and Google's redirects looked through.
+From five minutes before a call until ten minutes in, a green camera sits beside the countdown,
+and until five minutes in the call takes the island over from music. Rest the pointer on the
+camera a moment, then click to join, in the Zoom or Teams app where it is installed. The **Join
+Meeting** action in Shortcuts and `islet://calendar/join` join the call under way or starting
+within 15 minutes.
 
 **Weather.** The temperature on the home page beside a symbol for the sky, with the day's high
 and low and, when rain is on the way, when it should start: "Rain in about 20 min", "Rain
@@ -425,6 +431,7 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
 | `islet://micMute/toggle`, `/mute`, `/unmute` | Mutes or unmutes the microphone for every app |
 | `islet://weather/refresh` | Fetches the forecast now |
+| `islet://calendar/join` | Joins the video call under way or starting within 15 minutes |
 | `islet://shortcuts/run?name=Morning%20Lights` | Runs a shortcut (`id=` takes the identifier `shortcuts list --show-identifiers` prints) |
 | `islet://banner?title=Build%20finished` | Puts up a banner of your own (below) |
 | `islet://banner/dismiss` | Takes it down |

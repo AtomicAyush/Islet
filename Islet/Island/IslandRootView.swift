@@ -25,8 +25,16 @@ struct IslandRootView: View {
         .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
+        .environment(\.island, model)
         .onChange(of: layout, initial: true) { _, new in onLayoutChange(new) }
     }
+}
+
+extension EnvironmentValues {
+    /// The island a view is drawn in, for the odd control in an activity's content that
+    /// needs a word with it: Calendar's Join beside the notch, which keeps the island
+    /// from opening under it.
+    @Entry var island: IslandViewModel? = nil
 }
 
 /// The strip at the top edge that stands in for the island while it is hidden for a

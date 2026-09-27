@@ -22,7 +22,8 @@ struct CalendarEvent: Identifiable, Equatable, Sendable {
     let color: Color
     let meeting: MeetingLink?
 
-    /// When the island lets go of the event: five minutes in, or its end if sooner.
+    /// When the island lets go of the event: five minutes in, or its end if sooner. A
+    /// call whose Join button is still up is kept on for it (`CalendarTiming.shown`).
     var activityEnd: Date { min(start.addingTimeInterval(5 * 60), end) }
 
     /// Where the event is, for display. A location that is only the meeting's link
@@ -70,72 +71,6 @@ extension CalendarEvent {
     }
 }
 
-/// A link that joins an online meeting, found in an event's URL, location or notes.
-struct MeetingLink: Equatable, Sendable {
-    enum Service: String, Sendable {
-        case zoom, meet, teams, webex, faceTime
-
-        var name: String {
-            switch self {
-            case .zoom: "Zoom"
-            case .meet: "Google Meet"
-            case .teams: "Microsoft Teams"
-            case .webex: "Webex"
-            case .faceTime: "FaceTime"
-            }
-        }
-    }
-
-    let service: Service
-    let url: URL
-
-    /// Recognises a join link by host and path. Anything else (a meeting's web page,
-    /// a Zoom sign-in link, a Teams chat) is not something to join.
-    init?(url: URL) {
-        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
-              let host = url.host()?.lowercased()
-        else { return nil }
-        let path = url.path()
-
-        func isHost(_ domain: String) -> Bool { host == domain || host.hasSuffix("." + domain) }
-
-        let service: Service
-        if isHost("zoom.us") || isHost("zoomgov.com"),
-           ["/j/", "/my/", "/w/"].contains(where: path.hasPrefix) {
-            service = .zoom
-        } else if host == "meet.google.com", path.count > 1 {
-            service = .meet
-        } else if (host == "teams.microsoft.com" && (path.hasPrefix("/l/meetup-join/") || path.hasPrefix("/meet/")))
-                    || (host == "teams.live.com" && path.hasPrefix("/meet/")) {
-            service = .teams
-        } else if host.hasSuffix(".webex.com"), path.count > 1 {
-            service = .webex
-        } else if host == "facetime.apple.com", path.hasPrefix("/join") {
-            service = .faceTime
-        } else {
-            return nil
-        }
-        self.service = service
-        // Links typed without a scheme are detected as http; every service here is https.
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        components?.scheme = "https"
-        self.url = components?.url ?? url
-    }
-
-    /// The first join link, trying the event's own URL before the text fields in order.
-    static func find(url: URL?, in texts: [String?], detector: NSDataDetector?) -> MeetingLink? {
-        if let url, let link = MeetingLink(url: url) { return link }
-        guard let detector else { return nil }
-        for text in texts.compactMap({ $0 }) where !text.isEmpty {
-            let range = NSRange(text.startIndex..., in: text)
-            for match in detector.matches(in: text, range: range) {
-                if let url = match.url, let link = MeetingLink(url: url) { return link }
-            }
-        }
-        return nil
-    }
-}
-
 /// Reads events on a background thread. EventKit's store is safe to read from any
 /// thread, and a day of events with their notes is too much work for the main one.
 final class CalendarEventSource: @unchecked Sendable {
@@ -178,8 +113,13 @@ enum CalendarApp {
         NSWorkspace.shared.open(url)
     }
 
+    /// What opens meeting links. Tests hand in one that only writes them down.
+    static var opener: any MeetingOpener = WorkspaceMeetingOpener()
+
+    /// Opens the meeting in its service's app where that is installed, else in the
+    /// browser.
     static func join(_ meeting: MeetingLink) {
-        NSWorkspace.shared.open(meeting.url)
+        opener.open(meeting.launchURL(hasApp: opener.hasApp(for:)))
     }
 
     /// `ical://ekevent/<id>`, with the occurrence's date in front of the identifier
