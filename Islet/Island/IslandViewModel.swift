@@ -19,7 +19,7 @@ final class IslandViewModel {
         case compact(id: String)
         /// A transient alert.
         case banner(id: String)
-        /// Opened, showing the home page, an activity, or the drop zone.
+        /// Opened, showing the home page, an activity, the drop zone or a feature's page.
         case expanded(focus: String)
     }
 
@@ -123,7 +123,7 @@ final class IslandViewModel {
         if let focus {
             if focus == Self.homeFocus { return focus }
             if focus == Self.dropFocus, center.dropTarget != nil { return focus }
-            if center.activity(id: focus) != nil { return focus }
+            if center.activity(id: focus) != nil || center.pages[focus] != nil { return focus }
         }
         return center.primary?.id ?? Self.homeFocus
     }
@@ -817,8 +817,10 @@ struct IslandLayout: Equatable {
                 body = homeHeight
             } else if focus == IslandViewModel.dropFocus {
                 body = center.dropTarget?.expandedHeight ?? homeHeight
+            } else if let activity = center.activity(id: focus) {
+                body = activity.expandedHeight
             } else {
-                body = center.activity(id: focus)?.expandedHeight ?? homeHeight
+                body = center.pages[focus]?.height ?? homeHeight
             }
             layout.bodyHeight = body
             // A card taller than the page leaves room for lengthens the island below

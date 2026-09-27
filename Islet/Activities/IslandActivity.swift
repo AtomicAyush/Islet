@@ -216,6 +216,20 @@ struct HomeWidget: Identifiable {
     var view: AnyView
 }
 
+/// A page of the opened island that a feature owns rather than an activity, opened
+/// by selecting its id as the island's focus: from a home tile, or with
+/// `islet://open?focus=<id>`. While it is open the header shows its tab beside the
+/// home tab, which is the way back; it has no tab otherwise, since nothing is going on
+/// there to be told about.
+struct IslandPage: Identifiable {
+    var id: String
+    /// SF Symbol for the page's tab while it is open.
+    var symbol: String
+    /// Height of the page below the notch row.
+    var height: CGFloat
+    var view: AnyView
+}
+
 /// Receives files dragged onto the island. While a file drag nears the notch, the
 /// island opens onto this target's page.
 ///

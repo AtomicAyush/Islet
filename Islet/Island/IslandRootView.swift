@@ -442,6 +442,8 @@ private struct ExpandedIsland: View {
             )
         } else if let activity = model.center.activity(id: focus) {
             activity.expanded()
+        } else if let page = model.center.pages[focus] {
+            page.view
         }
     }
 }
@@ -466,8 +468,9 @@ private struct ExpandedHeader: View {
     }
 
     private var tabs: some View {
-        HStack(spacing: 4) {
-            if !model.center.activities.isEmpty {
+        let page = model.center.pages[focus]
+        return HStack(spacing: 4) {
+            if !model.center.activities.isEmpty || page != nil {
                 TabButton(symbol: "house.fill", isSelected: focus == IslandViewModel.homeFocus) {
                     model.select(focus: IslandViewModel.homeFocus)
                 }
@@ -475,6 +478,10 @@ private struct ExpandedHeader: View {
                     TabButton(symbol: activity.symbol, isSelected: focus == activity.id) {
                         model.select(focus: activity.id)
                     }
+                }
+                // A feature's page has a tab only while it is open; home is the way back.
+                if let page {
+                    TabButton(symbol: page.symbol, isSelected: true) {}
                 }
             }
         }

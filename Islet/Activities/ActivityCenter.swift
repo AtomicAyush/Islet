@@ -20,6 +20,8 @@ final class ActivityCenter {
     private(set) var standingAttachment: StandingAttachment?
     /// Home page tiles, in display order.
     private(set) var homeWidgets: [HomeWidget] = []
+    /// Features' own pages of the opened island, by id (`IslandPage`).
+    private(set) var pages: [String: IslandPage] = [:]
     /// Where files dragged onto the island go. `nil` leaves drags alone.
     var dropTarget: (any DropTarget)?
     /// Dots beside the notch, in display order.
@@ -237,5 +239,18 @@ final class ActivityCenter {
 
     func removeHomeWidget(id: String) {
         homeWidgets.removeAll { $0.id == id }
+    }
+
+    // MARK: Pages
+
+    /// Makes a page available to open. An island open on it when it is removed goes
+    /// back to what it would show anyway.
+    func setPage(_ page: IslandPage) {
+        pages[page.id] = page
+    }
+
+    func removePage(id: String) {
+        guard pages[id] != nil else { return }
+        withAnimation(.islandMorph) { pages[id] = nil }
     }
 }

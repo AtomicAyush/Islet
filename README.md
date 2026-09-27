@@ -170,6 +170,21 @@ to the clipboard (with Control held down) makes no file, so Islet doesn't see it
 time, macOS asks whether Islet may see the folder screenshots are saved to (the Desktop, unless
 you've chosen another).
 
+**Clipboard History.** The last dozen things you copied — text, links, pictures and files —
+on the home page, newest first, each with the app it came from and when; click one and it is
+on the clipboard again, ready to paste. The tile's arrow opens a page with all of them, where a
+pin keeps one at the top, across restarts too. macOS says nothing when something is copied, so
+Islet glances at the clipboard's change count twice a second and reads the clipboard only once
+the count has moved. macOS 27 asks before an app reads what other apps copy, so the first copy
+puts an Allow button on the tile: click it and allow Islet when macOS asks, then turn Islet on
+under Privacy & Security › Paste from Other Apps; until then nothing new is kept. Left out are
+anything an app marks as secret or passing, as apps do after the conventions at nspasteboard.org,
+and anything copied while 1Password, Bitwarden, Passwords, Keychain Access or another password
+manager is in front; a password manager's browser extension that marks nothing looks like the
+browser. Files are kept as references, never copied. The history lives in memory unless you ask
+Settings to keep it between launches (pictures over 2 MB, unless pinned, stay in memory only),
+and it can clear itself when the Mac locks.
+
 Every feature can be turned off, and each has previews in the menu bar item, so you can see
 what it looks like without waiting for the real thing.
 
@@ -245,6 +260,8 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://shortcuts/run?name=Morning%20Lights` | Runs a shortcut (`id=` takes the identifier `shortcuts list --show-identifiers` prints) |
 | `islet://banner?title=Build%20finished` | Puts up a banner of your own (below) |
 | `islet://banner/dismiss` | Takes it down |
+| `islet://open?focus=clipboard` | Opens the island on the clipboard history |
+| `islet://clipboard/clear` | Clears the clipboard history, pinned items apart |
 | `islet://settings?tab=activities` | Opens Settings on a tab |
 
 ```bash
@@ -317,8 +334,8 @@ swift test && open -g "islet://banner?title=Tests%20passed&symbol=checkmark.circ
 - `Islet/Island/` — the window, the notch measurements, the shape, and the state machine
   that decides what the island shows and how big it is.
 - `Islet/Activities/` — `ActivityCenter`, the single source of truth every window renders,
-  and the contracts features publish through: live activities, banners, home widgets,
-  indicators and the drop target.
+  and the contracts features publish through: live activities, banners, home widgets and
+  the pages they open, indicators and the drop target.
 - `Islet/Features/` — one folder per feature. Each owns its model and views and talks to
   the island only through `ActivityCenter`. The timer is the smallest and the pattern the
   rest follow.
