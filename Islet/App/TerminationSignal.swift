@@ -29,9 +29,14 @@ enum TerminationSignal {
                 guard !asked else { return end() }
                 asked = true
                 queue.asyncAfter(deadline: .now() + grace) { end() }
-                DispatchQueue.main.async {
+                // From the run loop, not the main queue: a quit that waits a moment for
+                // work on the main actor (Pomodoro turning off a Focus) needs the queue
+                // free, and it is not while one of its own blocks is asking to quit.
+                let main = CFRunLoopGetMain()
+                CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) {
                     MainActor.assumeIsolated { quit() }
                 }
+                CFRunLoopWakeUp(main)
             }
             source.resume()
             self.source = source

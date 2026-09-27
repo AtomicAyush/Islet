@@ -33,6 +33,24 @@ struct IsletShortcuts: AppShortcutsProvider {
             systemImageName: "cup.and.saucer"
         )
         AppShortcut(
+            intent: StartPomodoroIntent(),
+            phrases: [
+                "Start a Pomodoro with \(.applicationName)",
+                "Start Pomodoro in \(.applicationName)",
+            ],
+            shortTitle: "Start Pomodoro",
+            systemImageName: "brain.head.profile"
+        )
+        AppShortcut(
+            intent: StopPomodoroIntent(),
+            phrases: [
+                "Stop the Pomodoro with \(.applicationName)",
+                "Stop Pomodoro in \(.applicationName)",
+            ],
+            shortTitle: "Stop Pomodoro",
+            systemImageName: "stop.circle"
+        )
+        AppShortcut(
             intent: MuteMicrophoneIntent(),
             phrases: [
                 "Mute or unmute the microphone with \(.applicationName)",

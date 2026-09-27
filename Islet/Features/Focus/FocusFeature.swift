@@ -71,6 +71,17 @@ final class FocusFeature: Feature {
         AnyView(FocusSettingsView(model: model, shortcuts: shortcuts))
     }
 
+    /// The Focus as the database has it, for Pomodoro, which turns one on with the same
+    /// toggle shortcut: `nil` when that cannot be told, with this feature off, before
+    /// its first look, or without Full Disk Access. A preview is not a Focus.
+    var readableState: FocusState? {
+        guard isRunning, model.access == .granted else { return nil }
+        return model.state
+    }
+
+    /// Whether Islet can see Focus: `.unknown` with this feature off.
+    var access: FocusAccess { model.access }
+
     /// Sample Focuses, not the person's: each announces itself, then stands in for the
     /// real state beside the notch and on the home page for eight seconds. Nothing is
     /// turned on or off.

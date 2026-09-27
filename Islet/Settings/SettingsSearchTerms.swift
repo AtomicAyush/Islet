@@ -294,3 +294,14 @@ extension PresentationFeature {
         )
     }
 }
+
+extension PomodoroFeature {
+    var searchTerms: SettingsSearchTerms {
+        SettingsSearchTerms(
+            labels: ["Start breaks by themselves", "Start focus sessions by themselves", "Sound at each change",
+                     "Turn on Focus while focusing", "Keep the Mac awake while focusing"],
+            keywords: ["pomodoro", "tomato", "focus session", "break", "short break", "long break", "study", "work",
+                       "productivity", "timer", "cycle", "25 minutes"]
+        )
+    }
+}

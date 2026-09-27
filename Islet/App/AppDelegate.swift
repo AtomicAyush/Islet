@@ -48,6 +48,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// A Focus that Pomodoro turned on is turned off by a shortcut, which takes a moment,
+    /// and would be ended with Islet mid-run: Islet waits for it, a few seconds at most.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let pomodoro = FeatureRegistry.shared.feature(PomodoroFeature.self), pomodoro.needsTimeToQuit else {
+            return .terminateNow
+        }
+        let wait = QuitWait { sender.reply(toApplicationShouldTerminate: true) }
+        Task {
+            wait.began = true
+            await pomodoro.endBeforeQuitting(within: PomodoroFeature.quitGrace)
+            wait.reply()
+        }
+        wait.arm(limit: PomodoroFeature.quitGrace + 1)
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         FeatureRegistry.shared.stopAll()
         // Features stop their shortcuts gently, and follow up on a timer the app will
@@ -60,5 +76,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         SettingsWindowController.shared.show()
         return false
+    }
+}
+
+/// The reply to a quit that waits, given once, and given anyway if the wait cannot
+/// start or runs long. Timers fire while AppKit waits for the reply even where the main
+/// queue cannot: a quit asked for from inside one of the queue's blocks leaves the work
+/// no way to begin, and Islet then goes at once, leaving what it owed to the next launch.
+@MainActor
+private final class QuitWait {
+    var began = false
+    private var replied = false
+    private let send: @MainActor () -> Void
+
+    init(send: @escaping @MainActor () -> Void) {
+        self.send = send
+    }
+
+    func reply() {
+        guard !replied else { return }
+        replied = true
+        send()
+    }
+
+    func arm(limit: TimeInterval) {
+        let check = Timer(timeInterval: 0.5, repeats: false) { [self] _ in
+            MainActor.assumeIsolated { if !began { reply() } }
+        }
+        let end = Timer(timeInterval: limit, repeats: false) { [self] _ in
+            MainActor.assumeIsolated { reply() }
+        }
+        for timer in [check, end] { RunLoop.main.add(timer, forMode: .common) }
     }
 }

@@ -84,6 +84,27 @@ Mac stays awake while any of them asks, and stopping one leaves the rest as they
 it, turning it off or quitting Islet lets the Mac sleep again, and a session is never picked
 back up when Islet next opens.
 
+**Pomodoro.** Twenty-five minutes of focus, a five-minute break, and after every fourth focus a
+fifteen-minute one, each length and the count set in Settings. Start it from the home page,
+`islet://pomodoro/start` or the Start Pomodoro action in Shortcuts, and end it with Stop
+Pomodoro. While it runs, the phase's symbol sits left of the camera, red for focus and green for
+a break, with the time left on the right, or "Ready" when the next phase waits for your click;
+beside music it waits in the bubble as a draining ring, and the song keeps the island. Opened,
+it says which focus of the cycle it is ("Focus 2 of 4"), and pauses, skips or stops; a pause
+holds the time left. As each phase ends a sound plays and a word shows beside the notch, or in a
+row under the music: "Focus done — 5 minute break", "Break over — Back to it". Breaks start by
+themselves and the next focus waits for your click, unless you change either in Settings. The
+home tile counts the focus sessions you finished today, from nought again at midnight. Phases
+end at the time they said, even if the Mac slept through it, but a focus never starts by itself
+while the Mac is asleep, and none that came and went then is counted. If you ask, a focus
+session turns on Focus with the shortcut chosen in Focus's settings and turns it off for the
+break. The shortcut toggles, so this needs the Focus feature on, with Full Disk Access, to see
+what it will do: a Focus that was already on is left as it was. Quitting Islet ends a session,
+and it is not picked back up when Islet next opens; Islet waits a few seconds as it quits to
+turn off a Focus it turned on, and if the shortcut cannot finish in time, turns that Focus off
+at the next launch. It can also keep the Mac awake with a power assertion of its own, "Islet:
+Pomodoro", given back as the focus ends or pauses.
+
 **Battery.** The iPhone's charging flash when you plug in — "Charging" on one side, the
 level and a green battery on the other — and warnings as the battery runs low. Full charge,
 Low Power Mode and unplugging can be announced too.
@@ -461,6 +482,9 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://timer/pause`, `/resume`, `/cancel` | |
 | `islet://keepAwake/start?minutes=60` | Keeps the Mac awake for an hour (`hours=`, `seconds=` too, up to a day); with no length, until turned off |
 | `islet://keepAwake/toggle`, `/extend`, `/stop` | Starts it (taking the same lengths) or stops it; adds 15 minutes (or `minutes=`); stops it |
+| `islet://pomodoro/start?minutes=50` | Starts a focus of 50 minutes (1 to 120; with no length, as in Settings), or carries on |
+| `islet://pomodoro/pause`, `/resume`, `/skip`, `/stop` | As the opened island's buttons do |
+| `islet://pomodoro/toggle` | Pauses a session running, or starts or resumes one |
 | `islet://preview?feature=battery&index=0` | Runs a feature's preview |
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
