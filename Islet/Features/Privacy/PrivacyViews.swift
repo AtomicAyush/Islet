@@ -253,16 +253,28 @@ struct PrivacySoundMixerLine: View {
 /// use, as on the home tile, and the Sound Mixer's own recording, greyed. Every privacy
 /// indicator opens this same card, so it stays open while any of them is lit; once
 /// none is, it says so for the moment before it closes.
+///
+/// While Mic Mute is on, the microphone's line ends in its Mute button, or Unmute while
+/// it is muted: the app keeps the microphone, and its dot, and hears silence. A
+/// microphone Mic Mute cannot mute gets no button.
 struct PrivacyIndicatorCard: View {
     let monitor: PrivacyMonitor
+    var microphoneMute: MicMuteModel? = nil
 
     /// Wide enough for "System Audio · QuickTime Player" whole; a longer line truncates.
     static let maxWidth: CGFloat = 248
+    /// With Mute ending the microphone's line, as much wider again as the button takes,
+    /// so that line keeps the room the others have.
+    static let maxWidthWithMute: CGFloat = maxWidth + 72
     static let lineHeight: CGFloat = 22
+    /// Mute's capsule, a little shorter than the line it ends.
+    static let muteButtonHeight: CGFloat = 20
 
     var body: some View {
         let usage = monitor.usage
         let sensors = usage.sensorsInUse
+        let offersMute = usage.microphone.inUse && microphoneMute.map { $0.isRunning && $0.canToggle } == true
+        let padding = IndicatorCardLayout.padding.leading + IndicatorCardLayout.padding.trailing
         VStack(alignment: .leading, spacing: 0) {
             if sensors.isEmpty {
                 Text("Nothing in use now")
@@ -271,8 +283,13 @@ struct PrivacyIndicatorCard: View {
                     .frame(height: Self.lineHeight)
             } else {
                 ForEach(sensors, id: \.self) { sensor in
-                    PrivacySensorLine(sensor: sensor, use: usage[sensor], full: true)
-                        .frame(height: Self.lineHeight)
+                    HStack(spacing: 8) {
+                        PrivacySensorLine(sensor: sensor, use: usage[sensor], full: true)
+                        if sensor == .microphone, offersMute, let microphoneMute {
+                            MicMuteButton(model: microphoneMute, height: Self.muteButtonHeight)
+                        }
+                    }
+                    .frame(height: Self.lineHeight)
                 }
                 // It explains the purple dot macOS shows and Islet does not.
                 if usage.soundMixer {
@@ -281,6 +298,9 @@ struct PrivacyIndicatorCard: View {
                 }
             }
         }
+        // The card is published at the wider of its two widths, since Mic Mute can come
+        // and go while it is up; the lines keep to the narrower without the button.
+        .frame(maxWidth: (offersMute ? Self.maxWidthWithMute : Self.maxWidth) - padding, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

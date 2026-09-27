@@ -32,5 +32,14 @@ struct IsletShortcuts: AppShortcutsProvider {
             shortTitle: "Stop Keeping Awake",
             systemImageName: "cup.and.saucer"
         )
+        AppShortcut(
+            intent: MuteMicrophoneIntent(),
+            phrases: [
+                "Mute or unmute the microphone with \(.applicationName)",
+                "Toggle microphone mute in \(.applicationName)",
+            ],
+            shortTitle: "Mute Microphone",
+            systemImageName: "mic.slash.fill"
+        )
     }
 }

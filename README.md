@@ -132,6 +132,22 @@ purple dot there), and recorded sound and location aren't shown. The Sound Mixer
 the Mac plays to set each app's volume, which macOS marks with its own purple dot; Islet never
 lights a dot for it.
 
+**Mic Mute.** One click mutes the microphone for every app at once — a call in Zoom, Teams or
+FaceTime, a voice note, dictation — and a red crossed-out microphone stays beside the notch for
+as long as it is muted, on the resting island too; click it for Unmute. The home page has the
+button, a click on the microphone's dot offers Mute while an app is using it, and the **Mute
+Microphone** action in Shortcuts (give the shortcut a key in its details) or
+`islet://micMute/toggle` mute from anywhere, with a word beside the notch to say so. Islet mutes
+the Mac's input from Sound settings with the microphone's own mute, or, on one without, by
+turning its input level right down; it never listens itself, so the app keeps the microphone,
+and macOS its orange dot, but hears silence. The mute follows the input to another microphone,
+AirPods connecting say, putting the last one back, and the island says so if the new one can't
+be muted. Unmuted or turned up somewhere else — its own button, another app, Sound settings —
+the red mark goes and the island says so, rather than show a microphone muted that isn't. An
+app set to a microphone of its own rather than the Mac's input isn't muted. Quitting Islet
+unmutes, `killall Islet` included, and should it crash while muted, it puts the microphone back
+as it found it the next time it starts.
+
 **Focus.** While Do Not Disturb, Sleep, Work or a Focus of your own is on, its symbol stays
 beside the notch in its colour, the home tile says which and until when, and song changes go
 unannounced. macOS shows a banner of its own for every Focus change, so Islet's iPhone-style
@@ -332,6 +348,7 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://preview?feature=battery&index=0` | Runs a feature's preview |
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
+| `islet://micMute/toggle`, `/mute`, `/unmute` | Mutes or unmutes the microphone for every app |
 | `islet://shortcuts/run?name=Morning%20Lights` | Runs a shortcut (`id=` takes the identifier `shortcuts list --show-identifiers` prints) |
 | `islet://banner?title=Build%20finished` | Puts up a banner of your own (below) |
 | `islet://banner/dismiss` | Takes it down |

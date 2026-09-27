@@ -25,6 +25,13 @@ final class PrivacyFeature: Feature {
     private let monitor = PrivacyMonitor()
     private var defaultsObserver: NSObjectProtocol?
 
+    /// Mic Mute, for a Mute button on the card's microphone line while an app is using
+    /// it. Looked up as the card is drawn, so it is there whenever Mic Mute is on; tests
+    /// hand in their own.
+    static var microphoneMute: @MainActor () -> MicMuteModel? = {
+        FeatureRegistry.shared.feature(MicMuteFeature.self)?.model
+    }
+
     init() {
         monitor.onChange = { [weak self] started in self?.changed(started) }
     }
@@ -99,23 +106,24 @@ final class PrivacyFeature: Feature {
     }
 
     /// One dot for the camera and microphone, like the iPhone's (green wins over
-    /// orange); a purple one beside it for the screen and the Mac's sound, as macOS
-    /// has; and the location arrow after both, at the island's end, where it comes and
-    /// goes without moving them: a single look-up lights it for a dozen seconds. For
-    /// the same reason the arrow alone never brings up the island where it is hidden.
+    /// orange), after Mic Mute's red mark where that is lit; a purple one beside it for
+    /// the screen and the Mac's sound, as macOS has; and the location arrow after both,
+    /// at the island's end, where it comes and goes without moving them: a single
+    /// look-up lights it for a dozen seconds. For the same reason the arrow alone never
+    /// brings up the island where it is hidden.
     ///
     /// Clicked in the opened island, each opens the same card, which lists everything
-    /// in use and by whom.
+    /// in use and by whom, with Mute beside the microphone while Mic Mute is on.
     private func render() {
         let center = ActivityCenter.shared
         let usage = monitor.usage
-        let detail = IndicatorDetail(id: id, title: "Privacy", maxWidth: PrivacyIndicatorCard.maxWidth) { [monitor] in
-            AnyView(PrivacyIndicatorCard(monitor: monitor))
+        let detail = IndicatorDetail(id: id, title: "Privacy", maxWidth: PrivacyIndicatorCard.maxWidthWithMute) { [monitor] in
+            AnyView(PrivacyIndicatorCard(monitor: monitor, microphoneMute: PrivacyFeature.microphoneMute()))
         }
 
         if let tint = usage.dotTint {
             center.setIndicator(StatusIndicator(
-                id: Self.dotID, color: tint, order: 1,
+                id: Self.dotID, color: tint, order: 2,
                 label: usage.indicatorLabel(for: [.camera, .microphone]), detail: detail
             ))
         } else {
@@ -123,7 +131,7 @@ final class PrivacyFeature: Feature {
         }
         if usage.capturesScreenOrSound {
             center.setIndicator(StatusIndicator(
-                id: Self.captureID, color: privacyPurple, order: 2,
+                id: Self.captureID, color: privacyPurple, order: 3,
                 label: usage.indicatorLabel(for: [.screen, .systemAudio]), detail: detail
             ))
         } else {
@@ -131,7 +139,7 @@ final class PrivacyFeature: Feature {
         }
         if usage.location.inUse {
             center.setIndicator(StatusIndicator(
-                id: Self.locationID, color: privacyBlue, order: 3, symbol: PrivacyMonitor.Sensor.location.symbol,
+                id: Self.locationID, color: privacyBlue, order: 4, symbol: PrivacyMonitor.Sensor.location.symbol,
                 keepsIslandShown: false, label: usage.indicatorLabel(for: [.location]), detail: detail
             ))
         } else {

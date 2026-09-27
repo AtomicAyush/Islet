@@ -21,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = StatusItemController()
         welcomeOnFirstLaunch()
         URLRouter.launchFinished()
+        // Now that there are features to stop: `pkill` and `killall` quit as the menu does.
+        TerminationSignal.install { NSApp.terminate(nil) }
     }
 
     /// The island is easy to miss the first time — it looks like the notch. Say

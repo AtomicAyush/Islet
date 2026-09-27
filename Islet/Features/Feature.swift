@@ -62,6 +62,7 @@ final class FeatureRegistry {
         InputDevicesFeature(),
         CalendarFeature(),
         PrivacyFeature(),
+        MicMuteFeature(),
         FocusFeature(),
         ShortcutsFeature(),
         BannerFeature(),
