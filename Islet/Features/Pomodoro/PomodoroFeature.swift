@@ -424,18 +424,59 @@ private struct PomodoroSettingsView: View {
             + "session starts and as its break begins. A Focus already on is left as it is."
     }
 
-    /// The number beside its arrows, as System Settings sets one out.
+    /// A number that can be typed or nudged with its arrows, as System Settings sets one
+    /// out.
     private func stepper(
         _ title: String, value: Binding<Int>, in range: ClosedRange<Int>, unit: String = "minutes"
     ) -> some View {
-        Stepper(value: value, in: range) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(value.wrappedValue == 1 && unit == "minutes" ? "1 minute" : "\(value.wrappedValue) \(unit)")
+        LabeledContent(title) {
+            HStack(spacing: 6) {
+                PomodoroNumberField(value: value, range: range, label: title)
+                Text(value.wrappedValue == 1 && unit == "minutes" ? "minute" : unit)
                     .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                Stepper(title, value: value, in: range)
+                    .labelsHidden()
             }
         }
+    }
+}
+
+/// A whole number typed into Settings: taken when Return is pressed or the field is
+/// left, kept within `range`, and put back as it was when what was typed isn't a number.
+struct PomodoroNumberField: View {
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let label: String
+    @State private var text = ""
+    @SwiftUI.FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(label, text: $text)
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .frame(width: 44)
+            .focused($isFocused)
+            .onAppear { text = String(value) }
+            // The arrows, or another window, changed it: show the new number.
+            .onChange(of: value) { _, new in
+                if !isFocused { text = String(new) }
+            }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { commit() }
+            }
+            .onSubmit(commit)
+    }
+
+    private func commit() {
+        text = String(Self.clamped(text, to: range, keeping: value))
+        if let typed = Int(text), typed != value { value = typed }
+    }
+
+    /// `typed` as a whole number within `range`; `current` when it isn't a number.
+    static func clamped(_ typed: String, to range: ClosedRange<Int>, keeping current: Int) -> Int {
+        guard let number = Int(typed.trimmingCharacters(in: .whitespaces)) else { return current }
+        return min(max(number, range.lowerBound), range.upperBound)
     }
 }
