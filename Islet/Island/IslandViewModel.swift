@@ -60,10 +60,16 @@ final class IslandViewModel {
     /// is closed: one opened again while it is still fading out is the same view, come
     /// back, and reports no new height. Forgotten as the island closes.
     private(set) var indicatorCardHeights: [String: CGFloat] = [:]
-    /// Room kept for a card that closed or shrank under the pointer
-    /// (`keepingCardRoom(_:)`).
-    private var heldCardRoom: CGFloat = 0
+    /// The opened island's size as last laid out while the pointer is over it: the room
+    /// it keeps when what it shows asks for less, for as long as the pointer rests in
+    /// the part given up (`keepingRoom(for:)`), and all of it through the grace after
+    /// the pointer leaves, for it to come back to. Zero once nothing waits for the
+    /// pointer, and while the island is closed.
+    private var roomUnderPointer = CGSize.zero
     /// Where the pointer last was, in global coordinates, as the controller reports it.
+    /// Not observed: the layout reads it only while the pointer is over the opened
+    /// island, and every report of it there that could change the answer updates
+    /// `roomUnderPointer` (`followPointer()`).
     @ObservationIgnored private var pointerLocation: CGPoint?
 
     /// The current press began on the island, so a drag it starts is outgoing (a file
@@ -318,17 +324,18 @@ final class IslandViewModel {
     /// looks at them.
     func pointer(inside: Bool, overSecondary: Bool = false, at point: CGPoint? = nil, buttonsDown: Bool = false) {
         if let point { pointerLocation = point }
-        if heldCardRoom > 0 { releaseCardRoom(inside: inside) }
         if overSecondary != isHoveringSecondary {
             withAnimation(.islandHover) { isHoveringSecondary = overSecondary }
         }
         guard inside != isHovering else {
+            if inside { followPointer() }
             if inside, peekWait != .none, mode == .hidden { peek(at: point, buttonsDown: buttonsDown) }
             return
         }
         withAnimation(.islandHover) { isHovering = inside }
 
         if inside {
+            followPointer()
             cancelCollapse()
             if !isExpanded, Prefs.expandOnHover, !isShowingCard {
                 if mode != .hidden {
@@ -407,6 +414,9 @@ final class IslandViewModel {
         withAnimation(.islandOpen) {
             self.focus = focus
             isExpanded = true
+            // Opened onto a page while the pointer is away, the close it left behind is
+            // called off, and nothing waits for it to come back to the room it had.
+            if !isHovering { roomUnderPointer = .zero }
         }
         if !wasExpanded { Haptics.tap(.alignment) }
     }
@@ -424,7 +434,7 @@ final class IslandViewModel {
             focus = nil
             indicatorCard = nil
             indicatorCardHeights = [:]
-            heldCardRoom = 0
+            roomUnderPointer = .zero
         }
         homePage = 0
     }
@@ -432,6 +442,75 @@ final class IslandViewModel {
     func select(focus: String) {
         closeIndicatorCard()
         withAnimation(.islandMorph) { self.focus = focus }
+    }
+
+    // MARK: Room under the pointer
+
+    /// The opened island's size for content that asks for `size`: never smaller than
+    /// the room the pointer is resting in.
+    ///
+    /// What the opened island shows can get smaller by itself — Now Playing turning
+    /// from a song to a video, or closing Up Next as another player takes over; a
+    /// meeting or a timer taking the page; a card closing — as well as at a click.
+    /// Were the island to shrink with it while the pointer rests in the part given up,
+    /// the pointer would be left outside without having moved, and the island would
+    /// close as though it had been left. So in whichever direction the pointer is
+    /// beyond what the content asks for, the island keeps the size it had, the content
+    /// at its top and the rest plain island, until the pointer moves up out of that
+    /// room or the island closes; then it springs to the size asked for. A change that
+    /// leaves the pointer within what the content asks for (a tab chosen, a panel
+    /// closed from its own button) shrinks the island at once. The island hangs centred
+    /// on the notch, so width it keeps is kept evenly either side.
+    ///
+    /// A pointer that moves off the island has the leave grace to come back, and it
+    /// must find the island where it left it: were the room to go at once, a brush just
+    /// past the edge of the part given up would come back to nothing and the island
+    /// would close, where one that is simply that size stays open. So through the grace
+    /// all the room is kept, and an island that is not come back to closes from it in
+    /// one movement (`scheduleCollapse(after:)`).
+    fileprivate func keepingRoom(for size: CGSize) -> CGSize {
+        guard isExpanded, roomUnderPointer != .zero else { return size }
+        var kept = size
+        guard isHovering, let pointer = pointerLocation else {
+            kept.height = max(size.height, roomUnderPointer.height)
+            kept.width = max(size.width, roomUnderPointer.width)
+            return kept
+        }
+        let bottom = metrics.screenFrame.maxY - metrics.topInset - size.height
+        if pointer.y < bottom {
+            kept.height = max(size.height, roomUnderPointer.height)
+        }
+        if abs(pointer.x - metrics.notchMidX) > size.width / 2 {
+            kept.width = max(size.width, roomUnderPointer.width)
+        }
+        return kept
+    }
+
+    /// The pointer is over the island, or has just moved off the opened island and the
+    /// leave grace is running, the room it rested in kept for it to come back to. The
+    /// controller asks, so that an opened island coming to lie under a pointer at rest
+    /// has it over it only when the pointer was there to begin with: not when a command
+    /// opened the island over a pointer that never came to it.
+    var hasPointer: Bool {
+        isHovering || roomUnderPointer != .zero
+    }
+
+    /// The pointer is over the opened island: keeps `roomUnderPointer` to the island's
+    /// size as laid out with the pointer where it is now. A pointer that has moved up
+    /// out of room the content no longer asks for gives that room up, and the island
+    /// springs to the size its content asks for.
+    private func followPointer() {
+        guard isExpanded else { return }
+        let room = layout.size
+        guard room != roomUnderPointer else { return }
+        withAnimation(.islandMorph) { roomUnderPointer = room }
+    }
+
+    /// Nothing waits for a pointer that has left any more: the island springs to the
+    /// size its content asks for.
+    private func releaseRoom() {
+        guard !isHovering, roomUnderPointer != .zero else { return }
+        withAnimation(.islandMorph) { roomUnderPointer = .zero }
     }
 
     // MARK: Indicator cards
@@ -455,72 +534,28 @@ final class IslandViewModel {
             return
         }
         guard isExpanded, let detail = center.indicators.first(where: { $0.id == id })?.detail else { return }
-        keepingCardRoom {
-            withAnimation(.indicatorCard) { indicatorCard = OpenIndicatorCard(indicatorID: id, detail: detail) }
-        }
+        withAnimation(.indicatorCard) { indicatorCard = OpenIndicatorCard(indicatorID: id, detail: detail) }
     }
 
+    /// Closes the open card. An island the card lengthened keeps that length while the
+    /// pointer rests in it — on the strip beside the card, clicked to close it, or on
+    /// its last lines as it goes — as it does whatever else it shows gets shorter
+    /// (`keepingRoom(for:)`).
     func closeIndicatorCard() {
         guard indicatorCard != nil else { return }
-        keepingCardRoom {
-            withAnimation(.indicatorCard) { indicatorCard = nil }
-        }
+        withAnimation(.indicatorCard) { indicatorCard = nil }
     }
 
     /// The card `id` is drawn `height` tall.
     func indicatorCardMeasured(id: String, height: CGFloat) {
         guard indicatorCardHeights[id] != height else { return }
-        keepingCardRoom { indicatorCardHeights[id] = height }
+        indicatorCardHeights[id] = height
     }
 
     /// How tall a card the opened island makes room for under its header: the open
-    /// card, or one held for the pointer, whichever is taller (`IslandLayout`).
+    /// card's height, or zero (`IslandLayout`).
     var indicatorCardRoom: CGFloat {
-        max(openCardHeight, heldCardRoom)
-    }
-
-    private var openCardHeight: CGFloat {
         indicatorCard.flatMap { indicatorCardHeights[$0.detail.id] } ?? 0
-    }
-
-    /// Makes `change`, which may leave the open card shorter or close it, without
-    /// pulling the island's bottom edge up from under the pointer. A card taller than
-    /// its page leaves room for lengthens the island; were the island to shorten while
-    /// the pointer rests in that added length — on the strip beside the card, clicked
-    /// to close it, or on its last lines as they go — the pointer would be left
-    /// outside, and the island would close as though it had been left. So the room
-    /// stays until the pointer moves up into the rest of the island, or off it, or the
-    /// island closes (`releaseCardRoom(inside:)`).
-    private func keepingCardRoom(_ change: () -> Void) {
-        let before = indicatorCardRoom
-        let bottom = islandBottom
-        change()
-        guard isExpanded, isHovering, let pointer = pointerLocation, indicatorCardRoom < before else { return }
-        let length = cardGrowth(before) - cardGrowth(indicatorCardRoom)
-        if pointer.y < bottom + length { heldCardRoom = before }
-    }
-
-    /// The pointer moved: the room held for a card goes once it is off the island, or
-    /// above the length that room adds.
-    private func releaseCardRoom(inside: Bool) {
-        if inside, let pointer = pointerLocation {
-            let length = cardGrowth(heldCardRoom) - cardGrowth(openCardHeight)
-            guard pointer.y >= islandBottom + length else { return }
-        }
-        withAnimation(.indicatorCard) { heldCardRoom = 0 }
-    }
-
-    /// How much longer the opened island, as laid out now, is for a card `height` tall.
-    private func cardGrowth(_ height: CGFloat) -> CGFloat {
-        let layout = layout
-        return IndicatorCardLayout.growth(cardHeight: height, pageHeight: layout.bodyHeight, notchHeight: layout.notch.height)
-    }
-
-    /// The island's bottom edge on screen, in global coordinates (y up), as the
-    /// controller places it.
-    private var islandBottom: CGFloat {
-        let layout = layout
-        return metrics.screenFrame.maxY - layout.topInset - layout.size.height
     }
 
     /// A click on an indicator in the resting or compact island: it opens with that
@@ -545,6 +580,8 @@ final class IslandViewModel {
         cancelCollapse()
         if !isExpanded || focus != Self.dropFocus {
             expand(focus: Self.dropFocus)
+        } else {
+            releaseRoom()
         }
     }
 
@@ -579,8 +616,13 @@ final class IslandViewModel {
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.isHovering else { return }
             #if DEBUG
-            if self.isPinnedOpen { return }
+            if self.isPinnedOpen {
+                self.releaseRoom()
+                return
+            }
             #endif
+            // The room kept for the pointer goes as the island closes, in the one
+            // movement.
             self.collapse("pointer left the island")
         }
         collapseWork = work
@@ -880,10 +922,12 @@ struct IslandLayout: Equatable {
             let card = IndicatorCardLayout.growth(
                 cardHeight: model.indicatorCardRoom, pageHeight: body, notchHeight: notch.height
             )
-            layout.size = CGSize(
+            // Any room the pointer rests in beyond that is kept, the page keeping its
+            // own height at the top.
+            layout.size = model.keepingRoom(for: CGSize(
                 width: max(expandedWidth, notch.width + 300) + 2 * layout.earRadius,
                 height: notch.height + body + expandedInset.bottom + card
-            )
+            ))
             corners(30, top: 24)
             layout.showsShadow = true
         }

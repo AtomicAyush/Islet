@@ -277,7 +277,15 @@ final class IslandWindowController {
     /// When the island changes shape on its own (a banner arriving, say) the pointer
     /// may now be over it without having moved. That does not count as hovering —
     /// otherwise a pointer resting near the top of the screen would open the island
-    /// every time something happened.
+    /// every time something happened. Opened, it is the other way about. Only the
+    /// pointer's own moving takes it off the island, never the island changing shape
+    /// around it while it rests: the model keeps the room the pointer rests in
+    /// (`IslandViewModel.keepingRoom(for:)`), and anything else that leaves it outside
+    /// must not close the island as though it had been left. An opened island that
+    /// grows under the pointer it already has, or has just been left by, has it over
+    /// it, which keeps that room up to date as the island grows; one opened by a
+    /// command over a pointer that never came to it does not, and stays open when the
+    /// pointer goes on its way.
     private func updateHitTesting(pointerMoved: Bool = true) {
         guard let layout else { return }
         let point = NSEvent.mouseLocation
@@ -291,7 +299,7 @@ final class IslandWindowController {
            NSPasteboard(name: .drag).changeCount == dragChangeCount {
             return
         }
-        if pointerMoved || !inside {
+        if pointerMoved || (model.isExpanded ? inside && model.hasPointer : !inside) {
             model.pointer(
                 inside: overIsland, overSecondary: overSecondary,
                 at: point, buttonsDown: NSEvent.pressedMouseButtons != 0
