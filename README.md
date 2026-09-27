@@ -179,11 +179,13 @@ copy it, put it on the Drop Zone shelf, show it in Finder or move it to the Tras
 your click). Islet knows a screenshot by the tag macOS gives it, through Spotlight and by
 watching the folder the Screenshot app saves to, so a picture that isn't one, or an old
 screenshot moved there, never shows. macOS holds each new screenshot in its floating thumbnail
-for about five seconds before saving it, so the card comes after that; turn off Show Floating
-Thumbnail under Options in the Screenshot app (⇧⌘5) for it to come at once. A screenshot copied
-to the clipboard (with Control held down) makes no file, so Islet doesn't see it. The first
-time, macOS asks whether Islet may see the folder screenshots are saved to (the Desktop, unless
-you've chosen another).
+for about five seconds before saving it, so the card comes after that. Turn on Show screenshots
+here at once in Islet's Screenshots settings (or turn off Show Floating Thumbnail under Options
+in the Screenshot app, ⇧⌘5) and it comes the moment it is taken, the card standing in for the
+thumbnail: click its picture to mark it up in Preview. Islet changes that setting only when you
+click the switch. A screenshot copied to the clipboard (with Control held down) makes no file,
+so Islet doesn't see it. The first time, macOS asks whether Islet may see the folder screenshots
+are saved to (the Desktop, unless you've chosen another).
 
 **Clipboard History.** The last dozen things you copied — text, links, pictures and files —
 on the home page, newest first, each with the app it came from and when; click one and it is

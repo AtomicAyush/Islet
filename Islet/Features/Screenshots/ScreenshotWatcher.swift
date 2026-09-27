@@ -1,7 +1,9 @@
 import AppKit
 
 /// How macOS is set to save screenshots, from the Screenshot app's Options (⇧⌘5),
-/// which it keeps in the `com.apple.screencapture` domain. Only ever read.
+/// which it keeps in the `com.apple.screencapture` domain. They are read whenever they
+/// are needed; the floating thumbnail's is the only one ever written, and only when its
+/// switch in Settings is clicked.
 struct ScreenshotPreferences: Equatable {
     /// Where screenshots are saved: the Desktop unless another folder is chosen.
     var folder: URL
@@ -12,16 +14,30 @@ struct ScreenshotPreferences: Equatable {
     /// until the thumbnail goes, about five seconds later.
     var showsThumbnail: Bool
 
+    /// The floating thumbnail's setting; macOS shows the thumbnail while there is none.
+    static let thumbnailKey = "show-thumbnail"
+
     static var desktop: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop", isDirectory: true)
     }
 
     static func read() -> ScreenshotPreferences {
-        let domain = "com.apple.screencapture" as CFString
-        // Another app's settings are cached; this makes the read a fresh one.
-        CFPreferencesAppSynchronize(domain)
-        func value(_ key: String) -> Any? { CFPreferencesCopyAppValue(key as CFString, domain) }
-        return make(location: value("location") as? String, target: value("target") as? String, showThumbnail: value("show-thumbnail"))
+        read(from: .system)
+    }
+
+    static func read(from store: ScreenshotSettingsStore) -> ScreenshotPreferences {
+        store.synchronize()
+        return make(location: store.value("location") as? String, target: store.value("target") as? String,
+                    showThumbnail: store.value(thumbnailKey))
+    }
+
+    /// Turns macOS's floating thumbnail off, so each screenshot is saved the moment it is
+    /// taken (`true`), or takes the setting away, so macOS's own default, the thumbnail,
+    /// is back (`false`). Called off the main thread, and only when the switch in
+    /// Settings is clicked.
+    static func setShowsAtOnce(_ atOnce: Bool, in store: ScreenshotSettingsStore) {
+        store.setThumbnail(atOnce ? kCFBooleanFalse : nil)
+        store.synchronize()
     }
 
     /// The settings from their stored values; missing ones read as macOS's defaults.
@@ -36,9 +52,44 @@ struct ScreenshotPreferences: Equatable {
             }
         }
         let savesFiles = target.map { $0.isEmpty || $0 == "file" } ?? true
-        let showsThumbnail = (showThumbnail as? Bool) ?? (showThumbnail as? NSNumber)?.boolValue ?? true
+        let showsThumbnail = flag(showThumbnail) ?? true
         return ScreenshotPreferences(folder: folder.standardizedFileURL, savesFiles: savesFiles, showsThumbnail: showsThumbnail)
     }
+
+    /// A stored yes or no, read as macOS reads one: a boolean, a number, or a string, as
+    /// `defaults write` leaves one without `-bool` ("false", "NO", "0"). `nil` for anything
+    /// else, which is taken as missing.
+    private static func flag(_ value: Any?) -> Bool? {
+        if let string = value as? String {
+            switch string.lowercased() {
+            case "true", "yes", "1": return true
+            case "false", "no", "0": return false
+            default: return nil
+            }
+        }
+        return (value as? Bool) ?? (value as? NSNumber)?.boolValue
+    }
+}
+
+/// Where the Screenshot app's settings are kept: macOS's own, or a stand-in of the
+/// tests', so that they never change the real ones. Any of them can be read, but only
+/// the floating thumbnail's can be written.
+struct ScreenshotSettingsStore: Sendable {
+    /// Makes the next read a fresh one, and saves what has been set.
+    var synchronize: @Sendable () -> Void
+    var value: @Sendable (String) -> Any?
+    /// Stores the floating thumbnail's setting, or takes it away for `nil`.
+    var setThumbnail: @Sendable (CFPropertyList?) -> Void
+
+    static let system: ScreenshotSettingsStore = {
+        let domain = "com.apple.screencapture"
+        return ScreenshotSettingsStore(
+            // Another app's settings are cached; synchronising makes the read a fresh one.
+            synchronize: { _ = CFPreferencesAppSynchronize(domain as CFString) },
+            value: { CFPreferencesCopyAppValue($0 as CFString, domain as CFString) },
+            setThumbnail: { CFPreferencesSetAppValue(ScreenshotPreferences.thumbnailKey as CFString, $0, domain as CFString) }
+        )
+    }()
 }
 
 /// Notices screenshots as macOS saves them into its screenshot folder, from the moment

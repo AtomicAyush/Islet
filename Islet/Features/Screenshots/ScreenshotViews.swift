@@ -134,17 +134,22 @@ struct ScreenshotThumbnail: View {
 
 // MARK: - Settings
 
-/// Where screenshots are saved, and what in macOS's own settings keeps them from the
-/// island. Those settings are the Screenshot app's, and are only ever read.
+/// Where screenshots are saved, what in macOS's own settings keeps them from the island,
+/// and a switch for the floating thumbnail that holds them back. Those settings are the
+/// Screenshot app's. They are read here, and only the thumbnail's is ever written, when
+/// the switch is clicked.
 struct ScreenshotsSettingsView: View {
-    /// Called with the settings as they are read, so the feature follows a folder
-    /// changed meanwhile, or tries again one it was refused.
-    let refresh: (ScreenshotPreferences) -> Void
-    @State private var preferences: ScreenshotPreferences?
+    @State private var model: ScreenshotsSettingsModel
+
+    /// `refresh` is called with the settings as they are read, so the feature follows a
+    /// folder changed meanwhile, or tries again one it was refused.
+    init(settings: ScreenshotSettingsStore = .system, refresh: @escaping (ScreenshotPreferences) -> Void) {
+        _model = State(initialValue: ScreenshotsSettingsModel(settings: settings, refresh: refresh))
+    }
 
     var body: some View {
         LabeledContent {
-            if let preferences {
+            if let preferences = model.preferences {
                 Text(preferences.savesFiles ? (preferences.folder.path as NSString).abbreviatingWithTildeInPath : "Not saved")
                     .foregroundStyle(.secondary)
             } else {
@@ -152,28 +157,103 @@ struct ScreenshotsSettingsView: View {
             }
         } label: {
             Text("Screenshots are saved to")
-            Text(explanation)
+            Text(Self.explanation(for: model.shown))
         }
-        .task { await read() }
+        .task { model.read() }
+        // Options may have been changed in the Screenshot app meanwhile.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await read() }
+            model.read()
+        }
+
+        if let atOnce = model.showsAtOnce {
+            Toggle(isOn: Binding(get: { atOnce }, set: { model.setShowsAtOnce($0) })) {
+                Text("Show screenshots here at once")
+                Text("Turns off macOS's floating thumbnail, so each screenshot is saved as it is taken and its card comes straight away, in the thumbnail's place: click the picture to mark it up in Preview.")
+            }
         }
     }
 
-    private func read() async {
-        let read = await Task.detached(priority: .utility) { ScreenshotPreferences.read() }.value
-        preferences = read
-        refresh(read)
-    }
-
-    private var explanation: String {
+    static func explanation(for preferences: ScreenshotPreferences?) -> String {
         guard let preferences else { return "" }
         if !preferences.savesFiles {
             return "The Screenshot app (⇧⌘5) puts screenshots on the clipboard or straight into an app, which leaves no file for the island to show. Choose a folder under Options there."
         }
-        if preferences.showsThumbnail {
-            return "macOS holds each screenshot in its floating thumbnail for about five seconds before saving it. Turn off Show Floating Thumbnail under Options in the Screenshot app (⇧⌘5) to see it here at once. Screenshots copied to the clipboard make no file, so they don't show."
+        let folder = "Choose another folder under Options in the Screenshot app (⇧⌘5). Screenshots copied to the clipboard (⌃ held down) make no file, so they don't show."
+        guard preferences.showsThumbnail else { return folder }
+        return folder + " macOS holds each screenshot in its floating thumbnail first, so its card comes about five seconds later."
+    }
+}
+
+/// The Screenshot app's settings as the Screenshots settings show them, and the switch
+/// for macOS's floating thumbnail. Reads, and the switch's writes, are done off the main
+/// thread one at a time, in the order they were asked for.
+@MainActor
+@Observable
+final class ScreenshotsSettingsModel {
+    /// As last read; `nil` until they first have been.
+    private(set) var preferences: ScreenshotPreferences?
+    /// What the switch was last clicked to, until what it wrote has been read back, so
+    /// the switch does not flick back meanwhile.
+    private(set) var clicked: Bool?
+
+    private let settings: ScreenshotSettingsStore
+    private let refresh: (ScreenshotPreferences) -> Void
+    /// Reads and writes are numbered as they are asked for, and done in that order.
+    @ObservationIgnored private var asked = 0
+    /// The last write's number: until it has been read back, the switch shows `clicked`.
+    @ObservationIgnored private var lastWrite = 0
+
+    private static let queue = DispatchQueue(label: "Islet.ScreenshotSettings", qos: .userInitiated)
+
+    /// Nothing is read until `read()`.
+    init(settings: ScreenshotSettingsStore, refresh: @escaping (ScreenshotPreferences) -> Void) {
+        self.settings = settings
+        self.refresh = refresh
+    }
+
+    /// The settings as shown: as last read, with the thumbnail as the switch was last
+    /// clicked while that is being written.
+    var shown: ScreenshotPreferences? {
+        guard var preferences else { return nil }
+        if let clicked { preferences.showsThumbnail = !clicked }
+        return preferences
+    }
+
+    /// Whether the switch is on, macOS's thumbnail being off; `nil` while there is no
+    /// switch: until the settings are read, and while screenshots are not saved as files.
+    var showsAtOnce: Bool? {
+        guard let shown, shown.savesFiles else { return nil }
+        return !shown.showsThumbnail
+    }
+
+    func read() {
+        run(writing: nil)
+    }
+
+    /// The switch clicked: the only time the Screenshot app's settings are written.
+    func setShowsAtOnce(_ atOnce: Bool) {
+        guard let current = showsAtOnce, current != atOnce else { return }
+        clicked = atOnce
+        run(writing: atOnce)
+    }
+
+    private func run(writing atOnce: Bool?) {
+        asked += 1
+        let number = asked
+        if atOnce != nil { lastWrite = number }
+        let settings = settings
+        Self.queue.async { [weak self] in
+            if let atOnce { ScreenshotPreferences.setShowsAtOnce(atOnce, in: settings) }
+            let fresh = ScreenshotPreferences.read(from: settings)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.preferences = fresh
+                    // Read after the last write: what is stored now, whether it took or not.
+                    if number >= self.lastWrite { self.clicked = nil }
+                    self.refresh(fresh)
+                }
+            }
         }
-        return "Choose another folder under Options in the Screenshot app (⇧⌘5). Screenshots copied to the clipboard make no file, so they don't show."
     }
 }

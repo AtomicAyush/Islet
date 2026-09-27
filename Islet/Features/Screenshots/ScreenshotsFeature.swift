@@ -25,16 +25,24 @@ final class ScreenshotsFeature: Feature {
     private let watcher: ScreenshotWatcher
     private let shelf: ScreenshotShelf
     private let files: ScreenshotFileActions
+    private let settings: ScreenshotSettingsStore
     private var isRunning = false
     private var banner: IslandBanner?
 
-    /// Tests give a watcher on a folder of their own, a shelf of their own, and file
-    /// actions that leave the pasteboard, Finder and the Trash alone.
-    init(watcher: ScreenshotWatcher? = nil, shelf: ScreenshotShelf = .dropZone, files: ScreenshotFileActions = .system) {
-        let watcher = watcher ?? ScreenshotWatcher()
+    /// Tests give a watcher on a folder of their own, a shelf of their own, file actions
+    /// that leave the pasteboard, Finder and the Trash alone, and a stand-in for the
+    /// Screenshot app's settings.
+    init(
+        watcher: ScreenshotWatcher? = nil,
+        shelf: ScreenshotShelf = .dropZone,
+        files: ScreenshotFileActions = .system,
+        settings: ScreenshotSettingsStore = .system
+    ) {
+        let watcher = watcher ?? ScreenshotWatcher(preferences: { ScreenshotPreferences.read(from: settings) })
         self.watcher = watcher
         self.shelf = shelf
         self.files = files
+        self.settings = settings
         watcher.onScreenshot = { [weak self] shot in self?.present(shot) }
     }
 
@@ -51,7 +59,7 @@ final class ScreenshotsFeature: Feature {
     }
 
     func settingsView() -> AnyView? {
-        AnyView(ScreenshotsSettingsView { [weak self] preferences in self?.watcher.follow(preferences) })
+        AnyView(ScreenshotsSettingsView(settings: settings) { [weak self] preferences in self?.watcher.follow(preferences) })
     }
 
     /// Made-up screenshots drawn in code, never the person's screen. Their Delete only
