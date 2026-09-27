@@ -9,9 +9,13 @@ import Foundation
 /// cost the whole list.
 struct SpotifyList<Element: Decodable>: Decodable {
     var elements: [Element]
+    /// How many the reply listed, the dropped ones too.
+    var listed: Int
 
     init(from decoder: Decoder) throws {
-        elements = try [Lenient](from: decoder).compactMap(\.value)
+        let all = try [Lenient](from: decoder)
+        elements = all.compactMap(\.value)
+        listed = all.count
     }
 
     private struct Lenient: Decodable {
@@ -313,6 +317,47 @@ struct SpotifyTrackPage: Decodable {
     }
 }
 
+/// A page of a playlist's entries read only for their URIs, to see whether a song
+/// is in it: `/playlists/{id}/items` with `fields` set to `SpotifyEntryPage.fields`.
+struct SpotifyEntryPage: Decodable {
+    /// An entry's track or episode under `item` (`track` before February 2026);
+    /// neither once it has left Spotify. When Spotify has swapped in a release
+    /// that plays here, `linked_from` names the one the playlist holds.
+    struct Entry: Decodable {
+        struct Playable: Decodable {
+            struct Original: Decodable { var uri: String? }
+            var uri: String?
+            var linkedFrom: Original?
+        }
+        var item: Playable?
+        var track: Playable?
+    }
+
+    /// Only what the check needs: where the page starts, how long Spotify made it,
+    /// and each entry's URIs.
+    static let fields = "total,offset,limit,items(item(uri,linked_from(uri)),track(uri,linked_from(uri)))"
+
+    var items: SpotifyList<Entry>
+    var offset: Int
+    var limit: Int
+    var total: Int
+
+    /// Both URIs of a swapped track, so the song is found whichever of them plays.
+    var uris: [String] {
+        items.elements.flatMap { entry -> [String] in
+            guard let playable = entry.item ?? entry.track else { return [] }
+            return [playable.uri, playable.linkedFrom?.uri].compactMap { $0 }
+        }
+    }
+
+    /// It is the page asked for, starting at `start`, with every entry it should
+    /// have: `size` of them, or what is left of `total`. Spotify making one short
+    /// would leave entries unread, and a song among them would be missed.
+    func isWhole(from start: Int, size: Int, total: Int) -> Bool {
+        offset == start && limit == size && self.total == total && items.listed == min(size, max(total - start, 0))
+    }
+}
+
 /// `GET /albums/{id}`: its name, and its first page of tracks.
 struct SpotifyAlbum: Decodable {
     var name: String?
@@ -320,7 +365,7 @@ struct SpotifyAlbum: Decodable {
 }
 
 /// `GET /playlists/{id}?fields=name,snapshot_id`: which version of a playlist is
-/// current, without its tracks.
+/// current, without its tracks (or `fields=snapshot_id`, without its name).
 struct SpotifyPlaylistVersion: Decodable {
     var name: String?
     var snapshotId: String?

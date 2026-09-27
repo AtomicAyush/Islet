@@ -76,15 +76,20 @@ final class NowPlayingSampleLibrary: MediaLibrary {
         if saved { liked.insert(item.title) } else { liked.remove(item.title) }
     }
 
-    /// Adds once to each playlist, and counts the song in its detail.
-    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist) async throws -> MediaPlaylistAddition {
+    /// Adds once to each playlist, unless told to add again, and counts the song in
+    /// its detail.
+    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist, evenIfThere: Bool) async throws -> MediaPlaylistAddition {
         try await Task.sleep(for: Self.delay)
-        guard added[playlist.id, default: []].insert(item.id).inserted else { return .alreadyThere }
+        guard added[playlist.id, default: []].insert(item.id).inserted || evenIfThere else { return .alreadyThere }
         if let index = lists.firstIndex(where: { $0.id == playlist.id }),
            let count = lists[index].detail?.split(separator: " ").first.flatMap({ Int($0) }) {
             lists[index].detail = "\(count + 1) songs"
         }
         return .added
+    }
+
+    func playlists(_ playlists: [MediaPlaylist], holding item: MediaPlayingItem) async -> Set<String> {
+        Set(playlists.map(\.id).filter { added[$0]?.contains(item.id) == true })
     }
 
     // MARK: Samples

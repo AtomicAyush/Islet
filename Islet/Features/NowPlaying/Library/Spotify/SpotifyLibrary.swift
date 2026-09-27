@@ -187,10 +187,23 @@ final class SpotifyLibrary: MediaLibrary {
         try await call(reconnectingTo: Self.toLike) { try await $0.setSaved(saved, uri: item.id) }
     }
 
-    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist) async throws -> MediaPlaylistAddition {
+    /// Looks in the playlist first, whoever added to it; see `SpotifyWebAPI.add`.
+    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist, evenIfThere: Bool) async throws -> MediaPlaylistAddition {
         try await call(reconnectingTo: "Reconnect Spotify to add songs to playlists") {
-            try await $0.add(item.id, toPlaylist: playlist.id)
+            try await $0.add(item.id, toPlaylist: playlist.id, evenIfThere: evenIfThere)
         }
+    }
+
+    func playlists(_ playlists: [MediaPlaylist], holding item: MediaPlayingItem) async -> Set<String> {
+        guard state == .ready else { return [] }
+        return await api.playlists(playlists.map(\.id), holding: item.id)
+    }
+
+    /// Only playlists that can be added to, and nothing unless ready: it is never
+    /// worth a sign-in prompt.
+    func readAhead(_ playlists: [MediaPlaylist]) async -> Bool {
+        guard state == .ready else { return false }
+        return await api.readAhead(playlists.filter(\.canAdd).map(\.id))
     }
 
     private static let toLike = "Reconnect Spotify to like songs"

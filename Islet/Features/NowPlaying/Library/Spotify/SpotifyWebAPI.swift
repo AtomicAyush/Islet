@@ -73,28 +73,80 @@ actor SpotifyWebAPI {
 
     /// The person's Spotify id, once asked for: whose playlists are their own.
     private var userID: String?
-    /// Each playlist's version as last listed, or as adding to it left it.
-    private var snapshots: [String: String] = [:]
-    /// What Islet has added to each playlist while it has not otherwise changed, by
-    /// playlist URI, so a second tap does not add the song twice.
-    private var additions: [String: PlaylistAdditions] = [:]
+    /// Each playlist's version as last listed or looked at, and its length at that
+    /// version when known, by playlist URI.
+    private var listed: [String: ListedPlaylist] = [:]
+    /// What is known to be in each playlist, by playlist URI, so a song already
+    /// there is not added a second time, and reading it again waits until it has
+    /// changed: all of it once read through, else only what Islet itself added.
+    private var contents: [String: PlaylistContents] = [:]
+    /// Playlists being read through now, and the version each read is for, so a
+    /// second ask for the same one waits for the first instead of reading it twice.
+    private var contentReads: [String: (version: String, task: Task<Set<String>?, Error>)] = [:]
+    /// Playlists read ahead for the list's ticks, at the version they were listed
+    /// at, so one that could not be read is not asked for again until it changes.
+    private var readAheadTried: Set<String> = []
+    /// When reading ahead may start again, after Spotify asked Islet to slow down.
+    private var readAheadResumes: ContinuousClock.Instant?
+    /// Spotify turned down the `fields` filter on a playlist's entries, so they are
+    /// read whole from then on.
+    private var entryFieldsRefused = false
+    /// How long adding waits to learn whether the playlist has the song before it
+    /// asks the person instead.
+    private let checkBudget: Duration
 
-    /// The songs Islet added to a playlist, and every version of it those adds went
-    /// through: the one it was listed at, then the one each add made, the latest
-    /// last. Spotify's listing can trail its writes, and a listing still at one of
-    /// these is behind Islet's adds rather than a sign of a change made elsewhere.
-    private struct PlaylistAdditions {
-        var uris: Set<String> = []
-        var versions: [String] = []
+    private struct ListedPlaylist {
+        var version: String?
+        /// Entries at `version`, when known.
+        var count: Int?
     }
+
+    /// URIs known to be in a playlist, and the versions of it they hold for: the
+    /// one it was read at, then the one each of Islet's adds made, the latest last.
+    /// Spotify's replies can trail its writes, and a playlist still at one of these
+    /// is behind Islet's adds rather than changed elsewhere.
+    private struct PlaylistContents {
+        var uris: Set<String>
+        var versions: [String]
+        /// Read through, so a song not in `uris` is not there. Else `uris` are only
+        /// what Islet added (to a playlist too long to read, say), and say nothing
+        /// of the rest.
+        var isWhole: Bool
+    }
+
+    /// What a playlist was found to have.
+    private enum Holding {
+        case yes
+        /// Not there, as of `version`.
+        case no(version: String)
+        /// It could not be told: too long to read through, or Spotify did not answer
+        /// in time.
+        case unknown
+    }
+
+    /// Spotify's most entries to a page.
+    private static let entriesPerPage = 50
+    /// Pages of one playlist asked for at once, after the first.
+    private static let pagesAtOnce = 4
+    /// A longer playlist is not read through for one song: forty pages is already
+    /// a few seconds, and the person is asked instead.
+    static let longestChecked = 2_000
+    /// Reading ahead for the list's ticks looks at only the first few playlists,
+    /// the ones on show, and reads only short ones.
+    private static let playlistsReadAhead = 4
+    private static let longestReadAhead = 200
+    /// Reading ahead rests at least this long after Spotify asks Islet to slow down.
+    private static let readAheadRest: TimeInterval = 30
 
     init(
         keychain: any SpotifyTokenStore = SpotifyKeychain(),
         transport: Transport? = nil,
-        catchUpDelay: Duration = .seconds(1)
+        catchUpDelay: Duration = .seconds(1),
+        checkBudget: Duration = .seconds(8)
     ) {
         self.keychain = keychain
         self.catchUpDelay = catchUpDelay
+        self.checkBudget = checkBudget
         if let transport {
             self.transport = transport
         } else {
@@ -149,8 +201,12 @@ actor SpotifyWebAPI {
         listings = [:]
         hints = SpotifyQueueHints()
         userID = nil
-        snapshots = [:]
-        additions = [:]
+        listed = [:]
+        contents = [:]
+        contentReads.values.forEach { $0.task.cancel() }
+        contentReads = [:]
+        readAheadTried = []
+        readAheadResumes = nil
         hasAskedForScopes = false
     }
 
@@ -167,11 +223,7 @@ actor SpotifyWebAPI {
         let me = await user
         let playlists = page?.items.elements ?? []
         for playlist in playlists {
-            if let listed = playlist.snapshotId, additions[playlist.uri]?.versions.contains(listed) == true {
-                // Behind or level with Islet's own adds: nothing has changed elsewhere.
-                continue
-            }
-            snapshots[playlist.uri] = playlist.snapshotId
+            listed[playlist.uri] = ListedPlaylist(version: playlist.snapshotId, count: playlist.count)
         }
         return playlists.map {
             $0.mediaPlaylist(isCurrent: $0.isPlaying(context: current), canAdd: $0.canAdd(asUser: me))
@@ -247,20 +299,37 @@ actor SpotifyWebAPI {
         _ = try await send(saved ? "PUT" : "DELETE", "me/library?" + SpotifyAuthorization.formEncoded([("uris", uri)]))
     }
 
-    /// Adds a track or episode to the end of a playlist. Spotify would add a second
-    /// copy of a song already there, and seeing whether it is means reading the
-    /// whole playlist; instead Islet remembers what it added, and while the playlist
-    /// is unchanged since, as far as its last listing says, adding the same song
-    /// again does nothing.
-    func add(_ uri: String, toPlaylist playlistURI: String) async throws -> MediaPlaylistAddition {
+    /// Adds a track or episode to the end of a playlist, unless it is there already:
+    /// Spotify would add a second copy. Whether it is comes from the playlist
+    /// itself, whoever put the song there. Its version is asked for first, and when
+    /// it has been read through at that version already, what was read answers;
+    /// else it is read through again, for its entries' URIs alone. When that cannot
+    /// be done in a few seconds (a playlist too long to read, Spotify not answering
+    /// or asking Islet to slow down) nothing is added, and `.unchecked` has the
+    /// person asked instead, unless Islet added the song there itself since the
+    /// playlist last changed. `evenIfThere` adds it without looking, the person
+    /// having said so.
+    func add(_ uri: String, toPlaylist playlistURI: String, evenIfThere: Bool = false) async throws -> MediaPlaylistAddition {
         guard let id = SpotifyPlaylist.playlistID(in: playlistURI) else {
             throw MediaLibraryError(message: "Spotify couldn't find that playlist")
         }
         try await requireScopes(SpotifyAuthorization.playlistScopes)
-        let listed = snapshots[playlistURI]
-        let known = additions[playlistURI].flatMap { $0.versions.last == listed ? $0 : nil }
-        if known?.uris.contains(uri) == true { return .alreadyThere }
         let generation = generation
+        // The version the playlist was at just before the add, so what is known of
+        // it can be brought up to date.
+        let before: String?
+        if evenIfThere {
+            let version: String?? = try await quietly {
+                try await self.version(of: id, playlistURI: playlistURI, waitingUntil: .now)
+            }
+            before = version ?? nil
+        } else {
+            switch try await check(uri, in: playlistURI, id: id) {
+            case .yes: return .alreadyThere
+            case .unknown: return .unchecked
+            case .no(let version): before = version
+            }
+        }
         let body = try JSONEncoder().encode(["uris": [uri]])
         // Spotify turns down a playlist the person may not change (one they only
         // follow, say) without giving a reason, and here that is not about Premium.
@@ -268,15 +337,220 @@ actor SpotifyWebAPI {
             "POST", "playlists/\(id)/items", json: body, refusal: "Spotify won't let you add to this playlist"
         )
         let reply = data.isEmpty ? nil : try? decoder.decode(SpotifySnapshot.self, from: data)
-        if generation == self.generation, let snapshot = reply?.snapshotId {
-            // Only what Islet added since the playlist last changed elsewhere counts.
-            var record = known ?? PlaylistAdditions(versions: listed.map { [$0] } ?? [])
-            record.uris.insert(uri)
-            record.versions.append(snapshot)
-            additions[playlistURI] = record
-            snapshots[playlistURI] = snapshot
+        if generation == self.generation, let snapshot = reply?.snapshotId, let before {
+            note(uri, addedTo: playlistURI, from: before, to: snapshot)
         }
         return .added
+    }
+
+    /// Which of the playlists are known to have `uri`, from what was read of them
+    /// or added to them at the version they were last listed at. Asks Spotify
+    /// nothing, so the list can be ticked as it is drawn.
+    func playlists(_ playlistURIs: [String], holding uri: String) -> Set<String> {
+        Set(playlistURIs.filter { playlist in
+            guard let version = listed[playlist]?.version, let known = contents[playlist] else { return false }
+            return known.versions.contains(version) && known.uris.contains(uri)
+        })
+    }
+
+    /// Reads the first few of the playlists through ahead, one after another, so the
+    /// list can tick the ones that already have the song playing. Only short ones,
+    /// as listed last, not already read at that version, and each version once: one
+    /// that fails is left, and the first failure stops the rest. It never waits out
+    /// Spotify asking Islet to slow down, and rests for a while after. True when
+    /// anything new was learnt.
+    func readAhead(_ playlistURIs: [String]) async -> Bool {
+        let generation = generation
+        let due = playlistURIs.prefix(Self.playlistsReadAhead).filter { playlist in
+            guard let listing = listed[playlist], let version = listing.version,
+                  let count = listing.count, count <= Self.longestReadAhead,
+                  !readAheadTried.contains(playlist + "@" + version) else { return false }
+            return contents[playlist].map { !$0.isWhole || !$0.versions.contains(version) } ?? true
+        }
+        var learnt = false
+        for playlist in due {
+            guard !Task.isCancelled, generation == self.generation,
+                  readAheadResumes.map({ ContinuousClock.now >= $0 }) ?? true,
+                  let id = SpotifyPlaylist.playlistID(in: playlist),
+                  let version = listed[playlist]?.version else { break }
+            readAheadTried.insert(playlist + "@" + version)
+            let uris = try? await entries(of: playlist, id: id, at: version, waitingUntil: .now, givesUp: false)
+            guard uris != nil else { break }
+            learnt = true
+        }
+        return learnt
+    }
+
+    /// `holding`, given `checkBudget` at most. Past it, or when the sign-in changes
+    /// meanwhile (which stops its reads), it cannot be told.
+    private func check(_ uri: String, in playlistURI: String, id: Substring) async throws -> Holding {
+        let deadline = ContinuousClock.now + checkBudget
+        let work = Task { try await self.holding(uri, in: playlistURI, id: id, deadline: deadline) }
+        let timer = Task {
+            try await Task.sleep(until: deadline, clock: .continuous)
+            work.cancel()
+        }
+        defer { timer.cancel() }
+        do {
+            return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+        } catch is CancellationError where !Task.isCancelled {
+            return .unknown
+        }
+    }
+
+    /// Whether the playlist has `uri`, by its version now: what is known of it at
+    /// that version, else read through afresh. A 429 is waited out only when it
+    /// ends before `deadline`.
+    private func holding(_ uri: String, in playlistURI: String, id: Substring, deadline: ContinuousClock.Instant) async throws -> Holding {
+        let now: String?? = try await quietly {
+            try await self.version(of: id, playlistURI: playlistURI, waitingUntil: deadline)
+        }
+        guard let version = now ?? nil else { return .unknown }
+        let known = contents[playlistURI].flatMap { $0.versions.contains(version) ? $0 : nil }
+        if known?.uris.contains(uri) == true { return .yes }
+        if known?.isWhole == true { return .no(version: version) }
+        // Known to be too long at this version: not worth even its first page.
+        if let count = listed[playlistURI]?.count, count > Self.longestChecked { return .unknown }
+        guard let uris = try await entries(of: playlistURI, id: id, at: version, waitingUntil: deadline, givesUp: true)
+        else { return .unknown }
+        return uris.contains(uri) ? .yes : .no(version: version)
+    }
+
+    /// The playlist's version now, which is also noted as its listed one: nothing
+    /// is more recent.
+    private func version(of id: Substring, playlistURI: String, waitingUntil deadline: ContinuousClock.Instant) async throws -> String? {
+        let playlist: SpotifyPlaylistVersion? = try await get("playlists/\(id)?fields=snapshot_id", waitingUntil: deadline)
+        guard let version = playlist?.snapshotId else { return nil }
+        if listed[playlistURI]?.version != version {
+            listed[playlistURI] = ListedPlaylist(version: version)
+        }
+        return version
+    }
+
+    /// Islet's own add took the playlist from `before` to `after`: what is known of
+    /// it at `before` holds at `after` too, with `uri`; with nothing known, `uri`
+    /// is, so adding it again asks even when the playlist cannot be read.
+    private func note(_ uri: String, addedTo playlistURI: String, from before: String, to after: String) {
+        var known = contents[playlistURI].flatMap { $0.versions.contains(before) ? $0 : nil }
+            ?? PlaylistContents(uris: [], versions: [before], isWhole: false)
+        known.uris.insert(uri)
+        known.versions.append(after)
+        contents[playlistURI] = known
+        let listing = listed[playlistURI]
+        listed[playlistURI] = ListedPlaylist(
+            version: after, count: listing?.version == before ? listing?.count.map { $0 + 1 } : nil
+        )
+    }
+
+    /// Every entry's URI in the playlist at `version`: kept from before while that
+    /// is still its version, else read through, and kept. nil when it is too long
+    /// to read or Spotify did not answer. A read another ask started is shared, and
+    /// `givesUp` stops it when this ask is called off.
+    private func entries(
+        of playlistURI: String, id: Substring, at version: String,
+        waitingUntil deadline: ContinuousClock.Instant, givesUp: Bool
+    ) async throws -> Set<String>? {
+        if let known = contents[playlistURI], known.isWhole, known.versions.contains(version) { return known.uris }
+        let task: Task<Set<String>?, Error>
+        let started: Bool
+        if let reading = contentReads[playlistURI], reading.version == version {
+            task = reading.task
+            started = false
+        } else {
+            task = Task { try await self.readEntries(of: id, playlistURI: playlistURI, at: version, waitingUntil: deadline) }
+            started = true
+            contentReads[playlistURI] = (version, task)
+        }
+        let generation = generation
+        let result = await withTaskCancellationHandler { await task.result } onCancel: {
+            if givesUp { task.cancel() }
+        }
+        // Only the latest read of a playlist is kept: an older one finishing after
+        // it, or after an add, would take the newer knowledge away.
+        if started, contentReads[playlistURI]?.task == task {
+            contentReads[playlistURI] = nil
+            if generation == self.generation, let uris = try? result.get() { keep(uris, of: playlistURI, at: version) }
+        }
+        return try result.get()
+    }
+
+    /// Keeps a read-through playlist, with what Islet added to it at this version,
+    /// in case the read trails the adds.
+    private func keep(_ uris: Set<String>, of playlistURI: String, at version: String) {
+        if let known = contents[playlistURI], known.versions.contains(version) {
+            contents[playlistURI] = PlaylistContents(uris: uris.union(known.uris), versions: known.versions, isWhole: true)
+        } else {
+            contents[playlistURI] = PlaylistContents(uris: uris, versions: [version], isWhole: true)
+        }
+    }
+
+    /// Reads a playlist's entries, only their URIs: the first page, which says how
+    /// many there are and how long Spotify makes its pages, then the rest a few
+    /// pages at a time. nil when it is too long, or when a page is not the whole
+    /// page asked for, since the entries missing could be the song. Episodes and
+    /// local files come with their own URIs; an entry whose track has left Spotify
+    /// has none.
+    private func readEntries(
+        of id: Substring, playlistURI: String, at version: String, waitingUntil deadline: ContinuousClock.Instant
+    ) async throws -> Set<String>? {
+        guard let first = try await entryPage(of: id, at: 0, waitingUntil: deadline) else { return nil }
+        let (total, size) = (first.total, first.limit)
+        if listed[playlistURI]?.version == version { listed[playlistURI]?.count = total }
+        let offsets = Array(stride(from: size, to: total, by: max(size, 1)))
+        guard total <= Self.longestChecked, (1...Self.entriesPerPage).contains(size),
+              offsets.count < Self.longestChecked / Self.entriesPerPage,
+              first.isWhole(from: 0, size: size, total: total) else { return nil }
+        var uris = Set(first.uris)
+        for start in stride(from: 0, to: offsets.count, by: Self.pagesAtOnce) {
+            let batch = offsets[start..<min(start + Self.pagesAtOnce, offsets.count)]
+            let pages = try await withThrowingTaskGroup(of: (Int, SpotifyEntryPage?).self) { group in
+                for offset in batch {
+                    group.addTask { (offset, try await self.entryPage(of: id, at: offset, waitingUntil: deadline)) }
+                }
+                return try await group.reduce(into: [(Int, SpotifyEntryPage?)]()) { $0.append($1) }
+            }
+            for (offset, page) in pages {
+                guard let page, page.isWhole(from: offset, size: size, total: total) else { return nil }
+                uris.formUnion(page.uris)
+            }
+        }
+        return uris
+    }
+
+    /// One page of a playlist's entries, filtered to their URIs, or whole when
+    /// Spotify has turned the filter down. nil when Spotify did not answer.
+    private func entryPage(of id: Substring, at offset: Int, waitingUntil deadline: ContinuousClock.Instant) async throws -> SpotifyEntryPage? {
+        let filtered = !entryFieldsRefused
+        let query = SpotifyAuthorization.formEncoded((filtered ? [("fields", SpotifyEntryPage.fields)] : []) + [
+            ("limit", String(Self.entriesPerPage)),
+            ("offset", String(offset)),
+            ("market", "from_token"),
+            ("additional_types", "track,episode"),
+        ])
+        do {
+            return try await get("playlists/\(id)/items?" + query, waitingUntil: deadline)
+        } catch let error as APIError where error.status == 400 && filtered {
+            // The filter names fields Spotify has been renaming; without it, the
+            // entries come whole, which is more to fetch but still answers.
+            entryFieldsRefused = true
+            return try await entryPage(of: id, at: offset, waitingUntil: deadline)
+        } catch let error where error is SignedOut || error is MissingScope || error is CancellationError {
+            throw error
+        } catch {
+            return nil
+        }
+    }
+
+    /// A read that only informs: nil for anything that went wrong but a sign-in
+    /// gone, a scope missing or the caller giving up, which still throw.
+    private func quietly<T: Sendable>(_ read: @Sendable () async throws -> T) async throws -> T? {
+        do {
+            return try await read()
+        } catch let error where error is SignedOut || error is MissingScope || error is CancellationError {
+            throw error
+        } catch {
+            return nil
+        }
     }
 
     /// Throws `MissingScope` before anything is asked when the sign-in was not given
@@ -435,17 +709,19 @@ actor SpotifyWebAPI {
 
     /// Decoded, or nil for 204 No Content, which the player endpoints send when
     /// nothing is playing anywhere.
-    private func get<T: Decodable>(_ path: String) async throws -> T? {
-        let data = try await send("GET", path)
+    private func get<T: Decodable>(_ path: String, waitingUntil deadline: ContinuousClock.Instant? = nil) async throws -> T? {
+        let data = try await send("GET", path, waitingUntil: deadline)
         return data.isEmpty ? nil : try decode(T.self, from: data)
     }
 
     /// Sends a request with the current access token and returns the body of a
     /// successful reply. A 401 renews the token and tries once more; a 429 waits
-    /// as long as Spotify asks, once. `refusal` is what a 403 that gives no reason
-    /// means for this request.
+    /// as long as Spotify asks, once, and only if that is over by `deadline` when
+    /// there is one. `refusal` is what a 403 that gives no reason means for this
+    /// request.
     private func send(
-        _ method: String, _ path: String, json: Data? = nil, refusal: String = SpotifyWebAPI.premiumNeeded
+        _ method: String, _ path: String, json: Data? = nil, refusal: String = SpotifyWebAPI.premiumNeeded,
+        waitingUntil deadline: ContinuousClock.Instant? = nil
     ) async throws -> Data {
         guard let url = URL(string: Self.apiBase + path) else {
             throw MediaLibraryError(message: "Spotify couldn't do that")
@@ -481,7 +757,7 @@ actor SpotifyWebAPI {
                 throw SignedOut()
             case 429 where !waited:
                 waited = true
-                try await waitOut(response)
+                try await waitOut(response, until: deadline)
             default:
                 throw failure(status: response.statusCode, data: data, refusal: refusal)
             }
@@ -512,10 +788,16 @@ actor SpotifyWebAPI {
         }
     }
 
-    private func waitOut(_ response: HTTPURLResponse) async throws {
+    /// Waits as long as a 429 asks, and has reading ahead rest at least as long.
+    private func waitOut(_ response: HTTPURLResponse, until deadline: ContinuousClock.Instant?) async throws {
         let seconds = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init) ?? 1
+        let rest = ContinuousClock.now + .seconds(max(seconds, Self.readAheadRest))
+        readAheadResumes = max(readAheadResumes ?? rest, rest)
         guard seconds <= Self.longestRetryWait else {
             throw MediaLibraryError(message: "Spotify is busy. Try again in a few minutes")
+        }
+        if let deadline, ContinuousClock.now + .seconds(max(0, seconds)) > deadline {
+            throw MediaLibraryError(message: "Spotify is busy. Try again in a moment")
         }
         try await Task.sleep(for: .seconds(max(0, seconds)))
     }

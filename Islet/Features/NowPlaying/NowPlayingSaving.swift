@@ -197,6 +197,13 @@ final class NowPlayingSaveModel {
         }
         return item
     }
+
+    /// The item the heart has for `track`, if it has read it: for ticking the
+    /// playlists that have it, which is no reason to ask the app.
+    func knownItem(for track: NowPlayingTrack?) -> MediaPlayingItem? {
+        guard let track, case .ready(let item) = state, asked?.track == track else { return nil }
+        return item
+    }
 }
 
 // MARK: - Heart

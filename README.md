@@ -44,8 +44,9 @@ a heart at the start of the controls saves the song:
   and ones you collaborate on. Both need permissions a sign-in from before they arrived was
   not given, so if you connected Spotify earlier, the player asks you to reconnect the first
   time you open it on a Spotify song, and Settings offers it too from then on. Spotify would
-  put a song in a playlist twice; Islet only holds back a second add of its own while the
-  playlist is otherwise unchanged.
+  put a song in a playlist twice, so Islet looks in the playlist first, whoever added to it:
+  a playlist known to have the song is ticked, and adding to one that has it asks first, as
+  it does when a playlist is too long to look through or Spotify doesn't answer.
 - *Music* asks once for permission to control Music. It offers playlists, and a star for
   Favourites; Music does not expose Up Next to other apps, and adding to playlists is left
   to Music, since a song streamed from Apple Music has to be in your library first.

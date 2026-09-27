@@ -3,7 +3,8 @@ import Observation
 
 /// The opened player's window onto the playing app's library: buttons for what it
 /// offers, and a panel below the player listing what is up next or the person's
-/// playlists, which the song playing can be added to.
+/// playlists, which the song playing can be added to. Playlists known to have it
+/// already are ticked, and adding it to one that has it asks first.
 ///
 /// The library does its own talking to its app off the main thread; this only keeps
 /// what the panel shows, and drops any answer that arrives for a panel, a library
@@ -35,11 +36,20 @@ final class NowPlayingLibraryModel {
         case reconnect(String)
     }
 
-    /// A moment's word over the list on how an add went.
+    /// A moment's word over the list on how an add went, with a button to add it
+    /// anyway when it was held back.
     struct Notice: Equatable {
         var text: String
         var symbol: String
+        /// What the button adds, when there is one.
+        var addAnyway: HeldBack?
         var id = UUID()
+    }
+
+    /// An add held back because the playlist has the song already, or might.
+    struct HeldBack: Equatable {
+        var playlist: MediaPlaylist
+        var track: NowPlayingTrack?
     }
 
     /// The playing app's library (a sample one during previews), if it has one.
@@ -49,6 +59,10 @@ final class NowPlayingLibraryModel {
     /// The row just picked, shown busy until the app has acted on it.
     private(set) var pendingRow: String?
     private(set) var notice: Notice?
+    /// The playlists on show known to have the song `holdingItem` already, by id,
+    /// ticked in the list.
+    private(set) var holding: Set<String> = []
+    private(set) var holdingItem: String?
     /// Whether the song playing is saved, for the player's heart, and the song
     /// itself, for adding it to a playlist.
     let saving = NowPlayingSaveModel()
@@ -70,6 +84,8 @@ final class NowPlayingLibraryModel {
 
     /// Long enough to read "Added to Late Night Drive".
     private static let noticeLength = Duration.milliseconds(2200)
+    /// Long enough to decide on "Add Anyway", and kept while the pointer is on it.
+    private static let questionLength = Duration.seconds(6)
 
     /// A moment for the app to move its queue on after a track change, so the
     /// refreshed list is the new one.
@@ -97,6 +113,8 @@ final class NowPlayingLibraryModel {
         actionTask?.cancel()
         actionTask = nil
         pendingRow = nil
+        holding = []
+        holdingItem = nil
         library = newLibrary
         saving.use(newLibrary)
     }
@@ -168,13 +186,17 @@ final class NowPlayingLibraryModel {
 
     /// Adds `track`, the song on show, to the end of the playlist, and says so for a
     /// moment. The song is the one the heart has, or read now, so a song that ends
-    /// while it is being added is still the one added.
-    func add(to playlist: MediaPlaylist, track: NowPlayingTrack?) {
+    /// while it is being added is still the one added. One the playlist has already,
+    /// or might have, is held back unless `evenIfThere`, and the notice offers to
+    /// add it anyway.
+    func add(to playlist: MediaPlaylist, track: NowPlayingTrack?, evenIfThere: Bool = false) {
         guard let library, actionTask == nil else { return }
+        if notice?.addAnyway != nil { dismissNotice() }
         let saving = saving
         pendingRow = Self.playlistRow(playlist)
         actionTask = Task { [weak self] in
             let outcome: Result<MediaPlaylistAddition, Error>
+            var added: MediaPlayingItem?
             do {
                 guard let track else { throw MediaLibraryError(message: "Nothing to add is playing") }
                 let item: MediaPlayingItem
@@ -185,13 +207,17 @@ final class NowPlayingLibraryModel {
                     // adding that the person tried.
                     throw MediaLibraryNeedsReconnect(prompt: "Reconnect \(library.displayName) to add songs to playlists")
                 }
-                outcome = .success(try await library.add(item, to: playlist))
+                outcome = .success(try await library.add(item, to: playlist, evenIfThere: evenIfThere))
+                added = item
             } catch {
                 outcome = .failure(error)
             }
             guard let self, !Task.isCancelled, self.library === library else { return }
             self.actionTask = nil
             self.pendingRow = nil
+            if let added, case .success(let addition) = outcome, addition != .unchecked {
+                self.note(playlist, holds: added)
+            }
             guard self.panel != nil else { return }
             switch outcome {
             case .success(.added):
@@ -199,7 +225,15 @@ final class NowPlayingLibraryModel {
                 // The playlist's count has gone up.
                 self.load(quietly: true)
             case .success(.alreadyThere):
-                self.show(Notice(text: "Already in \(playlist.name)", symbol: "checkmark.circle"))
+                self.show(Notice(
+                    text: "Already in \(playlist.name)", symbol: "checkmark.circle",
+                    addAnyway: HeldBack(playlist: playlist, track: track)
+                ))
+            case .success(.unchecked):
+                self.show(Notice(
+                    text: "Couldn't check \(playlist.name)", symbol: "questionmark.circle",
+                    addAnyway: HeldBack(playlist: playlist, track: track)
+                ))
             case .failure(let reconnect as MediaLibraryNeedsReconnect):
                 self.loadTask?.cancel()
                 self.loadTask = nil
@@ -228,12 +262,59 @@ final class NowPlayingLibraryModel {
         }
     }
 
+    /// The notice's button: adds the song held back after all.
+    func addAnyway() {
+        guard let heldBack = notice?.addAnyway, actionTask == nil else { return }
+        dismissNotice()
+        add(to: heldBack.playlist, track: heldBack.track, evenIfThere: true)
+    }
+
+    /// Keeps a notice with a button up while the pointer is on it, and lets it go
+    /// a while after the pointer leaves.
+    func holdNotice(_ held: Bool) {
+        guard let notice, notice.addAnyway != nil else { return }
+        noticeTask?.cancel()
+        noticeTask = nil
+        if !held { dismiss(notice, after: Self.questionLength) }
+    }
+
+    /// Ticks the playlists on show that have `item` already, as far as the library
+    /// knows without asking its app, then has it read a few more ahead and ticks
+    /// those too. Run by the list, again for each song and listing. Each time the
+    /// ticks are what the library knows now, so one for a song taken out of a
+    /// playlist since, or from another sign-in, goes.
+    func markPlaylists(holding item: MediaPlayingItem?) async {
+        guard let library, case .playlists(let playlists) = listing, let item else { return }
+        let known = await library.playlists(playlists, holding: item)
+        guard !Task.isCancelled, self.library === library else { return }
+        mark(known, item: item)
+        guard await library.readAhead(playlists), !Task.isCancelled, self.library === library else { return }
+        mark(await library.playlists(playlists, holding: item), item: item)
+    }
+
+    private func mark(_ known: Set<String>, item: MediaPlayingItem) {
+        holdingItem = item.id
+        holding = known
+    }
+
+    /// The playlist has been found to have the song, or has just had it added. The
+    /// ticks are left alone when they are for another song by now.
+    private func note(_ playlist: MediaPlaylist, holds item: MediaPlayingItem) {
+        guard holdingItem == nil || holdingItem == item.id else { return }
+        holdingItem = item.id
+        holding.insert(playlist.id)
+    }
+
     private func show(_ newNotice: Notice) {
         noticeTask?.cancel()
         withAnimation(.smooth(duration: 0.25)) { notice = newNotice }
+        dismiss(newNotice, after: newNotice.addAnyway == nil ? Self.noticeLength : Self.questionLength)
+    }
+
+    private func dismiss(_ shown: Notice, after length: Duration) {
         noticeTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.noticeLength)
-            guard let self, !Task.isCancelled, self.notice == newNotice else { return }
+            try? await Task.sleep(for: length)
+            guard let self, !Task.isCancelled, self.notice == shown else { return }
             withAnimation(.smooth(duration: 0.25)) { self.notice = nil }
         }
     }
@@ -430,12 +511,13 @@ struct NowPlayingLibraryPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) {
             if let notice = library.notice {
-                PanelNotice(notice: notice)
+                PanelNotice(notice: notice, addAnyway: library.addAnyway, hold: library.holdNotice)
                     .id(notice.id)
                     .padding(.bottom, 6)
                     .transition(.opacity.combined(with: .offset(y: 6)))
-                    // Only to be read: the row under it still takes its clicks.
-                    .allowsHitTesting(false)
+                    // Only to be read, unless it has a button: the row under it
+                    // still takes its clicks.
+                    .allowsHitTesting(notice.addAnyway != nil)
             }
         }
     }
@@ -490,8 +572,10 @@ struct NowPlayingLibraryPanel: View {
             if playlists.isEmpty {
                 PanelMessage(text: "No playlists")
             } else {
+                let song = library.saving.knownItem(for: model.track)
                 PanelList {
                     ForEach(playlists) { playlist in
+                        let holds = song != nil && library.holdingItem == song?.id && library.holding.contains(playlist.id)
                         LibraryRow(
                             title: playlist.name,
                             subtitle: playlist.detail,
@@ -500,13 +584,20 @@ struct NowPlayingLibraryPanel: View {
                             isBusy: library.pendingRow == NowPlayingLibraryModel.playlistRow(playlist),
                             action: { library.play(playlist) },
                             add: canAdd(to: playlist) ? { library.add(to: playlist, track: model.track) } : nil,
-                            addTitle: addTitle(playlist)
+                            addTitle: addTitle(playlist),
+                            holdsSong: holds,
+                            holdsTitle: holdsTitle(playlist)
                         ) {
                             if playlist.isCurrent {
                                 CurrentMark(model: model)
                             }
                         }
                     }
+                }
+                // Ticks what is known already, then what a few reads ahead find;
+                // again for another song, or when the list comes back changed.
+                .task(id: HoldingQuestion(song: song?.id, playlists: playlists)) {
+                    await library.markPlaylists(holding: song)
                 }
             }
         }
@@ -524,6 +615,12 @@ struct NowPlayingLibraryPanel: View {
     private func addTitle(_ playlist: MediaPlaylist) -> String {
         guard let title = model.track?.title, !title.isEmpty else { return "Add to \(playlist.name)" }
         return "Add “\(title)” to \(playlist.name)"
+    }
+
+    /// "“Midnight Drive” is in Late Night Drive".
+    private func holdsTitle(_ playlist: MediaPlaylist) -> String {
+        guard let title = model.track?.title, !title.isEmpty else { return "Already in \(playlist.name)" }
+        return "“\(title)” is in \(playlist.name)"
     }
 
     private func queueRow(_ item: MediaItem, at index: Int, canPlayNext: Bool, joinsQueue: Bool) -> some View {
@@ -545,6 +642,12 @@ struct NowPlayingLibraryPanel: View {
             }
         }
     }
+}
+
+/// What the playlists' ticks are for: the song, and the list as it came.
+private struct HoldingQuestion: Equatable {
+    var song: String?
+    var playlists: [MediaPlaylist]
 }
 
 /// A line of Up Next: a song, or the header over one part of the queue.
@@ -662,6 +765,11 @@ private struct LibraryRow<Accessory: View>: View {
     var add: (() -> Void)?
     /// What adding does, for its tooltip and menu item.
     var addTitle = ""
+    /// The playlist is known to have the song already: the button is a tick, and
+    /// clicking it offers to add a second copy.
+    var holdsSong = false
+    /// Saying so, for the tick's tooltip.
+    var holdsTitle = ""
     @ViewBuilder let accessory: Accessory
     @State private var isHovering = false
 
@@ -711,7 +819,7 @@ private struct LibraryRow<Accessory: View>: View {
                 PlayNextButton(joinsQueue: joinsQueue, action: playNext)
                     .padding(.trailing, 6)
             } else if showsAdd, let add {
-                RowButton(symbol: "plus", title: addTitle, action: add)
+                RowButton(symbol: holdsSong ? "checkmark" : "plus", title: holdsSong ? holdsTitle : addTitle, action: add)
                     .padding(.trailing, 6)
             }
         }
@@ -762,9 +870,14 @@ private struct RowButton: View {
     }
 }
 
-/// How an add went, for a moment, over the bottom of the list.
+/// How an add went, for a moment, over the bottom of the list, with "Add Anyway"
+/// when it was held back.
 private struct PanelNotice: View {
     let notice: NowPlayingLibraryModel.Notice
+    let addAnyway: () -> Void
+    /// Told when the pointer comes and goes, so a question stays while it is there.
+    let hold: (Bool) -> Void
+    @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -773,15 +886,32 @@ private struct PanelNotice: View {
             Text(notice.text)
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
+            if notice.addAnyway != nil {
+                Button(action: addAnyway) {
+                    Text("Add Anyway")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 10)
+                        .frame(height: 20)
+                        .background(Capsule().fill(.white.opacity(isHovering ? 1 : 0.9)))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .padding(.leading, 4)
+                .onHover { isHovering = $0 }
+            }
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(.trailing, notice.addAnyway == nil ? 12 : 4)
         .frame(height: 28)
         .background(Capsule().fill(Color(white: 0.2)))
         .overlay(Capsule().strokeBorder(.white.opacity(0.1)))
         .shadow(color: .black.opacity(0.5), radius: 8, y: 2)
+        .onHover(perform: hold)
         .padding(.horizontal, 24)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: notice.addAnyway == nil ? .combine : .contain)
     }
 }
 

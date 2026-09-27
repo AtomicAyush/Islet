@@ -46,8 +46,17 @@ protocol MediaLibrary: AnyObject {
     /// Saves an item from `playingItem(titled:)`, or takes it out again. It is the
     /// item that was shown, so a song that has ended since is still the one changed.
     func setSaved(_ saved: Bool, _ item: MediaPlayingItem) async throws
-    /// Adds an item from `playingItem(titled:)` to one of the playlists that can take it.
-    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist) async throws -> MediaPlaylistAddition
+    /// Adds an item from `playingItem(titled:)` to one of the playlists that can take
+    /// it, unless it is there already or that cannot be told; `evenIfThere` adds it
+    /// regardless, when the person has said to.
+    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist, evenIfThere: Bool) async throws -> MediaPlaylistAddition
+    /// Which of `playlists` are known to have `item` already, by id, from what the
+    /// library has read of them before and without asking its app, for ticking
+    /// them in the list.
+    func playlists(_ playlists: [MediaPlaylist], holding item: MediaPlayingItem) async -> Set<String>
+    /// Reads a few of `playlists` ahead, quietly, so more of them can be ticked.
+    /// True when it learnt anything.
+    func readAhead(_ playlists: [MediaPlaylist]) async -> Bool
 }
 
 extension MediaLibrary {
@@ -62,9 +71,11 @@ extension MediaLibrary {
     func setSaved(_ saved: Bool, _ item: MediaPlayingItem) async throws {
         throw MediaLibraryError(message: "\(displayName) can't save songs from here")
     }
-    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist) async throws -> MediaPlaylistAddition {
+    func add(_ item: MediaPlayingItem, to playlist: MediaPlaylist, evenIfThere: Bool) async throws -> MediaPlaylistAddition {
         throw MediaLibraryError(message: "\(displayName) can't add to playlists from here")
     }
+    func playlists(_ playlists: [MediaPlaylist], holding item: MediaPlayingItem) async -> Set<String> { [] }
+    func readAhead(_ playlists: [MediaPlaylist]) async -> Bool { false }
 }
 
 /// What is coming up, split the way Spotify shows it: songs the person queued, which
@@ -147,9 +158,12 @@ struct MediaPlayingItem: Equatable, Sendable {
 /// What adding to a playlist came to.
 enum MediaPlaylistAddition: Equatable, Sendable {
     case added
-    /// Islet added it before and the playlist has not changed since, so it was not
-    /// added a second time.
+    /// The playlist has it already, however it got there, so it was not added a
+    /// second time.
     case alreadyThere
+    /// Whether the playlist has it already could not be told (it is too long to
+    /// read through, or the app did not answer), so it was not added unasked.
+    case unchecked
 }
 
 /// The words and symbol for saving a song, the way its app has them.
