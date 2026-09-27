@@ -65,6 +65,8 @@ private struct ShelfItemView: View {
     let item: ShelfItem
     let model: DropZoneModel
     @State private var isHovering = false
+    /// On the home page, its menu also arranges the page, since it takes the right-click.
+    @Environment(\.editHomePage) private var editHomePage
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -100,6 +102,10 @@ private struct ShelfItemView: View {
             Button("AirDrop") { model.share(item) }
             Divider()
             Button("Remove from Shelf") { model.shelf.remove(item) }
+            if let editHomePage {
+                Divider()
+                Button("Edit Home Page") { editHomePage() }
+            }
         }
         .help(item.name)
     }

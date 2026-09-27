@@ -15,6 +15,10 @@ final class MixerFeature: Feature {
     let symbol = "slider.horizontal.3"
     let summary = "Every app playing sound, each with its own volume, and a bubble when two play at once."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 15
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     private let model = MixerModel()
     private lazy var activity = MixerActivity(model: model)
     private var isRunning = false
@@ -83,7 +87,7 @@ final class MixerFeature: Feature {
         if count > 0 {
             if !homeWidgetShown {
                 center.setHomeWidget(HomeWidget(
-                    id: id, order: 15, weight: 1.5, view: AnyView(MixerHomeTile(model: model))
+                    id: id, order: Self.tileOrder, weight: 1.5, view: AnyView(MixerHomeTile(model: model))
                 ))
                 homeWidgetShown = true
             }

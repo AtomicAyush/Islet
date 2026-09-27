@@ -15,6 +15,10 @@ final class FocusFeature: Feature {
     let symbol = "moon.fill"
     let summary = "Shows the Focus that is on beside the notch."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 45
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     /// Turning on, turning off and switching share one id, so a quick change of mind
     /// updates the banner already up rather than stacking another.
     private static let bannerID = "focus"
@@ -143,7 +147,7 @@ final class FocusFeature: Feature {
         isTileShown = wantsTile
         if wantsTile {
             center.setHomeWidget(HomeWidget(
-                id: id, order: 45, view: AnyView(FocusHomeTile(model: model, toggle: toggle) { [weak self] in
+                id: id, order: Self.tileOrder, view: AnyView(FocusHomeTile(model: model, toggle: toggle) { [weak self] in
                     self?.tileClicked()
                 })
             ))

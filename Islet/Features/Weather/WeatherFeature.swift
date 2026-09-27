@@ -16,6 +16,10 @@ final class WeatherFeature: Feature {
     let symbol = "cloud.sun.fill"
     let summary = "The temperature on the home page, and a word before rain starts."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 25
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     static let bannerID = "weather.rain"
     /// Long enough to read twice: it comes unasked.
     static let bannerDuration: TimeInterval = 5.5
@@ -79,11 +83,13 @@ final class WeatherFeature: Feature {
     /// The tile is there while the feature runs, or a preview shows one.
     private func syncHomeWidget() {
         let wanted = isRunning || model.sample != nil
+        // A preview's tile shows even if the person hid it.
+        ActivityCenter.shared.setPreviewing(model.sample != nil, homeTile: id)
         guard wanted != isWidgetShown else { return }
         isWidgetShown = wanted
         if wanted {
             ActivityCenter.shared.setHomeWidget(HomeWidget(
-                id: id, order: 25, view: AnyView(WeatherHomeTile(model: model))
+                id: id, order: Self.tileOrder, view: AnyView(WeatherHomeTile(model: model))
             ))
         } else {
             ActivityCenter.shared.removeHomeWidget(id: id)

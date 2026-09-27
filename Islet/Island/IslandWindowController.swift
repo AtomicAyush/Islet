@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 
 /// One island on one screen: the panel, its model, and the pointer tracking that
@@ -11,6 +12,8 @@ final class IslandWindowController {
 
     private var layout: IslandLayout?
     private var monitors: [Any] = []
+    /// Listening for Escape, while the home page is being arranged.
+    private var escapeMonitors: [Any] = []
     private var dragChangeCount = NSPasteboard(name: .drag).changeCount
     /// A drag of files, or of a picture from a web page, is under way.
     private var fileDragActive = false
@@ -49,12 +52,14 @@ final class IslandWindowController {
         panel.contentView = host
         panel.orderFrontRegardless()
         installMonitors()
+        model.editingHomeChanged = { [weak self] editing in self?.listenForEscape(editing) }
         measureMenuBarRoom()
     }
 
     func invalidate() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
+        listenForEscape(false)
         panel.orderOut(nil)
         panel.close()
     }
@@ -134,6 +139,39 @@ final class IslandWindowController {
         }) {
             monitors.append(m)
         }
+    }
+
+    /// While the home page is being arranged, Escape ends it. The panel never becomes
+    /// key, so the island never has the keyboard: it listens for the key wherever it is
+    /// pressed, only meanwhile, and the key still reaches the app in front. macOS passes
+    /// on keys pressed in other apps only to an app with Accessibility access; without
+    /// it, Done or a click outside ends arranging instead.
+    private func listenForEscape(_ on: Bool) {
+        escapeMonitors.forEach(NSEvent.removeMonitor)
+        escapeMonitors.removeAll()
+        guard on else { return }
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.keyDown(event) }
+        }) {
+            escapeMonitors.append(m)
+        }
+        // Keys pressed in Islet's own windows (Settings) come this way instead.
+        if let m = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.keyDown(event) }
+            return event
+        }) {
+            escapeMonitors.append(m)
+        }
+    }
+
+    private func keyDown(_ event: NSEvent) {
+        if Self.endsEditing(event) { model.endEditingHome() }
+    }
+
+    /// Whether a key press ends arranging the home page: Escape, with no modifier held.
+    static func endsEditing(_ event: NSEvent) -> Bool {
+        let held = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        return event.keyCode == UInt16(kVK_Escape) && held.isEmpty
     }
 
     /// Two fingers pulled down over the island open it; pushed up, close it. The

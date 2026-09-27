@@ -25,6 +25,14 @@ final class HiddenMenuBarIconsFeature: Feature {
     let symbol = "menubar.arrow.up.rectangle"
     let summary = "Menu bar icons the notch hides, on the home page, a click from their menus."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else:
+    /// after Shortcuts, while it only lists icons in sight or asks for Accessibility,
+    /// both a click from something that is not on screen. With icons out of sight,
+    /// which is when it matters, it goes ahead of the timer (`raisedTileOrder`).
+    static let tileOrder = 48
+    static let raisedTileOrder = 25
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     /// The page with every hidden icon, where the tile has room for a few, which the
     /// island opens as its focus (`islet://open?focus=hiddenMenuBarIcons`).
     static let pageID = "hiddenMenuBarIcons"
@@ -137,6 +145,8 @@ final class HiddenMenuBarIconsFeature: Feature {
         let center = ActivityCenter.shared
         let isAttached = isRunning || model.sample != nil
         let listed = model.listed
+        // A preview's tile shows even if the person hid it.
+        center.setPreviewing(model.sample != nil, homeTile: id)
 
         let height = HiddenMenuBarIconsLayout.pageHeight(for: listed)
         if isAttached != isPageShown || (isAttached && height != pageHeight) {
@@ -155,10 +165,10 @@ final class HiddenMenuBarIconsFeature: Feature {
 
         let wantsTile = isAttached && (model.needsAccess || !listed.isEmpty)
         // With icons out of sight, which is when the tile matters, ahead of the timer,
-        // so a busy home row does not push it out of sight as well. Otherwise (only the
-        // icons in sight listed, or Accessibility to ask for), after Shortcuts: both
-        // are a click from something that is not on screen.
-        let order = wantsTile ? (listed.contains(where: \.isHidden) ? 25 : 48) : nil
+        // so a busy home row does not push it out of sight as well (`tileOrder`). Once
+        // the person has placed the tile themselves, it stays where they put it
+        // (`HomeTileOrder`).
+        let order = wantsTile ? (listed.contains(where: \.isHidden) ? Self.raisedTileOrder : Self.tileOrder) : nil
         guard order != tileOrder else { return }
         tileOrder = order
         if let order {

@@ -1,5 +1,19 @@
 import SwiftUI
 
+extension View {
+    /// Hidden from VoiceOver while `isHidden`, and otherwise left be: a plain
+    /// `accessibilityHidden(false)` shows again whatever inside it hides itself. macOS 14
+    /// has only the plain one.
+    @ViewBuilder
+    func accessibilityHidden(when isHidden: Bool) -> some View {
+        if #available(macOS 15, *) {
+            accessibilityHidden(true, isEnabled: isHidden)
+        } else {
+            accessibilityHidden(isHidden)
+        }
+    }
+}
+
 /// A filled circular button in the iPhone Live Activity style.
 struct RoundButton: View {
     let symbol: String

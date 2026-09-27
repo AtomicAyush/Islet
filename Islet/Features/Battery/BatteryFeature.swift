@@ -11,6 +11,10 @@ final class BatteryFeature: Feature {
     let symbol = "battery.100percent.bolt"
     let summary = "A charging flash when you plug in, and a warning when the battery runs low."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 40
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     private static let widgetID = "battery"
 
     private let model = BatteryModel()
@@ -161,7 +165,7 @@ final class BatteryFeature: Feature {
         let shown = center.homeWidgets.contains { $0.id == Self.widgetID }
         if wanted, !shown {
             center.setHomeWidget(HomeWidget(
-                id: Self.widgetID, order: 40, view: AnyView(BatteryLiveTile(model: model))
+                id: Self.widgetID, order: Self.tileOrder, view: AnyView(BatteryLiveTile(model: model))
             ))
         } else if !wanted, shown {
             center.removeHomeWidget(id: Self.widgetID)
@@ -170,14 +174,17 @@ final class BatteryFeature: Feature {
 
     private func previewHomeTile() {
         let sample = BatteryState.sample(level: 64, pluggedIn: true, charging: true, minutes: 65)
+        // Shown even if the person hid the tile: the preview is what they asked to see.
+        ActivityCenter.shared.setPreviewing(true, homeTile: Self.widgetID)
         ActivityCenter.shared.setHomeWidget(HomeWidget(
-            id: Self.widgetID, order: 40, view: AnyView(BatteryHomeTile(state: sample))
+            id: Self.widgetID, order: Self.tileOrder, view: AnyView(BatteryHomeTile(state: sample))
         ))
         tilePreviewWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.tilePreviewWork = nil
+                ActivityCenter.shared.setPreviewing(false, homeTile: Self.widgetID)
                 ActivityCenter.shared.removeHomeWidget(id: Self.widgetID)
                 self.syncHomeWidget()
             }

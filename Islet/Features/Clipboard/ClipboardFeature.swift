@@ -18,6 +18,10 @@ final class ClipboardFeature: Feature {
     let symbol = "doc.on.clipboard.fill"
     let summary = "The last things you copied on the home page, to copy again with a click."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 55
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     /// The id of the page with everything copied, where the tile has room for three,
     /// which the island opens as its focus (`islet://open?focus=clipboard`).
     static let pageID = "clipboard"
@@ -105,6 +109,8 @@ final class ClipboardFeature: Feature {
     private func render() {
         let center = ActivityCenter.shared
         let isAttached = isRunning || model.sample != nil
+        // A preview's tile shows even if the person hid it.
+        center.setPreviewing(model.sample != nil, homeTile: id)
 
         if isAttached != isPageShown {
             isPageShown = isAttached
@@ -124,7 +130,7 @@ final class ClipboardFeature: Feature {
         if wantsTile {
             // After the headphones, before the shelf: both are things kept to hand.
             center.setHomeWidget(HomeWidget(
-                id: id, order: 55, weight: 1.5,
+                id: id, order: Self.tileOrder, weight: 1.5,
                 view: AnyView(ClipboardHomeTile(model: model) {
                     IslandManager.shared.focusedController?.model.select(focus: Self.pageID)
                 })

@@ -13,6 +13,10 @@ final class CalendarFeature: Feature {
     let symbol = "calendar"
     let summary = "Your next event, a few minutes before it starts."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 20
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     enum Key {
         static let leadMinutes = "calendar.leadMinutes"
         static let showJoin = "calendar.showJoin"
@@ -111,7 +115,7 @@ final class CalendarFeature: Feature {
             isWidgetShown = wantsWidget
             if wantsWidget {
                 center.setHomeWidget(HomeWidget(
-                    id: id, order: 20, weight: 1.5, view: AnyView(CalendarHomeTile(model: model))
+                    id: id, order: Self.tileOrder, weight: 1.5, view: AnyView(CalendarHomeTile(model: model))
                 ))
             } else {
                 center.removeHomeWidget(id: id)

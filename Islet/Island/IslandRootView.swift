@@ -425,7 +425,7 @@ private struct ExpandedIsland: View {
                 .frame(height: layout.bodyHeight, alignment: .top)
                 .frame(maxWidth: .infinity)
                 // Under an open card the page takes no clicks, and VoiceOver skips it.
-                .accessibilityHidden(model.indicatorCard != nil)
+                .accessibilityHidden(when: model.indicatorCard != nil)
         }
         .indicatorCard(model: model, layout: layout)
         .padding(.horizontal, IslandLayout.expandedInset.leading - 6)
@@ -437,8 +437,9 @@ private struct ExpandedIsland: View {
             target.view()
         } else if focus == IslandViewModel.homeFocus {
             HomeView(
-                widgets: model.center.homeWidgets,
-                page: Binding(get: { model.homePage }, set: { model.homePage = $0 })
+                widgets: model.center.shownHomeWidgets,
+                page: Binding(get: { model.homePage }, set: { model.homePage = $0 }),
+                editing: homeEditing
             )
         } else if let activity = model.center.activity(id: focus) {
             activity.expanded()
@@ -446,10 +447,28 @@ private struct ExpandedIsland: View {
             page.view
         }
     }
+
+    /// Arranging the home page from this island: its model says whether it is being
+    /// arranged, and the moves go to the one arrangement every island shares.
+    private var homeEditing: HomeEditing {
+        let center = model.center
+        let arrangement = center.homeArrangement
+        return HomeEditing(
+            isOn: model.isEditingHome,
+            wiggles: model.isHovering,
+            hiddenCount: center.homeWidgets.filter { arrangement.isHidden($0.id) }.count,
+            begin: { model.editHome() },
+            end: { model.endEditingHome() },
+            move: { id, destination, shown in arrangement.move(id, to: destination, in: shown) },
+            hide: { id in withAnimation(.islandMorph) { arrangement.setHidden(true, id) } },
+            title: { arrangement.title(of: $0) }
+        )
+    }
 }
 
 /// The row beside the notch: tabs on the left, a compact banner or settings on the
-/// right.
+/// right. While the home page is arranged, its hidden tiles on the left instead, and
+/// Done on the right beside the banner or indicators.
 private struct ExpandedHeader: View {
     let model: IslandViewModel
     let focus: String
@@ -457,14 +476,28 @@ private struct ExpandedHeader: View {
 
     var body: some View {
         let sideWidth = max(0, (layout.size.width - 2 * layout.earRadius - layout.notch.width) / 2 - 16)
+        let arranging = model.isEditingHome && focus == IslandViewModel.homeFocus
 
         HStack(spacing: 0) {
-            tabs
-                .frame(width: sideWidth, alignment: .leading)
+            Group {
+                if arranging {
+                    HiddenTilesMenu(arrangement: model.center.homeArrangement)
+                } else {
+                    tabs
+                }
+            }
+            .frame(width: sideWidth, alignment: .leading)
             Spacer(minLength: layout.notch.width)
-            trailing
-                .frame(width: sideWidth, alignment: .trailing)
+            Group {
+                if arranging {
+                    arrangingTrailing
+                } else {
+                    trailing
+                }
+            }
+            .frame(width: sideWidth, alignment: .trailing)
         }
+        .animation(.easeOut(duration: 0.2), value: arranging)
     }
 
     private var tabs: some View {
@@ -487,18 +520,52 @@ private struct ExpandedHeader: View {
         }
     }
 
-    @ViewBuilder
-    private var trailing: some View {
+    /// A compact banner, as the header shows it.
+    private var compactBanner: IslandBanner? {
         // An attachment has no compact row to ride under here, so it shows as its
         // banner would, ahead of any other banner.
-        if let banner = model.center.attachment?.banner ?? model.center.banner, case .compact = banner.style {
-            HStack(spacing: 6) {
-                banner.leading.frame(width: 24)
-                banner.trailing
+        guard let banner = model.center.attachment?.banner ?? model.center.banner,
+              case .compact = banner.style else { return nil }
+        return banner
+    }
+
+    private func headerBanner(_ banner: IslandBanner) -> some View {
+        HStack(spacing: 6) {
+            banner.leading.frame(width: 24)
+            banner.trailing
+        }
+        .frame(height: layout.notch.height)
+        .environment(\.isInIslandHeader, true)
+        .transition(.opacity)
+    }
+
+    /// Done, with the banner or the indicators beside it where they fit: the camera and
+    /// microphone lights stay in sight while the home page is arranged.
+    private var arrangingTrailing: some View {
+        let done = HomeDoneButton { model.endEditingHome() }
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                if let banner = compactBanner {
+                    headerBanner(banner)
+                } else if !model.center.indicators.isEmpty {
+                    HeaderIndicators(model: model)
+                }
+                done
             }
-            .frame(height: layout.notch.height)
-            .environment(\.isInIslandHeader, true)
-            .transition(.opacity)
+            HStack(spacing: 8) {
+                if !model.center.indicators.isEmpty {
+                    HeaderIndicators(model: model)
+                }
+                done
+            }
+            done
+        }
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if let banner = compactBanner {
+            headerBanner(banner)
         } else {
             HStack(spacing: 8) {
                 if !model.center.indicators.isEmpty {

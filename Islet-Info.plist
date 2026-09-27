@@ -25,5 +25,18 @@
 	<string>Islet shows the weather where this Mac is, when you turn on “Use this Mac’s location” in its Weather settings.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Islet shows the weather where this Mac is, when you turn on “Use this Mac’s location” in its Weather settings.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.ayush.Islet.home-tile</string>
+			<key>UTTypeDescription</key>
+			<string>Islet home tile</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

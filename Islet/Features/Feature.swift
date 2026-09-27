@@ -30,6 +30,11 @@ protocol Feature: AnyObject {
     /// Handles `islet://<id>/…` URLs addressed to this feature. Returns whether the
     /// URL was understood.
     func handle(_ url: URL) -> Bool
+
+    /// The tile the feature puts on the home page, if it has one, with the id its
+    /// `HomeWidget` is published under: listed to arrange (in Settings, and hidden ones
+    /// in the island) whether or not it is showing.
+    var homeTile: HomeTileInfo? { get }
 }
 
 extension Feature {
@@ -37,6 +42,16 @@ extension Feature {
     func settingsView() -> AnyView? { nil }
     var previews: [FeaturePreview] { [] }
     func handle(_ url: URL) -> Bool { false }
+    var homeTile: HomeTileInfo? { nil }
+}
+
+extension HomeTileInfo {
+    /// `feature`'s tile, under the feature's own id, name and symbol, going at `order`
+    /// until the person puts it somewhere else.
+    @MainActor
+    init(_ feature: any Feature, order: Int) {
+        self.init(id: feature.id, title: feature.title, symbol: feature.symbol, order: order)
+    }
 }
 
 struct FeaturePreview: Identifiable {
@@ -113,5 +128,10 @@ final class FeatureRegistry {
                 feature.stop()
             }
         }
+        // The home page is arranged from the running features' tiles. Set only when they
+        // change: this runs on every change to the defaults, arranging included.
+        let arrangement = ActivityCenter.shared.homeArrangement
+        let tiles = features.filter { running.contains($0.id) }.compactMap(\.homeTile)
+        if arrangement.tiles != tiles { arrangement.tiles = tiles }
     }
 }

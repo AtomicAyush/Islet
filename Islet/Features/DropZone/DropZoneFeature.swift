@@ -12,6 +12,10 @@ final class DropZoneFeature: Feature {
     let symbol = "tray.and.arrow.down.fill"
     let summary = "Drag files or pictures from the web to the notch to AirDrop them or keep them on a shelf."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 60
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     private let model = DropZoneModel()
     private lazy var target = DropZoneTarget(model: model)
     private var isRunning = false
@@ -105,7 +109,7 @@ final class DropZoneFeature: Feature {
         widgetShown = wanted
         if wanted {
             ActivityCenter.shared.setHomeWidget(HomeWidget(
-                id: id, order: 60, weight: 1.5, view: AnyView(ShelfHomeTile(model: model))
+                id: id, order: Self.tileOrder, weight: 1.5, view: AnyView(ShelfHomeTile(model: model))
             ))
         } else {
             ActivityCenter.shared.removeHomeWidget(id: id)

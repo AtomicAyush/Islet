@@ -238,8 +238,10 @@ struct IndicatorDetail: Equatable {
 /// A tile on the home page — what the expanded island shows when nothing is
 /// running, or when its home tab is picked.
 struct HomeWidget: Identifiable {
+    /// The feature's id (`Feature.homeTile`).
     var id: String
-    /// Lower sorts first (leftmost).
+    /// Lower sorts first (leftmost), until the person arranges the page themselves
+    /// (`HomeTileOrder`).
     var order: Int
     /// Relative share of the row's width.
     var weight: CGFloat = 1

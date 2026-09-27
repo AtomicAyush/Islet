@@ -45,6 +45,10 @@ enum Prefs {
         static let expandOnHover = "expandOnHover"
         static let hoverDelay = "hoverDelay"
         static let homeLayout = "homeLayout"
+        /// The home page's tiles in the person's order (`HomeTileOrder.placed`).
+        static let homeTileOrder = "homeTileOrder"
+        /// The home page's tiles the person hid.
+        static let hiddenHomeTiles = "hiddenHomeTiles"
         static let haptics = "haptics"
         static let displays = "displays"
         static let hideInFullScreen = "hideInFullScreen"

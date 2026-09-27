@@ -19,6 +19,10 @@ final class MicMuteFeature: Feature {
     let symbol = "mic.slash.fill"
     let summary = "A button that mutes the microphone for every app, with a red mark beside the notch while it is muted."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 46
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     /// Muting, unmuting and the rest share one id, so a quick change of mind updates
     /// the banner already up rather than stacking another.
     static let bannerID = "micMute"
@@ -137,7 +141,7 @@ final class MicMuteFeature: Feature {
         guard wantsTile != isTileShown else { return }
         isTileShown = wantsTile
         if wantsTile {
-            center.setHomeWidget(HomeWidget(id: id, order: 46, view: AnyView(MicMuteHomeTile(model: model))))
+            center.setHomeWidget(HomeWidget(id: id, order: Self.tileOrder, view: AnyView(MicMuteHomeTile(model: model))))
         } else {
             center.removeHomeWidget(id: id)
         }

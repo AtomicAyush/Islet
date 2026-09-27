@@ -4,6 +4,7 @@ import AppKit
 ///
 ///     islet://open                 open the island (on the screen under the pointer)
 ///     islet://open?focus=timer     open it on a particular activity, or "home"
+///     islet://open?edit=1          open it on the home page, arranging its tiles
 ///     islet://close
 ///     islet://settings?tab=activities
 ///     islet://preview?feature=battery&index=0
@@ -53,7 +54,11 @@ enum URLRouter {
             #if DEBUG
             island?.isPinnedOpen = query["pin"] == "1"
             #endif
-            island?.expand(focus: query["focus"])
+            if query["edit"] == "1" {
+                island?.editHome()
+            } else {
+                island?.expand(focus: query["focus"])
+            }
         case "close":
             #if DEBUG
             island?.isPinnedOpen = false

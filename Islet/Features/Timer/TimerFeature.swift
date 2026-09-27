@@ -13,6 +13,10 @@ final class TimerFeature: Feature {
     let symbol = "timer"
     let summary = "A countdown beside the notch, started from the opened island."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 30
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     private let model = TimerModel()
     private lazy var activity = TimerActivity(model: model)
     private var isRunning = false
@@ -28,7 +32,7 @@ final class TimerFeature: Feature {
     func start() {
         isRunning = true
         ActivityCenter.shared.setHomeWidget(
-            HomeWidget(id: "timer", order: 30, view: AnyView(TimerHomeTile(model: model)))
+            HomeWidget(id: "timer", order: Self.tileOrder, view: AnyView(TimerHomeTile(model: model)))
         )
         sync()
     }

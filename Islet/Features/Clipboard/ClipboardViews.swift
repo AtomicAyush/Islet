@@ -610,7 +610,19 @@ enum ClipboardAccessText {
 extension View {
     /// Copy, pin, remove, and for a link or files the way to them.
     fileprivate func clipboardMenu(item: ClipboardItem, model: ClipboardModel) -> some View {
-        contextMenu {
+        modifier(ClipboardMenu(item: item, model: model))
+    }
+}
+
+/// An item's menu (`clipboardMenu`). On the home page it also arranges the page, as the
+/// page's own menu would, since this one takes the right-click there.
+private struct ClipboardMenu: ViewModifier {
+    let item: ClipboardItem
+    let model: ClipboardModel
+    @Environment(\.editHomePage) private var editHomePage
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
             Button("Copy") { model.copy(item) }
             Button(item.isPinned ? "Unpin" : "Pin") { model.setPinned(item, !item.isPinned) }
             switch item.content {
@@ -623,6 +635,10 @@ extension View {
             }
             Divider()
             Button("Remove") { model.remove(item) }
+            if let editHomePage {
+                Divider()
+                Button("Edit Home Page") { editHomePage() }
+            }
         }
     }
 }

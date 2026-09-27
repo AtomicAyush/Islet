@@ -14,6 +14,10 @@ final class BluetoothFeature: Feature {
     let symbol = "airpodspro"
     let summary = "Shows AirPods and other headphones connecting, with their battery."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 50
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     private static let bannerPrefix = "bluetooth."
     private static let cardDuration: TimeInterval = 4
 
@@ -139,7 +143,7 @@ final class BluetoothFeature: Feature {
         tileModel = source
         if let source {
             ActivityCenter.shared.setHomeWidget(
-                HomeWidget(id: "bluetooth", order: 50, weight: 1, view: AnyView(HeadsetHomeTile(model: source)))
+                HomeWidget(id: "bluetooth", order: Self.tileOrder, weight: 1, view: AnyView(HeadsetHomeTile(model: source)))
             )
         } else {
             ActivityCenter.shared.removeHomeWidget(id: "bluetooth")

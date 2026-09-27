@@ -19,6 +19,10 @@ final class ShortcutsFeature: Feature {
     let symbol = "square.2.layers.3d.fill"
     let summary = "Shortcuts as they run, beside the notch, and your favourites on the home page."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 47
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     /// A shortcut run from Islet may take a while (a download, a dialog waiting for an
     /// answer); one still going after ten minutes is stopped, so it cannot run on
     /// unseen for ever.
@@ -330,7 +334,7 @@ final class ShortcutsFeature: Feature {
         isTileShown = isRunning
         if isRunning {
             center.setHomeWidget(HomeWidget(
-                id: id, order: 47, view: AnyView(ShortcutsHomeTile(
+                id: id, order: Self.tileOrder, view: AnyView(ShortcutsHomeTile(
                     catalogue: catalogue, runs: runs,
                     run: { [weak self] shortcut in self?.run(shortcut) },
                     choose: { ShortcutsSettingsView.open() }
@@ -350,8 +354,9 @@ final class ShortcutsFeature: Feature {
     /// its time unseen. An island open on the home page or on the run itself, where
     /// the tick has just shown, closes for the card: that is where a shortcut run from
     /// the home tile leaves the pointer, and the card is what the click was for. One
-    /// open on anything else (music, a timer) is not taken from under the pointer: the
-    /// card waits for it to close, and only then starts its time.
+    /// open on anything else (music, a timer), or on the home page being arranged, is
+    /// not taken from under the pointer: the card waits for it to close, and only then
+    /// starts its time.
     private func presentResult(_ output: ShortcutOutput, for shortcut: ShortcutInfo) {
         resultTask?.cancel()
         resultTask = Task { [weak self] in
@@ -378,10 +383,12 @@ final class ShortcutsFeature: Feature {
         }
     }
 
-    /// Whether an island is open on a page other than home or the runs'.
+    /// Whether an island is open on a page other than home or the runs', or on the home
+    /// page being arranged.
     private var isOpenOnAnotherPage: Bool {
         islands().contains { island in
-            island.isExpanded && island.resolvedFocus != IslandViewModel.homeFocus && island.resolvedFocus != activity.id
+            island.isExpanded && (island.isEditingHome
+                || island.resolvedFocus != IslandViewModel.homeFocus && island.resolvedFocus != activity.id)
         }
     }
 

@@ -23,6 +23,10 @@ final class KeepAwakeFeature: Feature {
     let symbol = KeepAwakeSymbol.on
     let summary = "Keeps the Mac from sleeping for a while, with the time left beside the notch."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 35
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     /// What became of a session that was asked for.
     enum Outcome: Equatable {
         /// The Mac is kept awake.
@@ -72,7 +76,7 @@ final class KeepAwakeFeature: Feature {
             )
         }
         ActivityCenter.shared.setHomeWidget(HomeWidget(
-            id: Self.widgetID, order: 35, view: AnyView(KeepAwakeHomeTile(model: model) { [weak self] length in
+            id: Self.widgetID, order: Self.tileOrder, view: AnyView(KeepAwakeHomeTile(model: model) { [weak self] length in
                 self?.keepAwake(for: length.seconds)
             })
         ))

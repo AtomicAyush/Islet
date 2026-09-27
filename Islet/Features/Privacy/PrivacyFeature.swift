@@ -16,6 +16,10 @@ final class PrivacyFeature: Feature {
     let symbol = "video.fill"
     let summary = "Dots beside the notch while the camera, microphone or screen is in use, and which app is using it."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 70
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     private static let bannerID = "privacy.start"
     /// The green or orange dot, the purple one and the location arrow.
     private static let dotID = "privacy"
@@ -151,7 +155,7 @@ final class PrivacyFeature: Feature {
             center.removeHomeWidget(id: id)
         } else {
             center.setHomeWidget(HomeWidget(
-                id: id, order: 70, weight: PrivacyHomeTile.weight(for: usage),
+                id: id, order: Self.tileOrder, weight: PrivacyHomeTile.weight(for: usage),
                 view: AnyView(PrivacyHomeTile(monitor: monitor))
             ))
         }

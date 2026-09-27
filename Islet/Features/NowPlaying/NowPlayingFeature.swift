@@ -28,6 +28,10 @@ final class NowPlayingFeature: Feature {
     let symbol = "music.note"
     let summary = "Artwork and a live waveform while music or video plays, with controls when opened."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 10
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     private let model = NowPlayingModel()
     private let library = NowPlayingLibraryModel()
     /// Where the sound plays, for the player's output button.
@@ -281,7 +285,7 @@ final class NowPlayingFeature: Feature {
         if isActive, model.hasSession {
             if !homeWidgetShown {
                 center.setHomeWidget(HomeWidget(
-                    id: id, order: 10, weight: 2, view: AnyView(NowPlayingHomeTile(model: model))
+                    id: id, order: Self.tileOrder, weight: 2, view: AnyView(NowPlayingHomeTile(model: model))
                 ))
                 homeWidgetShown = true
             }

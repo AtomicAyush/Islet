@@ -85,6 +85,8 @@ private struct GeneralSettings: View {
                 }
             }
 
+            HomeTilesSection(arrangement: ActivityCenter.shared.homeArrangement)
+
             Section("Displays") {
                 Picker("Show the island on", selection: $displays) {
                     ForEach(DisplayChoice.allCases) { choice in

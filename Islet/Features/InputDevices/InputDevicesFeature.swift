@@ -16,6 +16,10 @@ final class InputDevicesFeature: Feature {
     let symbol = "magicmouse.fill"
     let summary = "Warns when a Magic Mouse, Keyboard or Trackpad runs low on battery."
 
+    /// Where the tile goes on the home page, until the person puts it somewhere else.
+    static let tileOrder = 52
+    var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+
     private static let bannerPrefix = "inputDevices."
     private static let widgetID = "inputDevices"
     private static let lowDuration: TimeInterval = 4
@@ -331,7 +335,7 @@ final class InputDevicesFeature: Feature {
         if let source {
             // Beside the headphones' tile, the other things running on a battery.
             ActivityCenter.shared.setHomeWidget(
-                HomeWidget(id: Self.widgetID, order: 52, view: AnyView(InputDevicesHomeTile(model: source)))
+                HomeWidget(id: Self.widgetID, order: Self.tileOrder, view: AnyView(InputDevicesHomeTile(model: source)))
             )
         } else {
             ActivityCenter.shared.removeHomeWidget(id: Self.widgetID)

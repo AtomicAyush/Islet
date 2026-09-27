@@ -19,8 +19,16 @@ final class ActivityCenter {
     /// A row that stays under one activity while its feature keeps it there. A
     /// presented `attachment` goes in front of it for as long as that is up.
     private(set) var standingAttachment: StandingAttachment?
-    /// Home page tiles, in display order.
+    /// Every tile features have put on the home page, by their `order`, hidden ones
+    /// included. The page shows `shownHomeWidgets`.
     private(set) var homeWidgets: [HomeWidget] = []
+    /// How the person arranged the home page. Only a test replaces it.
+    @ObservationIgnored var homeArrangement = HomeArrangement() {
+        didSet { syncHomeArrangement() }
+    }
+    /// Home tiles a preview has put up, shown even if the person hid them: the preview
+    /// is what they asked to see (`setPreviewing`).
+    private(set) var previewingHomeTiles: Set<String> = []
     /// Features' own pages of the opened island, by id (`IslandPage`).
     private(set) var pages: [String: IslandPage] = [:]
     /// Where files dragged onto the island go. `nil` leaves drags alone.
@@ -341,10 +349,33 @@ final class ActivityCenter {
         next.append(widget)
         next.sort { $0.order < $1.order }
         homeWidgets = next
+        syncHomeArrangement()
     }
 
     func removeHomeWidget(id: String) {
         homeWidgets.removeAll { $0.id == id }
+        syncHomeArrangement()
+    }
+
+    /// The home page's tiles as it shows them: in the person's order once they have
+    /// arranged the page, by each tile's `order` until then, and without the ones they
+    /// hid (`HomeTileOrder`) unless a preview has put one up.
+    var shownHomeWidgets: [HomeWidget] {
+        homeArrangement.shown(homeWidgets, shownAnyway: previewingHomeTiles)
+    }
+
+    /// Whether a preview has tile `id` up, to show on the home page even if it is hidden.
+    /// The feature says when the preview ends.
+    func setPreviewing(_ isPreviewing: Bool, homeTile id: String) {
+        guard previewingHomeTiles.contains(id) != isPreviewing else { return }
+        if isPreviewing { previewingHomeTiles.insert(id) } else { previewingHomeTiles.remove(id) }
+    }
+
+    /// Tells the arrangement which tiles are on the page and where they ask to go, when
+    /// that changes: not for a tile only drawing something new.
+    private func syncHomeArrangement() {
+        let showing = homeWidgets.map { HomeTilePosition(id: $0.id, order: $0.order) }
+        if homeArrangement.showing != showing { homeArrangement.showing = showing }
     }
 
     // MARK: Pages

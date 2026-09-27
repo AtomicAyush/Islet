@@ -350,6 +350,14 @@ each running activity and one for the home page. It closes when the pointer leav
 click anywhere else; a two-finger swipe down opens it. Clicking works too, if you would rather
 it did not open on hover.
 
+**Arrange the home page.** Right-click it and choose Edit Home Page: the tiles wiggle, drag one
+to another place (over a page's dot to take it to that page) or click its minus to hide it, and
+bring hidden ones back from the Hidden menu at the top left. Click Done (or press Escape, once
+Islet has Accessibility access). The island stays open meanwhile, with the pointer away for up
+to a minute. Settings → General → Home Tiles lists every tile of the features that are on, to
+drag into order, switch off or bring back, and Reset puts them all back where their features
+put them. A tile you have never placed goes beside its usual neighbours, and keeps that place.
+
 **Alerts take it over for a moment.** Plugging in a charger, AirPods connecting, a timer
 finishing: the island widens or drops into a card, then gives itself back. While music, a video
 or a timer is showing, an alert beside the notch — an app starting on the camera or using your
@@ -393,6 +401,7 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 |---|---|
 | `islet://open` | Opens the island on the screen under the pointer |
 | `islet://open?focus=timer` | Opens it on a particular activity (or `home`) |
+| `islet://open?edit=1` | Opens it on the home page, arranging its tiles |
 | `islet://close` | Closes it |
 | `islet://timer/start?minutes=5` | Starts a timer (`seconds=` works too) |
 | `islet://timer/pause`, `/resume`, `/cancel` | |

@@ -58,6 +58,19 @@ final class IslandViewModel {
     var focus: String?
     /// Which page of home tiles is showing, when they need more than one.
     var homePage = 0
+    /// The home page is being arranged (`editHome()`): its tiles wiggle, and drag to new
+    /// places or hide rather than do what they usually do, and the island stays open
+    /// whatever the pointer does, until Done, Escape, a click outside or a long while
+    /// with the pointer away.
+    private(set) var isEditingHome = false
+    /// Told as arranging the home page begins and ends, so the controller listens for
+    /// Escape only meanwhile.
+    @ObservationIgnored var editingHomeChanged: (Bool) -> Void = { _ in }
+    /// How long the pointer may stay away from an island arranging the home page before
+    /// arranging ends and it closes: one opened to arrange by a script, or walked away
+    /// from, does not stay open for ever. Tests shorten it.
+    @ObservationIgnored var editingIdleTimeout: TimeInterval = 60
+    @ObservationIgnored private var editingIdleWork: DispatchWorkItem?
     /// The indicator card open in the opened island, if any (`IndicatorDetail`).
     private(set) var indicatorCard: OpenIndicatorCard?
     /// How tall each card is as drawn, by its id, as the card reports it, so the island
@@ -342,6 +355,7 @@ final class IslandViewModel {
         if inside {
             followPointer()
             cancelCollapse()
+            cancelEditingIdle()
             if !isExpanded, Prefs.expandOnHover, !isShowingCard {
                 if mode != .hidden {
                     scheduleExpand(after: Prefs.hoverDelay)
@@ -351,7 +365,14 @@ final class IslandViewModel {
             }
         } else {
             cancelExpand()
-            if isExpanded { scheduleCollapse(after: 0.28) }
+            // Arranging the home page holds the island open: tiles are dragged about, and
+            // a drag that strays past the edge must not close it. Only a long while away
+            // ends it.
+            if isEditingHome {
+                scheduleEditingIdle()
+            } else if isExpanded {
+                scheduleCollapse(after: 0.28)
+            }
         }
     }
 
@@ -412,6 +433,8 @@ final class IslandViewModel {
     func expand(focus: String? = nil) {
         cancelExpand()
         cancelCollapse()
+        // Another page takes the island away from the home page being arranged.
+        if focus != Self.homeFocus { stopEditingHome() }
         // Already open, this is a change of page, which a card does not outlast.
         closeIndicatorCard()
         let wasExpanded = isExpanded
@@ -437,19 +460,82 @@ final class IslandViewModel {
         openAcrossSpaceChange = false
         guard isExpanded else { return }
         IslandLog.island.notice("Closed: \(reason, privacy: .public) (\(file, privacy: .public):\(line, privacy: .public))")
+        let wasEditing = isEditingHome
         withAnimation(.islandClose) {
             isExpanded = false
             focus = nil
             indicatorCard = nil
             indicatorCardHeights = [:]
             roomUnderPointer = .zero
+            isEditingHome = false
         }
         homePage = 0
+        cancelEditingIdle()
+        if wasEditing { editingHomeChanged(false) }
     }
 
     func select(focus: String) {
         closeIndicatorCard()
+        if focus != Self.homeFocus { stopEditingHome() }
         withAnimation(.islandMorph) { self.focus = focus }
+    }
+
+    // MARK: Arranging the home page
+
+    /// Opens the island on the home page, if it is not open there already, to arrange
+    /// its tiles: from the home page's menu, or `islet://open?edit=1`. Until Done,
+    /// Escape or a click outside, the island stays open wherever the pointer goes, but
+    /// for a long while away (`editingIdleTimeout`).
+    func editHome() {
+        cancelCollapse()
+        closeIndicatorCard()
+        if !isExpanded {
+            expand(focus: Self.homeFocus)
+        } else if resolvedFocus != Self.homeFocus {
+            select(focus: Self.homeFocus)
+        } else {
+            // Pinned on the home page, so an activity starting does not take it over.
+            focus = Self.homeFocus
+        }
+        guard !isEditingHome else { return }
+        withAnimation(.islandMorph) { isEditingHome = true }
+        if !isHovering { scheduleEditingIdle() }
+        editingHomeChanged(true)
+    }
+
+    /// Done arranging the home page, with Done or Escape. An island the pointer left
+    /// meanwhile closes now, after the grace it would have had.
+    func endEditingHome() {
+        guard isEditingHome else { return }
+        stopEditingHome()
+        if isExpanded, !isHovering { scheduleCollapse(after: 0.28) }
+    }
+
+    /// Stops arranging the home page as another page takes the island, which stays open
+    /// as it would for that page.
+    private func stopEditingHome() {
+        guard isEditingHome else { return }
+        cancelEditingIdle()
+        withAnimation(.islandMorph) { isEditingHome = false }
+        editingHomeChanged(false)
+    }
+
+    /// Ends arranging, and so closes the island, once the pointer has been away for
+    /// `editingIdleTimeout`.
+    private func scheduleEditingIdle() {
+        cancelEditingIdle()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isEditingHome, !self.isHovering else { return }
+            self.editingIdleWork = nil
+            self.endEditingHome()
+        }
+        editingIdleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + editingIdleTimeout, execute: work)
+    }
+
+    private func cancelEditingIdle() {
+        editingIdleWork?.cancel()
+        editingIdleWork = nil
     }
 
     // MARK: Room under the pointer
@@ -622,7 +708,7 @@ final class IslandViewModel {
     private func scheduleCollapse(after delay: TimeInterval) {
         cancelCollapse()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.isHovering else { return }
+            guard let self, !self.isHovering, !self.isEditingHome else { return }
             #if DEBUG
             if self.isPinnedOpen {
                 self.releaseRoom()
