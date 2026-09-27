@@ -65,6 +65,7 @@ final class FeatureRegistry {
         FocusFeature(),
         ShortcutsFeature(),
         BannerFeature(),
+        ClaudeCodeFeature(),
         DropZoneFeature(),
         DownloadsFeature(),
         ScreenshotsFeature(),

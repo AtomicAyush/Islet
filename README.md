@@ -159,11 +159,30 @@ title beside the notch, with a subtitle on the right, or a card with a few lines
 title, in the colour you choose. They are text only, with nothing to click, and kept to a pace
 you can read; see [Banners from scripts](#banners-from-scripts).
 
+**Claude Code.** While a Claude Code session works on a reply, a sparkle breathes left of the
+camera and the turn's time counts up right of it. While it waits for your permission the
+sparkle becomes an orange hand, and while it has asked you something, an orange question mark;
+background workflows show as a count beside a spinner. Opened, there is a row for each session:
+its project (or the start of its prompt, for one outside a project), what it is doing and for
+how long, what you asked, and its workflows under it with what each is doing and for how long.
+Click a session to bring forward the app it runs in — Terminal, iTerm, VS Code or the Claude
+app. It never takes the island from music or a timer, and sits in the bubble beside them
+instead, behind the Sound Mixer unless a session is waiting for you. Claude Code tells Islet
+all this through hooks, with the script in `Scripts/` (see
+[Claude Code hooks](#claude-code-hooks)); without them nothing shows. The hooks say when a turn
+starts and ends, but not when you interrupt one, quit Claude Code or close its terminal, nor
+when you give a permission, so Islet looks further. A session whose Claude Code has quit is
+over, and so is a turn you have interrupted, or one whose transcript and its agents' have been
+quiet for ten minutes while Claude waits on nothing (a long build keeps it going). A permission
+you give shows once the approved command or agent next writes, so for a long command the hand
+stays until it is done.
+
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
-bubble beside the island. macOS has no per-app volume, so Islet makes one with Core Audio
-process taps (macOS 14.2 or later): the first time you move a slider, macOS asks to let Islet
-record system audio, which is how it passes the app's sound through at the level you set.
+bubble beside the island, unless a Claude Code session is waiting for you. macOS has no
+per-app volume, so Islet makes one with Core Audio process taps (macOS 14.2 or later): the
+first time you move a slider, macOS asks to let Islet record system audio, which is how it
+passes the app's sound through at the level you set.
 
 **Drop Zone.** Drag files — or pictures straight from a web page — toward the notch and the
 island opens onto two targets: AirDrop, and a shelf that keeps them for later. A picture
@@ -346,26 +365,10 @@ In Shortcuts, the **Show in Islet** action puts up the same banner, with title, 
 symbol, colour, style and duration as fields. It runs in the background, starting Islet if it
 is not running, and fails with a reason if Show in Islet is turned off.
 
-A Stop hook in `~/.claude/settings.json` flashes the island whenever Claude Code finishes. That
-is after every reply, short ones too, so you may rather put it in the `.claude/settings.json`
-of the projects where it works on long tasks:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "open -g 'islet://banner?title=Claude%20finished&symbol=checkmark.circle.fill&tint=green'"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+A Stop hook in `~/.claude/settings.json` whose command is
+`open -g 'islet://banner?title=Claude%20finished&symbol=checkmark.circle.fill&tint=green'`
+flashes the island whenever Claude Code finishes, after every reply, short ones too. The hook
+script in [Claude Code hooks](#claude-code-hooks) does that and more.
 
 And a test run can say how it went:
 
@@ -373,6 +376,57 @@ And a test run can say how it went:
 swift test && open -g "islet://banner?title=Tests%20passed&symbol=checkmark.circle.fill&tint=green" \
            || open -g "islet://banner?title=Tests%20failed&symbol=xmark.octagon.fill&tint=red&sound=Basso"
 ```
+
+### Claude Code hooks
+
+`Scripts/claude-code-hook.sh` is a hook script for Claude Code. It puts up banners — a reply
+finished (a card with its start), Claude waiting for permission or for an answer, a background
+workflow finished — and keeps a small file for each session in
+`~/Library/Application Support/Islet/Claude Code/Sessions`, which the Claude Code activity
+follows. Copy it into Claude Code's hooks folder:
+
+```bash
+mkdir -p ~/.claude/hooks
+cp Scripts/claude-code-hook.sh ~/.claude/hooks/islet-notify.sh
+```
+
+and add these hooks to `~/.claude/settings.json`, beside any you have already (Settings →
+Activities → Claude Code copies them too):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" start" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" prompt" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" notification" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" stop" }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" subagent" }] }],
+    "TaskCompleted": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" task" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" end" }] }]
+  }
+}
+```
+
+Each hook hands the script its kind of event. SessionStart and SessionEnd make and delete the
+session's file, UserPromptSubmit marks it working, Notification says when Claude needs your
+permission or an answer, and Stop marks it done. Claude Code sends no event when a background
+workflow finishes, but every event lists the workflows running, so SubagentStop and
+TaskCompleted, which come often while workflows run, keep the list current, and a workflow gone
+from it gets its banner. Claude Code waits for UserPromptSubmit's hooks before it sends the
+prompt, so the script is quick, prints nothing and always succeeds. It needs `jq`, part of
+macOS from 15 on (`brew install jq` before that). It keeps the last 200 events other than
+agents stopping in `~/.claude/hooks/islet-hook-log.jsonl`, to show what each carries (a
+prompt by its length alone), and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing
+them. Its header lists what each session's file holds. The workflows the earlier script kept in
+`~/.claude/hooks/islet-workflows` are moved over at each session's next event, and the folder
+goes once they have all been, or are a day old.
 
 ## Layout of the code
 

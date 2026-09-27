@@ -9,7 +9,8 @@ import Observation
 final class ActivityCenter {
     static let shared = ActivityCenter()
 
-    /// Ongoing activities, highest priority first, newest first within a priority.
+    /// Ongoing activities, highest priority first; within a priority the highest rank
+    /// first, then the newest.
     private(set) var activities: [any IslandActivity] = []
     /// The transient alert on screen, if any.
     private(set) var banner: IslandBanner?
@@ -67,6 +68,7 @@ final class ActivityCenter {
         next.append(activity)
         next.sort { a, b in
             if a.priority != b.priority { return a.priority > b.priority }
+            if a.rank != b.rank { return a.rank > b.rank }
             return (startedAt[a.id] ?? .distantPast) > (startedAt[b.id] ?? .distantPast)
         }
         withAnimation(.islandMorph) {

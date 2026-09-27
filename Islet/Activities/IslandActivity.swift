@@ -24,6 +24,10 @@ protocol IslandActivity: AnyObject {
     /// Stable identifier. Showing an activity with an id already on screen replaces it.
     var id: String { get }
     var priority: ActivityPriority { get }
+    /// Which of two activities of the same priority goes first: the higher rank, and
+    /// then the newer. Most leave it at 0; one that would rather give way to its peers
+    /// goes lower, and it is read again whenever the activity is re-published.
+    var rank: Int { get }
     /// SF Symbol for this activity's tab in the expanded island.
     var symbol: String { get }
 
@@ -59,6 +63,7 @@ enum ActivitySwipe {
 
 extension IslandActivity {
     var priority: ActivityPriority { .normal }
+    var rank: Int { 0 }
     var compactLeadingWidth: CGFloat? { nil }
     var compactTrailingWidth: CGFloat? { nil }
     var expandedHeight: CGFloat { 110 }
