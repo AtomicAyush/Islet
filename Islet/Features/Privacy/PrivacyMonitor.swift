@@ -111,6 +111,9 @@ final class PrivacyMonitor {
     /// Whether apps can be named from the system log, for Settings to explain when
     /// they cannot.
     private(set) var names = PrivacyNameTracker.Status.off
+    /// When Islet last saw each app using location since it started, as it started
+    /// or stopped, those left out of the arrow included, for Settings to offer.
+    private(set) var seenLocationApps: [PrivacyApp: Date] = [:]
 
     /// Called after `usage` changes, and when a start held back for its app's name is
     /// let go. `started` is set when a sensor or app newly started, but not for one
@@ -327,6 +330,8 @@ final class PrivacyMonitor {
 
     private func namesRead(_ names: PrivacyNames, generation: Int) {
         guard generation == namesGeneration else { return }
+        let now = Date()
+        for app in Set(named.location.apps).symmetricDifference(names.location.apps) { seenLocationApps[app] = now }
         named = names
         scheduleSettle()
     }

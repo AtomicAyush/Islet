@@ -136,7 +136,10 @@ you pick a scale.
 orange one while only a microphone is — as on the iPhone — and a purple one while an app
 records the screen or what the Mac plays. Turn on Location in Settings for an arrow while an
 app gets the Mac's location (it is off at first: a single look-up lights it for about twelve
-seconds). The home page says what is in use and which app is using it — "Microphone · Zoom",
+seconds). Weather and Find My, which look it up on their own, don't light it. "Don't show for
+location" lists the apps that use location, as System Settings does, recent ones first, to
+leave out others or bring those two back.
+The home page says what is in use and which app is using it — "Microphone · Zoom",
 "Screen · QuickTime Player" — as does a click on any of these dots or the arrow, and Islet can
 name the app for a moment as it starts. Whether a
 sensor is in use comes from the system itself and needs no permission. The microphone's app
