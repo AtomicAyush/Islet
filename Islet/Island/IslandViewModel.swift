@@ -26,6 +26,11 @@ final class IslandViewModel {
 
     static let homeFocus = "home"
     static let dropFocus = "drop"
+    /// Posted as an island opens, with its model as the object; not as one already open
+    /// turns to another page. For a feature that looks something up only for the opened
+    /// island (which menu bar icons the notch hides) and would otherwise have to keep
+    /// looking.
+    static let didOpenNotification = Notification.Name("IslandViewModel.didOpen")
 
     var metrics: NotchMetrics
     /// Set by the controller from preferences and the full-screen watcher.
@@ -418,7 +423,10 @@ final class IslandViewModel {
             // called off, and nothing waits for it to come back to the room it had.
             if !isHovering { roomUnderPointer = .zero }
         }
-        if !wasExpanded { Haptics.tap(.alignment) }
+        if !wasExpanded {
+            Haptics.tap(.alignment)
+            NotificationCenter.default.post(name: Self.didOpenNotification, object: self)
+        }
     }
 
     /// `reason` and the caller's place are logged, so an island that seems to close

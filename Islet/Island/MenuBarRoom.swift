@@ -131,19 +131,13 @@ enum MenuBarRoom {
 private final class MenuExtras: @unchecked Sendable {
     static let shared = MenuExtras()
 
-    /// Control Center draws the clock, Wi-Fi and the like, and SystemUIServer the
-    /// older extras; on macOS 27 MenuBarAgent draws them all. They are asked whatever
-    /// activation policy macOS gives them, which for a system agent is its own business.
-    private static let systemOwners: Set<String> = ["com.apple.controlcenter", "com.apple.systemuiserver", menuBarAgent]
-    /// macOS 27's menu bar process. Its own extras bar holds the system items, and its
-    /// window holds every item the menu bar shows, other apps' included, so one app
-    /// answers what otherwise takes asking every running app (about a second).
-    private static let menuBarAgent = "com.apple.MenuBarAgent"
+    /// macOS 27's menu bar process (`MenuBarAccessibility.menuBarAgent`). Its own
+    /// extras bar holds the system items, and its window holds every item the menu bar
+    /// shows, other apps' included, so one app answers what otherwise takes asking
+    /// every running app (about a second).
+    private static let menuBarAgent = MenuBarAccessibility.menuBarAgent
     /// How deep into the agent's window its item buttons sit, with room to spare.
     private static let agentDepth = 6
-    /// How long one app may take to answer each question. The default is six seconds,
-    /// and a single hung app would hold up the whole read.
-    private static let timeout: Float = 0.1
     /// How long before a measurement was asked for a read may have begun and still
     /// answer it. Long enough to cover two notifications posted a moment apart, and
     /// well short of the half second IslandManager waits after a switch before it
@@ -172,16 +166,7 @@ private final class MenuExtras: @unchecked Sendable {
             let frames = agentItems(agent.processIdentifier)
             if !frames.isEmpty { return frames }
         }
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        return NSWorkspace.shared.runningApplications
-            .filter { app in
-                // An XPC service (a browser's web content, say) keeps nothing in the
-                // menu bar, and there can be dozens of them, most never answering.
-                let isService = (app.executableURL ?? app.bundleURL)?.pathComponents.contains { $0.hasSuffix(".xpc") } ?? false
-                return !isService && app.processIdentifier != ownPID
-                    && (app.activationPolicy != .prohibited || systemOwners.contains(app.bundleIdentifier ?? ""))
-            }
-            .flatMap { extras(of: $0.processIdentifier) }
+        return MenuBarAccessibility.owners().flatMap { extras(of: $0.processIdentifier) }
     }
 
     /// Islet's own item, which the bubble must not cover either. Accessibility does
@@ -221,42 +206,18 @@ private final class MenuExtras: @unchecked Sendable {
 
     /// The frames of one app's status items: none if it has none, or does not answer in time.
     private static func extras(of pid: pid_t) -> [CGRect] {
-        let app = AXUIElementCreateApplication(pid)
-        guard let bar = value(kAXExtrasMenuBarAttribute, of: app).flatMap(element),
-              let children = value(kAXChildrenAttribute, of: bar) as? [CFTypeRef]
-        else { return [] }
-        return children.compactMap(element).compactMap(frame(of:))
+        MenuBarAccessibility.extras(of: pid).compactMap(frame(of:))
     }
 
     private static func frame(of item: AXUIElement) -> CGRect? {
-        AXUIElementSetMessagingTimeout(item, timeout)
-        let attributes = [kAXPositionAttribute, kAXSizeAttribute] as CFArray
-        var values: CFArray?
-        guard AXUIElementCopyMultipleAttributeValues(item, attributes, AXCopyMultipleAttributeOptions(), &values) == .success,
-              let pair = values as? [CFTypeRef], pair.count == 2,
-              let position = axValue(pair[0]), let size = axValue(pair[1])
-        else { return nil }
-        // An attribute that failed comes back as an error value, which neither read accepts.
-        var origin = CGPoint.zero
-        var extent = CGSize.zero
-        guard AXValueGetValue(position, .cgPoint, &origin), AXValueGetValue(size, .cgSize, &extent) else { return nil }
-        return CGRect(origin: origin, size: extent)
+        MenuBarAccessibility.frame(of: item)
     }
 
     private static func value(_ attribute: String, of element: AXUIElement) -> CFTypeRef? {
-        AXUIElementSetMessagingTimeout(element, timeout)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
-        return value
+        MenuBarAccessibility.value(attribute, of: element)
     }
-
-    // Casts to Core Foundation types always succeed in Swift, so the type is checked first.
 
     private static func element(_ value: CFTypeRef) -> AXUIElement? {
-        CFGetTypeID(value) == AXUIElementGetTypeID() ? unsafeDowncast(value, to: AXUIElement.self) : nil
-    }
-
-    private static func axValue(_ value: CFTypeRef) -> AXValue? {
-        CFGetTypeID(value) == AXValueGetTypeID() ? unsafeDowncast(value, to: AXValue.self) : nil
+        MenuBarAccessibility.element(value)
     }
 }

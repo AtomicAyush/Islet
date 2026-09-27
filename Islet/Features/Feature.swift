@@ -70,6 +70,7 @@ final class FeatureRegistry {
         DownloadsFeature(),
         ScreenshotsFeature(),
         ClipboardFeature(),
+        HiddenMenuBarIconsFeature(),
     ]
 
     private var running: Set<String> = []

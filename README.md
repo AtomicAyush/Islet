@@ -238,6 +238,19 @@ browser. Files are kept as references, never copied. The history lives in memory
 Settings to keep it between launches (pictures over 2 MB, unless pinned, stay in memory only),
 and it can clear itself when the Mac locks.
 
+**Hidden Menu Bar Icons.** On a MacBook, menu bar icons that don't fit beside the notch (when
+the app in front has a long menu, say) end up behind the camera or out of the menu bar
+altogether, where you can neither see nor click them. As the island opens, a tile on the home
+page shows the ones out of sight, each with its app's icon, or for Wi-Fi, Bluetooth, the clock
+and the system's other items the symbol closest to theirs; click one and Islet presses it, as a
+click in the menu bar would, to open its menu. Icons switched off in System Settings are left
+out: Islet tells them from the ones pushed out by whether the menu bar has room for them. The
+tile's arrow opens a page with all of them and their names, and Settings can list the icons
+that fit as well. Islet finds them through Accessibility, the permission the volume and
+brightness keys use, and looks as the island opens (and when Islet starts or comes to the
+front); without it, the tile says so. The pictures are the apps' own icons rather than what
+the menu bar draws, which Islet could only get by recording the screen.
+
 Every feature can be turned off, and each has previews in the menu bar item, so you can see
 what it looks like without waiting for the real thing.
 
@@ -324,6 +337,7 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://banner/dismiss` | Takes it down |
 | `islet://open?focus=clipboard` | Opens the island on the clipboard history |
 | `islet://clipboard/clear` | Clears the clipboard history, pinned items apart |
+| `islet://open?focus=hiddenMenuBarIcons` | Opens the island on the menu bar icons the notch hides |
 | `islet://settings?tab=activities` | Opens Settings on a tab |
 
 ```bash
