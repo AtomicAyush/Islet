@@ -54,6 +54,7 @@ final class FeatureRegistry {
         NowPlayingFeature(),
         MixerFeature(),
         TimerFeature(),
+        KeepAwakeFeature(),
         BatteryFeature(),
         SystemHUDFeature(),
         CapsLockFeature(),

@@ -68,6 +68,21 @@ kept in Application Support/Islet/Lyrics, so a track played again sends nothing.
 down beside the notch in the Clock app's orange; opened, it pauses and cancels. When it ends
 the island rings, with the last length one click away.
 
+**Keep Awake.** Keeps the Mac from sleeping for fifteen minutes, an hour, two, or until you turn
+it off, started from the home page, `islet://keepAwake/start?minutes=60` or the Keep Mac Awake
+action in Shortcuts. While it runs, a cup sits left of the camera and the time left counts down
+on the right (∞ until turned off). Beside music or a timer it waits in the bubble instead, and
+with both it steps out of sight until one of them ends; the opened island's cup tab and the home
+page still show it. Opened, it adds fifteen minutes or stops. It holds a power assertion, as
+Amphetamine and `caffeinate` do, named "Islet: Keep Awake" in `pmset -g assertions`, which keeps
+the display on too unless you turn on Let the display sleep in Settings. It ends at the time it
+said, even if the Mac slept through that with its lid closed, and it cannot stop the Mac
+sleeping when you close the lid: macOS decides that, and stays awake with the lid closed only
+when power and an external display are attached. It sits alongside Amphetamine and the like: the
+Mac stays awake while any of them asks, and stopping one leaves the rest as they were. Stopping
+it, turning it off or quitting Islet lets the Mac sleep again, and a session is never picked
+back up when Islet next opens.
+
 **Battery.** The iPhone's charging flash when you plug in — "Charging" on one side, the
 level and a green battery on the other — and warnings as the battery runs low. Full charge,
 Low Power Mode and unplugging can be announced too.
@@ -280,6 +295,8 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://close` | Closes it |
 | `islet://timer/start?minutes=5` | Starts a timer (`seconds=` works too) |
 | `islet://timer/pause`, `/resume`, `/cancel` | |
+| `islet://keepAwake/start?minutes=60` | Keeps the Mac awake for an hour (`hours=`, `seconds=` too, up to a day); with no length, until turned off |
+| `islet://keepAwake/toggle`, `/extend`, `/stop` | Starts it (taking the same lengths) or stops it; adds 15 minutes (or `minutes=`); stops it |
 | `islet://preview?feature=battery&index=0` | Runs a feature's preview |
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |

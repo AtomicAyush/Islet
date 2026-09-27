@@ -14,5 +14,23 @@ struct IsletShortcuts: AppShortcutsProvider {
             shortTitle: "Show in Islet",
             systemImageName: "bell.badge"
         )
+        AppShortcut(
+            intent: KeepAwakeIntent(),
+            phrases: [
+                "Keep my Mac awake with \(.applicationName)",
+                "Keep awake with \(.applicationName)",
+            ],
+            shortTitle: "Keep Mac Awake",
+            systemImageName: "cup.and.saucer.fill"
+        )
+        AppShortcut(
+            intent: StopKeepAwakeIntent(),
+            phrases: [
+                "Stop keeping my Mac awake with \(.applicationName)",
+                "Stop Keep Awake in \(.applicationName)",
+            ],
+            shortTitle: "Stop Keeping Awake",
+            systemImageName: "cup.and.saucer"
+        )
     }
 }
