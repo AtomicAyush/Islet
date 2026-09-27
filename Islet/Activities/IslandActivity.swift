@@ -106,6 +106,12 @@ struct IslandBanner {
 /// a row whose activity or banner goes before it does becomes its banner for the time
 /// it has left. The opened island has no compact row either, so its header shows the
 /// banner, as it shows any compact banner.
+///
+/// A row can also stand under one activity for as long as its feature keeps it there,
+/// rather than for a moment: the line of a song being sung, under Now Playing (see
+/// `ActivityCenter.setStandingAttachment(_:under:)`). It shows only while that activity
+/// holds the compact island, and gives way to a presented one, such as the volume,
+/// coming back once that has gone. It has no banner and no timer.
 struct IslandAttachment {
     /// Presenting an attachment with the id of the one on screen updates it in place
     /// (and restarts its timer) instead of animating a new one in, as with banners.
@@ -116,12 +122,19 @@ struct IslandAttachment {
     /// rest, centred on the notch; an island narrower than this widens for it, on both
     /// sides alike.
     var width: CGFloat
+    /// How long a presented row stays. A standing row stays until it is removed.
     var duration: TimeInterval = 2.6
     /// The row. It takes no clicks: a click there is on the island.
     var content: AnyView
     /// The same thing as a banner of its own, for when there is nothing compact to
-    /// ride under. `nil` shows it only under compact content.
+    /// ride under. `nil` shows it only under compact content. A standing row has none.
     var banner: IslandBanner?
+}
+
+/// A row standing under an activity: the row, and the activity it belongs under.
+struct StandingAttachment {
+    var activityID: String
+    var attachment: IslandAttachment
 }
 
 /// How much a banner may interrupt, after the iPhone's notification interruption

@@ -18,6 +18,12 @@ final class NowPlayingLibraryModel {
         /// so only one list is ever open, but belongs to no library: it opens for any
         /// player, and stays open when the player changes.
         case output
+        /// The song's lyrics (see `NowPlayingLyricsModel`). Like the outputs, no
+        /// library's: it is there for any song, and follows the next one.
+        case lyrics
+
+        /// Lists something of the playing app's library, and goes with the library.
+        var belongsToLibrary: Bool { self == .upNext || self == .playlists }
     }
 
     enum Listing {
@@ -46,6 +52,14 @@ final class NowPlayingLibraryModel {
     /// Whether the song playing is saved, for the player's heart, and the song
     /// itself, for adding it to a playlist.
     let saving = NowPlayingSaveModel()
+    /// The player has a Lyrics button: for every song, and for a video once lyrics
+    /// have been found for it. Set by the feature; losing it closes the lyrics.
+    var offersLyrics = false {
+        didSet {
+            guard offersLyrics != oldValue else { return }
+            if !offersLyrics, panel == .lyrics { close() }
+        }
+    }
 
     /// Called when the panel opens or closes, which changes the card's height.
     @ObservationIgnored var onPanelChange: () -> Void = {}
@@ -69,17 +83,17 @@ final class NowPlayingLibraryModel {
 
     /// Whether the player has a row of library buttons under it.
     var hasButtons: Bool {
-        offers(.upNext) || offers(.playlists) || offers(.listeningTogether)
+        offers(.upNext) || offers(.playlists) || offers(.listeningTogether) || offersLyrics
     }
 
     // MARK: Library
 
     /// Follows the app that is playing. Another library closes its panel, since
     /// what it listed belonged to the last one, and drops what was asked of the
-    /// last one; the output panel is no library's, and stays.
+    /// last one; the outputs and the lyrics are no library's, and stay.
     func use(_ newLibrary: (any MediaLibrary)?) {
         guard newLibrary.map({ ObjectIdentifier($0) }) != library.map({ ObjectIdentifier($0) }) else { return }
-        if panel != .output { close() }
+        if panel?.belongsToLibrary == true { close() }
         actionTask?.cancel()
         actionTask = nil
         pendingRow = nil
@@ -105,7 +119,8 @@ final class NowPlayingLibraryModel {
     }
 
     func open(_ newPanel: Panel) {
-        guard library != nil || newPanel == .output, panel != newPanel else { return }
+        guard library != nil || !newPanel.belongsToLibrary, newPanel != .lyrics || offersLyrics, panel != newPanel
+        else { return }
         withAnimation(.islandMorph) {
             panel = newPanel
             listing = .loading
@@ -244,7 +259,7 @@ final class NowPlayingLibraryModel {
         if quietly, case .reconnect = listing { return }
         loadTask?.cancel()
         loadTask = nil
-        guard let library, let panel, panel != .output, library.state == .ready else { return }
+        guard let library, let panel, panel.belongsToLibrary, library.state == .ready else { return }
         if !quietly { listing = .loading }
         loadTask = Task { [weak self] in
             if delay > 0 {
@@ -256,7 +271,7 @@ final class NowPlayingLibraryModel {
                 switch panel {
                 case .upNext: result = .queue(try await library.upNext())
                 case .playlists: result = .playlists(try await library.playlists())
-                case .output: return
+                case .output, .lyrics: return
                 }
             } catch {
                 result = .failed(error.localizedDescription)
@@ -303,9 +318,9 @@ final class NowPlayingLibraryModel {
 
 // MARK: - Buttons
 
-/// Small capsules under the player, one for each thing the library offers. Up Next
-/// and Playlists open their panel (and close it again); listening together hands
-/// over to the app.
+/// Small capsules under the player, one for each thing the library offers, and one
+/// for the song's lyrics. Up Next, Playlists and Lyrics open their panel (and close it
+/// again); listening together hands over to the app.
 struct NowPlayingLibraryButtons: View {
     let model: NowPlayingModel
     let library: NowPlayingLibraryModel
@@ -321,6 +336,11 @@ struct NowPlayingLibraryButtons: View {
             if library.offers(.playlists) {
                 LibraryChip(title: "Playlists", symbol: "music.note.list", isSelected: library.panel == .playlists) {
                     library.toggle(.playlists)
+                }
+            }
+            if library.offersLyrics {
+                LibraryChip(title: "Lyrics", symbol: "quote.bubble", isSelected: library.panel == .lyrics) {
+                    library.toggle(.lyrics)
                 }
             }
             if library.offers(.listeningTogether) {
@@ -833,7 +853,7 @@ private struct CurrentMark: View {
 }
 
 /// A line of explanation and, where there is something to do about it, a button.
-private struct PanelMessage: View {
+struct PanelMessage: View {
     var text: String?
     var button: String?
     var action: () -> Void = {}

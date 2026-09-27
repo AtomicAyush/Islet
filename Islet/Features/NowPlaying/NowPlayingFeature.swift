@@ -19,6 +19,8 @@ enum NowPlayingPrefs {
 /// Whatever the Mac is playing — Music, Spotify, a video in the browser — the way
 /// the iPhone shows it: the cover and a waveform either side of the notch while it
 /// plays, full controls when opened, and a moment's banner when the song changes.
+/// Once lyrics are on, the song's lyrics too: in a panel of the opened player, and if
+/// asked, the line being sung in a row under the compact island.
 @MainActor
 final class NowPlayingFeature: Feature {
     let id = "nowPlaying"
@@ -30,7 +32,9 @@ final class NowPlayingFeature: Feature {
     private let library = NowPlayingLibraryModel()
     /// Where the sound plays, for the player's output button.
     private let outputs = OutputPickerModel()
-    private lazy var activity = NowPlayingActivity(model: model, library: library, outputs: outputs)
+    /// The song's lyrics, for the lyrics panel and the island's karaoke row.
+    private let lyrics = NowPlayingLyricsModel()
+    private lazy var activity = NowPlayingActivity(model: model, library: library, outputs: outputs, lyrics: lyrics)
     /// `nil` when the adapter is missing from the bundle; then only previews and the
     /// players' own notifications work.
     private let adapter = NowPlayingAdapter()
@@ -55,6 +59,8 @@ final class NowPlayingFeature: Feature {
     @AppStorage(NowPlayingPrefs.showSongChanges) private var showSongChanges = NowPlayingPrefs.showSongChangesDefault
 
     private static let songBannerID = "nowPlaying.song"
+    /// The karaoke row standing under the activity.
+    private static let karaokeID = "nowPlaying.lyrics"
     /// How long a preview holds the island before the real state returns.
     private static let previewLength: TimeInterval = 10
     /// Long enough to try the panel's lists.
@@ -75,7 +81,8 @@ final class NowPlayingFeature: Feature {
         model.onChange = { [weak self] in self?.sync() }
         model.onTrackChange = { [weak self] in self?.trackChanged() }
         model.onSwitch = { [weak self] in self?.switched() }
-        library.onPanelChange = { [weak self] in self?.republishIfResized() }
+        library.onPanelChange = { [weak self] in self?.panelChanged() }
+        lyrics.onChange = { [weak self] in self?.lyricsChanged() }
         broadcasts.onUpdate = { [weak self] player, snapshot in self?.model.ingest(snapshot, from: player) }
     }
 
@@ -109,6 +116,7 @@ final class NowPlayingFeature: Feature {
         outputs.stop()
         outputs.endPreview()
         cancelHide()
+        lyrics.stop()
         model.reset()
         NowPlayingLevels.shared.show(nil, playing: false)
         // Closes any panel, the outputs' too, which no library change closes, and
@@ -117,6 +125,7 @@ final class NowPlayingFeature: Feature {
         library.use(nil)
         libraryTrack = nil
         let center = ActivityCenter.shared
+        center.removeStandingAttachment(id: Self.karaokeID)
         center.end(id: activity.id)
         center.dismissBanner(id: Self.songBannerID)
         center.removeHomeWidget(id: id)
@@ -124,23 +133,31 @@ final class NowPlayingFeature: Feature {
     }
 
     func settingsView() -> AnyView? {
-        AnyView(NowPlayingSettings { [weak self] in self?.hideAfterPauseChanged() })
+        AnyView(NowPlayingSettings(
+            onHideAfterPauseChange: { [weak self] in self?.hideAfterPauseChanged() },
+            onLyricsChange: { [weak self] in self?.lyrics.reloadSettings() }
+        ))
     }
 
-    /// Each shows sample data for 10 seconds (the library's and outputs' 20, several
-    /// players' 13), then hands back to whatever is really playing. None of them
-    /// touches a real player, library or output: the songs come with a sample library
-    /// of their own, and the output picker with sample outputs.
+    /// Each shows sample data for 10 seconds (the library's, outputs' and lyrics' 20,
+    /// several players' 13), then hands back to whatever is really playing. None of
+    /// them touches a real player, library or output, or looks anything up: the songs
+    /// come with a sample library and made-up lyrics of their own, and the output
+    /// picker with sample outputs.
     var previews: [FeaturePreview] {
         [
             FeaturePreview(title: "Sample song (playing)") { [weak self] in
-                self?.preview(.midnightDrive(playing: true), library: NowPlayingSampleLibrary())
+                self?.preview(
+                    .midnightDrive(playing: true), library: NowPlayingSampleLibrary(), lyrics: NowPlayingLyricsSamples.midnightDrive
+                )
             },
             FeaturePreview(title: "Sample song (paused)") { [weak self] in
-                self?.preview(.midnightDrive(playing: false), library: NowPlayingSampleLibrary())
+                self?.preview(
+                    .midnightDrive(playing: false), library: NowPlayingSampleLibrary(), lyrics: NowPlayingLyricsSamples.midnightDrive
+                )
             },
             FeaturePreview(title: "Song change") { [weak self] in
-                self?.preview(.paperPlanes(playing: true), library: NowPlayingSampleLibrary())
+                self?.preview(.paperPlanes(playing: true), library: NowPlayingSampleLibrary(), lyrics: NowPlayingLyricsSamples.paperPlanes)
                 self?.presentSongBanner()
             },
             FeaturePreview(title: "Sample video (playing)") { [weak self] in
@@ -157,6 +174,12 @@ final class NowPlayingFeature: Feature {
             },
             FeaturePreview(title: "Output picker") { [weak self] in
                 self?.previewOutputPicker()
+            },
+            FeaturePreview(title: "Lyrics") { [weak self] in
+                self?.previewLyrics()
+            },
+            FeaturePreview(title: "Karaoke in the island") { [weak self] in
+                self?.previewKaraoke()
             },
         ]
     }
@@ -240,6 +263,8 @@ final class NowPlayingFeature: Feature {
         let isPreviewing = model.isPreviewing
         let isActive = isRunning || isPreviewing
         syncLibrary(isActive: isActive)
+        // Once the activity is up or down, for the karaoke row to go with it.
+        defer { syncLyrics() }
         // Only a real session's app is listened to: a preview's bars are canned.
         let listened = isRunning && !isPreviewing && model.isLive ? model.track?.bundleID : nil
         NowPlayingLevels.shared.show(listened, playing: model.isPlaying)
@@ -301,6 +326,67 @@ final class NowPlayingFeature: Feature {
             libraryTrack = model.track
             library.trackChanged()
         }
+    }
+
+    // MARK: Lyrics
+
+    /// The lyrics follow the song on show while it is live, and during a preview the
+    /// sample song, with its made-up lyrics; nothing else. A preview's song is never
+    /// looked up, nor the last session kept after its player went.
+    private var lyricsFollowSong: Bool {
+        model.isPreviewing ? lyrics.isPreviewing : isRunning && model.isLive
+    }
+
+    private func syncLyrics() {
+        lyrics.follow(
+            track: lyricsFollowSong ? model.track : nil, isVideo: lyricsTakesForVideo, timing: model.timing,
+            isPlaying: model.isPlaying
+        )
+        lyricsChanged()
+    }
+
+    /// Video, or perhaps video (see `LyricsQuery.takesForVideo`).
+    private var lyricsTakesForVideo: Bool {
+        LyricsQuery.takesForVideo(isVideo: model.isVideo, bundleID: model.track?.bundleID, hasArtwork: model.artwork != nil)
+    }
+
+    /// The Lyrics button, who is looking at the lyrics, and the karaoke row, to match
+    /// the lyrics. Every song has the button, the way in to turning lyrics on; a video
+    /// only once lyrics have been found for it; a podcast or an audiobook never.
+    private func lyricsChanged() {
+        library.offersLyrics = lyricsFollowSong && model.hasSession && !LyricsQuery.isSpokenWord(model.track?.bundleID)
+            && (!lyricsTakesForVideo || lyrics.status.hasLyrics)
+        let isUp = ActivityCenter.shared.isShowing(id: activity.id)
+        lyrics.watch(panel: library.panel == .lyrics, island: isUp && lyrics.showsInIsland)
+        syncKaraoke()
+        republishIfResized()
+    }
+
+    /// The line being sung stands in a row under the compact activity while there is
+    /// one: the row goes in a break, before the first line and after the last, and a
+    /// moment after a pause, and comes back with the next line.
+    private func syncKaraoke() {
+        let center = ActivityCenter.shared
+        let wanted = (isRunning || model.isPreviewing) && center.isShowing(id: activity.id)
+            && lyrics.showsInIsland && lyrics.singingRow != nil
+        let shown = center.standingAttachment?.attachment.id == Self.karaokeID
+        if wanted, !shown {
+            center.setStandingAttachment(IslandAttachment(
+                id: Self.karaokeID,
+                height: NowPlayingKaraokeLayout.rowHeight,
+                width: NowPlayingKaraokeLayout.rowWidth,
+                content: AnyView(NowPlayingKaraokeRow(lyrics: lyrics))
+            ), under: activity.id)
+        } else if !wanted, shown {
+            center.removeStandingAttachment(id: Self.karaokeID)
+        }
+    }
+
+    /// The panel opened or closed. The Lyrics button's first tap is what turns lyrics
+    /// on, and with them the look-ups; a preview's never does.
+    private func panelChanged() {
+        if library.panel == .lyrics, !model.isPreviewing { lyrics.setEnabled(true) }
+        lyricsChanged()
     }
 
     private func scheduleHide(after delay: TimeInterval? = nil) {
@@ -386,9 +472,12 @@ final class NowPlayingFeature: Feature {
 
     // MARK: Previews
 
+    /// `lyrics` are the sample song's; `inIsland` shows its line in the island
+    /// whatever Settings say.
     private func preview(
         _ sample: NowPlayingSnapshot, players: [NowPlayingBroadcastPlayer: NowPlayingSnapshot] = [:],
-        library sampleLibrary: (any MediaLibrary)? = nil, for length: TimeInterval? = nil
+        library sampleLibrary: (any MediaLibrary)? = nil, lyrics sampleLyrics: LyricsResult = .notFound,
+        inIsland: Bool = false, for length: TimeInterval? = nil
     ) {
         previewWork?.cancel()
         previewStepWork?.cancel()
@@ -401,6 +490,8 @@ final class NowPlayingFeature: Feature {
         // The output picker's own preview puts its samples back after this.
         endOutputPreview()
         previewLibrary = sampleLibrary
+        // Before the song, so the lyrics never follow the sample song for real.
+        lyrics.beginPreview(sampleLyrics, inIsland: inIsland)
         model.beginPreview(sample, players: players)
     }
 
@@ -477,6 +568,26 @@ final class NowPlayingFeature: Feature {
         library.open(.output)
     }
 
+    /// Opens the island on the sample song with its lyrics following along, a third of
+    /// the way in: the line being sung bright, a long one wrapping, the chorus above.
+    private func previewLyrics() {
+        preview(
+            .midnightDrive(playing: true), library: NowPlayingSampleLibrary(), lyrics: NowPlayingLyricsSamples.midnightDrive,
+            for: Self.libraryPreviewLength
+        )
+        IslandManager.shared.focusedController?.model.expand(focus: activity.id)
+        library.open(.lyrics)
+    }
+
+    /// The sample song in the compact island with its lines in a row underneath, one
+    /// after another, a long one scrolling across.
+    private func previewKaraoke() {
+        preview(
+            .midnightDrive(playing: true), lyrics: NowPlayingLyricsSamples.midnightDrive, inIsland: true,
+            for: Self.libraryPreviewLength
+        )
+    }
+
     /// Hands the output picker back to the real outputs, closing its panel first if
     /// it was listing the samples: a click meant for them must not move the Mac's
     /// sound. A panel opened on the real outputs during a song's preview stays open.
@@ -493,6 +604,8 @@ final class NowPlayingFeature: Feature {
         previewLibrary = nil
         endOutputPreview()
         ActivityCenter.shared.dismissBanner(id: Self.songBannerID)
+        // Before the song, so the sample song is never looked up.
+        lyrics.endPreview()
         model.endPreview()
         // The preview put the activity up; a paused session would not have.
         endActivityUnlessPlaying()
@@ -505,11 +618,13 @@ final class NowPlayingActivity: IslandActivity {
     let model: NowPlayingModel
     let library: NowPlayingLibraryModel
     let outputs: OutputPickerModel
+    let lyrics: NowPlayingLyricsModel
 
-    init(model: NowPlayingModel, library: NowPlayingLibraryModel, outputs: OutputPickerModel) {
+    init(model: NowPlayingModel, library: NowPlayingLibraryModel, outputs: OutputPickerModel, lyrics: NowPlayingLyricsModel) {
         self.model = model
         self.library = library
         self.outputs = outputs
+        self.lyrics = lyrics
     }
 
     var symbol: String { model.isVideo ? "play.rectangle.fill" : "music.note" }
@@ -525,7 +640,9 @@ final class NowPlayingActivity: IslandActivity {
     func compactLeading() -> AnyView { AnyView(NowPlayingCompactLeading(model: model)) }
     func compactTrailing() -> AnyView { AnyView(NowPlayingCompactTrailing(model: model)) }
     func minimal() -> AnyView { AnyView(NowPlayingMinimal(model: model)) }
-    func expanded() -> AnyView { AnyView(NowPlayingExpanded(model: model, library: library, outputs: outputs)) }
+    func expanded() -> AnyView {
+        AnyView(NowPlayingExpanded(model: model, library: library, outputs: outputs, lyrics: lyrics))
+    }
 
     /// Moves between the players that have something loaded; nothing to do with one.
     func swipe(_ direction: ActivitySwipe) -> Bool {

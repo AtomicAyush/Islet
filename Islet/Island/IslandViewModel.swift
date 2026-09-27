@@ -167,13 +167,18 @@ final class IslandViewModel {
     /// presented, while there is compact content here to ride under — an activity, or
     /// a compact banner. Not while the island is open (its header shows the
     /// attachment's banner instead), a card is up, or the island is hidden.
+    ///
+    /// Otherwise the standing row, while its own activity holds the compact island
+    /// with no banner over it: a presented row goes in front of it, and it comes back
+    /// once that has gone.
     var attachment: IslandAttachment? {
-        guard let attachment = center.attachment else { return nil }
         switch mode {
-        case .compact:
-            return attachment
+        case .compact(let id):
+            if let attachment = center.attachment { return attachment }
+            guard let standing = center.standingAttachment, standing.activityID == id else { return nil }
+            return standing.attachment
         case .banner:
-            guard case .compact? = center.banner?.style else { return nil }
+            guard let attachment = center.attachment, case .compact? = center.banner?.style else { return nil }
             return attachment
         case .hidden, .idle, .expanded:
             return nil

@@ -811,15 +811,16 @@ struct NowPlayingMinimal: View {
 }
 
 /// The opened island: the player, a row of buttons for the playing app's library
-/// when it has one, and the library's panel below them when one is open. While the
-/// panel is open the player folds down to a single row, so the list has the room.
-/// The output button ends the controls row, or the folded player, and opens the
-/// outputs in the same place; the heart, for a library that saves songs, starts the
-/// controls row, or sits beside the output button in the folded player.
+/// when it has one and for the song's lyrics, and the panel below them when one is
+/// open. While the panel is open the player folds down to a single row, so the list
+/// has the room. The output button ends the controls row, or the folded player, and
+/// opens the outputs in the same place; the heart, for a library that saves songs,
+/// starts the controls row, or sits beside the output button in the folded player.
 struct NowPlayingExpanded: View {
     let model: NowPlayingModel
     let library: NowPlayingLibraryModel
     let outputs: OutputPickerModel
+    let lyrics: NowPlayingLyricsModel
 
     /// The card's height for what it is showing. The island body can be about 250 pt
     /// at most (the island's window is 330 pt tall); the open panel takes it all.
@@ -865,6 +866,10 @@ struct NowPlayingExpanded: View {
             if library.panel == .output {
                 NowPlayingOutputPanel(model: model, outputs: outputs)
                     .padding(.top, 8)
+                    .transition(.opacity)
+            } else if library.panel == .lyrics {
+                NowPlayingLyricsPanel(model: model, lyrics: lyrics)
+                    .padding(.top, 6)
                     .transition(.opacity)
             } else if library.panel != nil {
                 NowPlayingLibraryPanel(model: model, library: library)
@@ -1150,6 +1155,8 @@ enum NowPlayingSongBannerLayout {
 struct NowPlayingSettings: View {
     /// Lets a paused island pick up the new hold straight away.
     let onHideAfterPauseChange: () -> Void
+    /// Lets the player pick up the lyrics settings straight away.
+    let onLyricsChange: () -> Void
     @AppStorage(NowPlayingPrefs.hideAfterPause) private var hideAfterPause = NowPlayingPrefs.hideAfterPauseDefault
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
     @AppStorage(NowPlayingPrefs.showSongChanges) private var songChanges = NowPlayingPrefs.showSongChangesDefault
@@ -1169,6 +1176,10 @@ struct NowPlayingSettings: View {
             Text("Uses the system audio recording permission; macOS shows its purple indicator while it listens.")
         }
         Toggle("Show song changes", isOn: $songChanges)
+
+        Section("Lyrics") {
+            NowPlayingLyricsSettings(onChange: onLyricsChange)
+        }
 
         // What each music app's library needs: a sign-in, a permission.
         Section("Spotify") {

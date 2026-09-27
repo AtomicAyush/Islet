@@ -15,6 +15,9 @@ final class ActivityCenter {
     private(set) var banner: IslandBanner?
     /// Brief content riding under the compact island, if any.
     private(set) var attachment: IslandAttachment?
+    /// A row that stays under one activity while its feature keeps it there. A
+    /// presented `attachment` goes in front of it for as long as that is up.
+    private(set) var standingAttachment: StandingAttachment?
     /// Home page tiles, in display order.
     private(set) var homeWidgets: [HomeWidget] = []
     /// Where files dragged onto the island go. `nil` leaves drags alone.
@@ -68,6 +71,9 @@ final class ActivityCenter {
         startedAt[id] = nil
         withAnimation(.islandMorph) {
             activities.removeAll { $0.id == id }
+            // A standing row goes with its activity rather than wait to come back
+            // under it.
+            if standingAttachment?.activityID == id { standingAttachment = nil }
         }
         attachmentLostCarrier()
     }
@@ -182,6 +188,27 @@ final class ActivityCenter {
         guard let current = attachment, id == nil || current.id == id else { return }
         attachmentTimer?.cancel()
         withAnimation(.islandMorph) { attachment = nil }
+    }
+
+    /// Stands `attachment` under the activity `activityID` until it is removed. It shows
+    /// while that activity holds the compact island, with no banner over it and no
+    /// presented row in front of it; the rest of the time it waits, out of sight.
+    /// Setting it again with the same id and size swaps its content in place, so a row
+    /// whose view follows a model of its own is set once, not every time it changes.
+    func setStandingAttachment(_ attachment: IslandAttachment, under activityID: String) {
+        let standing = StandingAttachment(activityID: activityID, attachment: attachment)
+        if let current = standingAttachment, current.activityID == activityID,
+           current.attachment.id == attachment.id, current.attachment.width == attachment.width,
+           current.attachment.height == attachment.height {
+            standingAttachment = standing
+        } else {
+            withAnimation(.islandMorph) { standingAttachment = standing }
+        }
+    }
+
+    func removeStandingAttachment(id: String? = nil) {
+        guard let current = standingAttachment, id == nil || current.attachment.id == id else { return }
+        withAnimation(.islandMorph) { standingAttachment = nil }
     }
 
     // MARK: Indicators
