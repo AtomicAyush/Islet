@@ -63,6 +63,10 @@ final class VolumeTap {
     /// makes macOS ask for permission, if it has not been answered.
     static func make(app: MixerSource, signature: Signature, output: MixerOutputDevice, gain: Float) throws -> VolumeTap {
         guard #available(macOS 14.2, *) else { throw Failure.unsupported }
+        #if DEBUG
+        // A harness's made-up processes and output can share IDs with real ones.
+        if MixerHAL.isFakedForTesting { throw Failure.status(kAudioHardwareUnsupportedOperationError) }
+        #endif
 
         let description = CATapDescription(stereoMixdownOfProcesses: signature.processes)
         description.uuid = UUID()

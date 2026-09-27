@@ -250,6 +250,10 @@ final class NowPlayingAudioTap {
         appName: String, signature: VolumeTap.Signature, output: MixerOutputDevice,
         meter: NowPlayingLevelMeter, id: Int
     ) throws -> NowPlayingAudioTap {
+        #if DEBUG
+        // A harness's made-up processes and output can share IDs with real ones.
+        if MixerHAL.isFakedForTesting { throw VolumeTap.Failure.status(kAudioHardwareUnsupportedOperationError) }
+        #endif
         let description = CATapDescription(stereoMixdownOfProcesses: signature.processes)
         description.uuid = UUID()
         description.name = "Islet – \(appName) waveform"

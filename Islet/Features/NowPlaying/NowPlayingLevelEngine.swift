@@ -25,7 +25,10 @@ import Foundation
 /// already allows system audio recording, since making a tap is what would have it
 /// ask.
 ///
-/// Everything runs on one serial queue, the HAL's listeners included.
+/// Everything runs on one serial queue, the HAL's listeners included. Each is a
+/// `CoreAudioListener`, taken off as the output or the app's processes move on and
+/// when the engine disconnects, so following one app after another, or a restart of
+/// the audio server, leaves none behind.
 @available(macOS 15.0, *)
 final class NowPlayingLevelEngine: @unchecked Sendable {
     typealias Report = @MainActor @Sendable (NowPlayingLevelStatus) -> Void
@@ -52,11 +55,13 @@ final class NowPlayingLevelEngine: @unchecked Sendable {
     private var lastStatus: NowPlayingLevelStatus?
     /// Bumped whenever the app followed changes, so work scheduled before does nothing.
     private var session = 0
-    private var listener: AudioObjectPropertyListenerBlock?
+    /// Set while connected; the others are only listened to while it is.
+    private var systemListener: CoreAudioListener?
     /// The output device whose sample rate is watched.
     private var watchedOutput: AudioObjectID?
+    private var rateListener: CoreAudioListener?
     /// The app's processes, watched for starting and stopping output.
-    private var watchedProcesses: Set<AudioObjectID> = []
+    private var processListeners: [AudioObjectID: CoreAudioListener] = [:]
     private var mixerObserver: NSObjectProtocol?
     private var refreshPending = false
     /// Each process object's app id, looked up once; `""` for one that belongs to no app.
@@ -98,25 +103,7 @@ final class NowPlayingLevelEngine: @unchecked Sendable {
 
     private func connect() {
         let session = self.session
-        let listener: AudioObjectPropertyListenerBlock = { [weak self] count, addresses in
-            guard let self, self.session == session else { return }
-            let restarted = (0..<Int(count)).contains {
-                addresses[$0].mSelector == kAudioHardwarePropertyServiceRestarted
-            }
-            if restarted {
-                // The audio server started afresh: every tap, process and listener it
-                // knew is gone. Start over.
-                self.disconnect()
-                self.connect()
-            } else {
-                self.scheduleRefresh()
-            }
-        }
-        self.listener = listener
-        for property in Self.systemProperties {
-            var address = property
-            AudioObjectAddPropertyListenerBlock(MixerHAL.system, &address, queue, listener)
-        }
+        systemListener = listen(to: MixerHAL.system, Self.systemProperties)
         mixerObserver = NotificationCenter.default.addObserver(
             forName: MixerTaps.didChange, object: nil, queue: nil
         ) { [weak self] _ in
@@ -133,21 +120,33 @@ final class NowPlayingLevelEngine: @unchecked Sendable {
         session &+= 1
         refreshPending = false
         dropTap()
-        if let listener {
-            for property in Self.systemProperties {
-                var address = property
-                AudioObjectRemovePropertyListenerBlock(MixerHAL.system, &address, queue, listener)
-            }
-        }
+        systemListener?.remove()
+        systemListener = nil
         watchRate(of: nil)
         watchProcesses([])
-        listener = nil
         if let mixerObserver { NotificationCenter.default.removeObserver(mixerObserver) }
         mixerObserver = nil
         failed = nil
         owners = [:]
         appName = nil
         meter.forget()
+    }
+
+    /// Listens to `object` for as long as this connection lasts: a restart of the audio
+    /// server starts over, and any other change is looked at once the burst settles.
+    private func listen(to object: AudioObjectID, _ properties: [AudioObjectPropertyAddress]) -> CoreAudioListener {
+        let session = self.session
+        return CoreAudioListener(on: object, properties, queue: queue) { [weak self] selectors in
+            guard let self, self.session == session else { return }
+            if selectors.contains(kAudioHardwarePropertyServiceRestarted) {
+                // The audio server started afresh: every tap, process and listener it
+                // knew is gone. Start over.
+                self.disconnect()
+                self.connect()
+            } else {
+                self.scheduleRefresh()
+            }
+        }
     }
 
     private func scheduleRefresh() {
@@ -256,39 +255,25 @@ final class NowPlayingLevelEngine: @unchecked Sendable {
     /// Moves the sample-rate listener to `device`, or takes it off.
     private func watchRate(of device: AudioObjectID?) {
         guard device != watchedOutput else { return }
-        var address = MixerHAL.address(kAudioDevicePropertyNominalSampleRate)
-        if let watchedOutput, let listener {
-            AudioObjectRemovePropertyListenerBlock(watchedOutput, &address, queue, listener)
-        }
+        rateListener?.remove()
+        rateListener = nil
         watchedOutput = device
-        if let device, let listener {
-            AudioObjectAddPropertyListenerBlock(device, &address, queue, listener)
+        if let device, systemListener != nil {
+            rateListener = listen(to: device, [MixerHAL.address(kAudioDevicePropertyNominalSampleRate)])
         }
     }
 
     /// Moves the process listeners to `processes`, or takes them all off. Fails
     /// harmlessly for a process that has already gone.
     private func watchProcesses(_ processes: [AudioObjectID]) {
-        let wanted = listener == nil ? [] : Set(processes)
-        guard wanted != watchedProcesses else { return }
-        for id in watchedProcesses.subtracting(wanted) {
-            setListening(false, to: id)
+        let wanted = systemListener == nil ? [] : Set(processes)
+        let watched = Set(processListeners.keys)
+        guard wanted != watched else { return }
+        for id in watched.subtracting(wanted) {
+            processListeners.removeValue(forKey: id)?.remove()
         }
-        for id in wanted.subtracting(watchedProcesses) {
-            setListening(true, to: id)
-        }
-        watchedProcesses = wanted
-    }
-
-    private func setListening(_ isOn: Bool, to process: AudioObjectID) {
-        guard let listener else { return }
-        for property in Self.processProperties {
-            var address = property
-            if isOn {
-                AudioObjectAddPropertyListenerBlock(process, &address, queue, listener)
-            } else {
-                AudioObjectRemovePropertyListenerBlock(process, &address, queue, listener)
-            }
+        for id in wanted.subtracting(watched) {
+            processListeners[id] = listen(to: id, Self.processProperties)
         }
     }
 

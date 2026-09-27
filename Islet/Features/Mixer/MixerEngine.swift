@@ -30,7 +30,12 @@ struct MixerReading: Equatable, Sendable {
 /// runs until the app plays again.
 ///
 /// Everything runs on one serial queue, the listeners included: the first CoreAudio
-/// call in a process can take half a second.
+/// call in a process can take half a second. Each listener is a `CoreAudioListener`,
+/// taken off when its process goes or the engine disconnects, so a stop, a restart
+/// of the audio server or a process coming and going leaves none behind. A change
+/// still queued from a listener that has come off is dropped, which loses nothing:
+/// its process has gone, or the engine has stopped, or it is reconnecting after a
+/// restart and asks about every process again anyway.
 final class MixerEngine: @unchecked Sendable {
     typealias Deliver = @MainActor @Sendable (MixerReading) -> Void
 
@@ -53,7 +58,7 @@ final class MixerEngine: @unchecked Sendable {
         /// `nil` for a process that belongs to no listed app; those are not watched.
         let app: MixerSource?
         var isPlaying: Bool
-        let listener: AudioObjectPropertyListenerBlock?
+        let listener: CoreAudioListener?
     }
 
     /// An app's audio processes, together.
@@ -76,7 +81,7 @@ final class MixerEngine: @unchecked Sendable {
     private var deliver: Deliver?
     /// Bumped whenever the engine disconnects, so a refresh scheduled before does nothing.
     private var session = 0
-    private var systemListener: AudioObjectPropertyListenerBlock?
+    private var systemListener: CoreAudioListener?
     private var processes: [AudioObjectID: AudioProcess] = [:]
     private var changedProcesses: Set<AudioObjectID> = []
     private var listChanged = false
@@ -161,12 +166,12 @@ final class MixerEngine: @unchecked Sendable {
     // MARK: Listening
 
     private func connect() {
-        let listener: AudioObjectPropertyListenerBlock = { [weak self] count, addresses in
+        systemListener = CoreAudioListener(
+            on: MixerHAL.system, Self.systemProperties, queue: queue
+        ) { [weak self] selectors in
             guard let self else { return }
-            for index in 0..<Int(count) { self.systemChanged(addresses[index].mSelector) }
+            for selector in selectors { self.systemChanged(selector) }
         }
-        systemListener = listener
-        Self.setListening(true, listener, to: MixerHAL.system, for: Self.systemProperties, on: queue)
         output = MixerOutputDevice.current()
         listChanged = true
         refresh()
@@ -176,15 +181,9 @@ final class MixerEngine: @unchecked Sendable {
         session &+= 1
         refreshPending = false
         for id in Array(taps.keys) { removeTap(id) }
-        if let systemListener {
-            Self.setListening(false, systemListener, to: MixerHAL.system, for: Self.systemProperties, on: queue)
-        }
+        systemListener?.remove()
         systemListener = nil
-        for (id, process) in processes {
-            if let listener = process.listener {
-                Self.setListening(false, listener, to: id, for: Self.processProperties, on: queue)
-            }
-        }
+        for process in processes.values { process.listener?.remove() }
         processes = [:]
         changedProcesses = []
         listChanged = false
@@ -272,9 +271,7 @@ final class MixerEngine: @unchecked Sendable {
         let current = MixerHAL.objects(kAudioHardwarePropertyProcessObjectList, of: MixerHAL.system)
         let present = Set(current)
         for (id, process) in processes where !present.contains(id) {
-            if let listener = process.listener {
-                Self.setListening(false, listener, to: id, for: Self.processProperties, on: queue)
-            }
+            process.listener?.remove()
             processes[id] = nil
             changedProcesses.remove(id)
         }
@@ -285,8 +282,9 @@ final class MixerEngine: @unchecked Sendable {
                 processes[id] = AudioProcess(app: nil, isPlaying: false, listener: nil)
                 continue
             }
-            let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.processChanged(id) }
-            Self.setListening(true, listener, to: id, for: Self.processProperties, on: queue)
+            let listener = CoreAudioListener(on: id, Self.processProperties, queue: queue) { [weak self] _ in
+                self?.processChanged(id)
+            }
             processes[id] = AudioProcess(app: app, isPlaying: Self.isRunningOutput(id), listener: listener)
         }
     }
@@ -432,24 +430,6 @@ final class MixerEngine: @unchecked Sendable {
     }
 
     // MARK: CoreAudio
-
-    /// Fails harmlessly for an object that has already gone.
-    private static func setListening(
-        _ isOn: Bool,
-        _ listener: @escaping AudioObjectPropertyListenerBlock,
-        to object: AudioObjectID,
-        for properties: [AudioObjectPropertyAddress],
-        on queue: DispatchQueue
-    ) {
-        for property in properties {
-            var address = property
-            if isOn {
-                AudioObjectAddPropertyListenerBlock(object, &address, queue, listener)
-            } else {
-                AudioObjectRemovePropertyListenerBlock(object, &address, queue, listener)
-            }
-        }
-    }
 
     /// A failed read, as for a process that just went away, counts as not playing.
     private static func isRunningOutput(_ process: AudioObjectID) -> Bool {

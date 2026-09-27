@@ -114,6 +114,12 @@ final class CoreAudioOutputHardware: OutputHardware, @unchecked Sendable {
 
     private static func isPrivateAggregate(_ id: AudioObjectID) -> Bool {
         var address = MixerHAL.address(kAudioAggregateDevicePropertyComposition)
+        #if DEBUG
+        // Asked of a harness as `MixerHAL`'s reads are, since the device may be made up.
+        if let values = MixerHAL.valuesForTesting {
+            return ((values(id, address) as? [String: Any])?[kAudioAggregateDeviceIsPrivateKey] as? Int) == 1
+        }
+        #endif
         var value: Unmanaged<CFDictionary>?
         var size = UInt32(MemoryLayout<Unmanaged<CFDictionary>?>.size)
         guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr,
@@ -208,12 +214,20 @@ final class CoreAudioOutputHardware: OutputHardware, @unchecked Sendable {
 
     private static func write<T: BitwiseCopyable>(_ value: T, at address: AudioObjectPropertyAddress, of object: AudioObjectID) -> OSStatus {
         guard object != kAudioObjectUnknown else { return kAudioHardwareBadObjectError }
+        #if DEBUG
+        // A harness's made-up device can share its ID with a real one.
+        if MixerHAL.isFakedForTesting { return kAudioHardwareUnsupportedOperationError }
+        #endif
         var address = address
         var value = value
         return AudioObjectSetPropertyData(object, &address, 0, nil, UInt32(MemoryLayout<T>.size), &value)
     }
 
     private static func isSettable(_ address: AudioObjectPropertyAddress, of object: AudioObjectID) -> Bool {
+        #if DEBUG
+        // Nothing can be set on a made-up device, as `write` says.
+        if MixerHAL.isFakedForTesting { return false }
+        #endif
         var address = address
         var settable: DarwinBoolean = false
         return AudioObjectIsPropertySettable(object, &address, &settable) == noErr && settable.boolValue

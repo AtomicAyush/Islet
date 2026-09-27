@@ -14,6 +14,24 @@ enum MixerHAL {
         AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
     }
 
+    #if DEBUG
+    /// Answers `read`, `string`, `objects` and `count`, and the output picker's one read
+    /// of its own, in place of the audio server, for harnesses that make up processes and
+    /// devices: an object's value at an address, as the call would return it, or `nil`
+    /// for none. Set before anything asks.
+    ///
+    /// Only reads are made up; listeners are faked apart, by
+    /// `CoreAudioListener.registrarForTesting`. Everything else, from setting a volume
+    /// or the default output to making a tap, would still go to the audio server, where
+    /// a made-up ID can name a real device, so while this is set those calls fail
+    /// without making it: see `isFakedForTesting`.
+    static var valuesForTesting: ((AudioObjectID, AudioObjectPropertyAddress) -> Any?)?
+
+    /// Whether a harness has made the audio objects up, so that whatever would change
+    /// or tap one must fail rather than reach a real object that shares its ID.
+    static var isFakedForTesting: Bool { valuesForTesting != nil }
+    #endif
+
     /// A fixed-size value, or `nil` when the object is gone or has no such property.
     static func read<T: BitwiseCopyable>(
         _ initial: T,
@@ -23,6 +41,9 @@ enum MixerHAL {
     ) -> T? {
         guard object != kAudioObjectUnknown else { return nil }
         var address = address(selector, scope: scope)
+        #if DEBUG
+        if let valuesForTesting { return valuesForTesting(object, address) as? T }
+        #endif
         var value = initial
         var size = UInt32(MemoryLayout<T>.size)
         let status = AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value)
@@ -32,6 +53,9 @@ enum MixerHAL {
     static func string(_ selector: AudioObjectPropertySelector, of object: AudioObjectID) -> String? {
         guard object != kAudioObjectUnknown else { return nil }
         var address = address(selector)
+        #if DEBUG
+        if let valuesForTesting { return valuesForTesting(object, address) as? String }
+        #endif
         var value: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr,
@@ -47,6 +71,9 @@ enum MixerHAL {
         of object: AudioObjectID
     ) -> [AudioObjectID] {
         var address = address(selector, scope: scope)
+        #if DEBUG
+        if let valuesForTesting { return valuesForTesting(object, address) as? [AudioObjectID] ?? [] }
+        #endif
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
         let stride = MemoryLayout<AudioObjectID>.stride
@@ -66,6 +93,9 @@ enum MixerHAL {
         of object: AudioObjectID
     ) -> Int {
         var address = address(selector, scope: scope)
+        #if DEBUG
+        if let valuesForTesting { return (valuesForTesting(object, address) as? [AudioObjectID])?.count ?? 0 }
+        #endif
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr else { return 0 }
         return Int(size) / MemoryLayout<AudioObjectID>.stride

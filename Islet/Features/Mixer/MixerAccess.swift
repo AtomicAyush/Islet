@@ -40,8 +40,17 @@ enum AudioCapturePermission {
     /// Without that, the first tap — made from a volume change — has macOS ask.
     static var asksAhead: Bool { preflight != nil && request != nil }
 
+    #if DEBUG
+    /// What `check()` answers in harnesses, in place of TCC, and what `ask(_:)` then
+    /// reports without showing macOS's prompt.
+    static var accessForTesting: MixerAccess?
+    #endif
+
     /// TCC answers 0 for allowed, 1 for denied, and anything else for not yet asked.
     static func check() -> MixerAccess {
+        #if DEBUG
+        if let accessForTesting { return accessForTesting }
+        #endif
         guard let preflight else { return .unknown }
         switch preflight(service, nil) {
         case 0: return .granted
@@ -54,6 +63,12 @@ enum AudioCapturePermission {
     /// an arbitrary queue. Returns `false`, never calling `answer`, when there is no
     /// way to ask.
     static func ask(_ answer: @escaping @Sendable (Bool) -> Void) -> Bool {
+        #if DEBUG
+        if let accessForTesting {
+            DispatchQueue.global().async { answer(accessForTesting == .granted) }
+            return true
+        }
+        #endif
         guard let request else { return false }
         request(service, nil) { granted in answer(granted) }
         return true
