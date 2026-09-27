@@ -16,6 +16,10 @@ import SwiftUI
 /// the Sound menu cannot be claimed by an app signed as Islet is), so the panel sends
 /// people to Sound settings for them. A receiver already playing shows up in Core Audio,
 /// and then it is listed like any other output, and can be switched away from.
+///
+/// AirPods' listening mode and spatial audio sit under their row while a panel is
+/// open, followed live from wherever they are changed. They are only ever set by a
+/// click on them: nothing is written as the panel opens or a headset connects.
 @MainActor
 @Observable
 final class OutputPickerModel {
@@ -31,6 +35,15 @@ final class OutputPickerModel {
     /// What went wrong with the last pick, for a few seconds.
     private(set) var failure: String?
     private(set) var isPreviewing = false
+    /// Headsets' listening modes and spatial audio, by `OutputDevice.uid`, kept only
+    /// while a panel is open.
+    private(set) var controls: [String: HeadsetControls] = [:]
+    /// The listening mode or spatial audio just asked of a headset, by UID: its row
+    /// takes no more clicks until Core Audio reports it, or for a second at most.
+    private(set) var pendingListeningModes: [String: ListeningMode] = [:]
+    private(set) var pendingSpatialAudio: [String: SpatialAudioMode] = [:]
+    /// The headsets, by address, seen in Off: see `listeningModes(for:)`.
+    private(set) var headsetsAllowingOff: Set<String>
 
     var current: OutputDevice? {
         devices.first { $0.id == currentID }
@@ -61,6 +74,7 @@ final class OutputPickerModel {
     }
 
     @ObservationIgnored private let makeHardware: () -> any OutputHardware
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var session: OutputSession?
     @ObservationIgnored private var isRunning = false
     /// Panels on screen: one per island window showing the player with it open.
@@ -68,15 +82,32 @@ final class OutputPickerModel {
     @ObservationIgnored private var failureTask: Task<Void, Never>?
     @ObservationIgnored private var profileTask: Task<Void, Never>?
     @ObservationIgnored private var lastProfileRead = Date.distantPast
+    /// The headsets, by UID, seen in Off and waiting out `offSettle` to be remembered.
+    @ObservationIgnored private var offChecks: Set<String> = []
+    /// The listening mode last asked of each headset, by UID.
+    @ObservationIgnored private var requestedListeningModes: [String: ListeningMode] = [:]
 
     /// How long a failure stays up.
     private static let failureLength: Duration = .seconds(4)
     /// system_profiler is a process launch; once in this long is plenty for levels
     /// that move a percent every few minutes.
     private static let profileInterval: TimeInterval = 60
+    /// The longest a headset's control waits to hear back. A listening mode is
+    /// heard at once; spatial audio the headset turns down is never heard at all.
+    private static let controlWait: Duration = .seconds(1)
+    /// How long a headset stays in Off before it is taken to allow Off, so that a
+    /// passing report of it, as a headset connects say, is not; and how long after
+    /// Off is asked for the headset must still be in it for Off to stay offered.
+    static let offSettle: Duration = .seconds(2)
+    static let allowsOffKey = "nowPlaying.output.headsetsAllowingOff"
 
-    init(hardware: @escaping () -> any OutputHardware = { CoreAudioOutputHardware() }) {
+    init(
+        hardware: @escaping () -> any OutputHardware = { CoreAudioOutputHardware() },
+        defaults: UserDefaults = .standard
+    ) {
         makeHardware = hardware
+        self.defaults = defaults
+        headsetsAllowingOff = Set(defaults.stringArray(forKey: Self.allowsOffKey) ?? [])
     }
 
     // MARK: Running
@@ -104,6 +135,7 @@ final class OutputPickerModel {
         openPanels += 1
         guard openPanels == 1 else { return }
         session?.followVolume(of: currentID)
+        followControls()
         refreshBatteries()
     }
 
@@ -112,7 +144,9 @@ final class OutputPickerModel {
         openPanels -= 1
         guard openPanels == 0 else { return }
         session?.followVolume(of: nil)
+        session?.followControls(of: [])
         volume = nil
+        controls = [:]
         profileTask?.cancel()
         profileTask = nil
         clearFailure()
@@ -149,6 +183,108 @@ final class OutputPickerModel {
         openURL(Self.soundSettingsURL)
     }
 
+    // MARK: Headset controls
+
+    /// The listening modes to offer `device`, in the Sound menu's order. AirPods
+    /// offer Off only with a setting of theirs turned on that no other app may read,
+    /// so Off is offered while it is the mode, and after that for a headset once seen
+    /// in it for a couple of seconds, until asking for it fails; otherwise asking for
+    /// Off could land the AirPods in Transparency.
+    func listeningModes(for device: OutputDevice) -> [ListeningMode] {
+        guard let state = controls[device.uid]?.listening else { return [] }
+        let allowsOff = device.headsetAddress.map(headsetsAllowingOff.contains) ?? false
+        return state.offered(allowsOff: allowsOff)
+    }
+
+    /// Sets `device`'s listening mode, on a click. Noise Cancellation and Adaptive
+    /// with a bud out are not asked for (see `ListeningMode.needsBothInEar`); the
+    /// panel says what to do instead.
+    func setListeningMode(_ mode: ListeningMode, for device: OutputDevice) {
+        guard let session, pendingListeningModes[device.uid] == nil,
+              let state = controls[device.uid]?.listening, state.isSettable,
+              state.current != mode, listeningModes(for: device).contains(mode)
+        else { return }
+        guard !mode.needsBothInEar || state.isWorn else {
+            fail(Self.wearHint(for: device, toUse: [mode]))
+            return
+        }
+        clearFailure()
+        pendingListeningModes[device.uid] = mode
+        requestedListeningModes[device.uid] = mode
+        session.setListeningMode(mode, of: device.uid) { [weak self, weak session] result in
+            guard let self, let session, session === self.session else { return }
+            if mode == .off { self.confirmOff(after: result, for: device) }
+            guard result != .done else { return }
+            self.pendingListeningModes[device.uid] = nil
+            if let message = Self.message(for: result, setting: mode.title, on: device, mode: mode) { self.fail(message) }
+        }
+        release(after: Self.controlWait) { [weak self] in
+            guard self?.pendingListeningModes[device.uid] == mode else { return }
+            self?.pendingListeningModes[device.uid] = nil
+        }
+    }
+
+    /// Sets `device`'s spatial audio, on a click, for the app being spatialized.
+    func setSpatialAudio(_ mode: SpatialAudioMode, for device: OutputDevice) {
+        guard let session, pendingSpatialAudio[device.uid] == nil,
+              let state = controls[device.uid]?.spatial, state.isSettable, state.app > 0,
+              state.mode != mode, state.offered.contains(mode)
+        else { return }
+        clearFailure()
+        pendingSpatialAudio[device.uid] = mode
+        session.setSpatialAudio(mode, for: state.content, of: device.uid) { [weak self, weak session] result in
+            guard let self, let session, session === self.session else { return }
+            guard result != .done else { return }
+            self.pendingSpatialAudio[device.uid] = nil
+            if let message = Self.message(for: result, setting: state.content.title, on: device) { self.fail(message) }
+        }
+        release(after: Self.controlWait) { [weak self] in
+            guard self?.pendingSpatialAudio[device.uid] == mode else { return }
+            self?.pendingSpatialAudio[device.uid] = nil
+        }
+    }
+
+    /// What to do before Noise Cancellation or Adaptive can be had: "Put both
+    /// AirPods in to use Adaptive and Noise Cancellation", or for over-ear headphones
+    /// "Put AirPods Max on to use Noise Cancellation".
+    static func wearHint(for device: OutputDevice, toUse modes: [ListeningMode]) -> String {
+        let hint = switch device.kind {
+        case .headset(.airpodsMax), .headset(.beatsHeadphones): "Put \(device.shortName) on"
+        case .headset(.airpods), .headset(.airpodsGen3), .headset(.airpodsPro): "Put both AirPods in"
+        default: "Put both earbuds in"
+        }
+        let titles = modes.map(\.title)
+        return titles.isEmpty ? hint : "\(hint) to use \(ListFormatter.localizedString(byJoining: titles))"
+    }
+
+    private static func message(
+        for result: HeadsetControlResult, setting title: String, on device: OutputDevice, mode: ListeningMode? = nil
+    ) -> String? {
+        switch result {
+        case .done: nil
+        case .gone: "\(device.shortName) is no longer connected"
+        case .needsBothInEar: wearHint(for: device, toUse: mode.map { [$0] } ?? [])
+        // The plug-in's own in-ear refusal, which only a listening mode gets.
+        case .refused(kAudioHardwareIllegalOperationError) where mode != nil: wearHint(for: device, toUse: mode.map { [$0] } ?? [])
+        case .unavailable, .refused(kAudioHardwareUnsupportedOperationError): "\(title) isn’t available right now"
+        case .refused(kAudioHardwareNotRunningError): "Couldn’t reach \(device.shortName)"
+        case .refused: "Couldn’t change \(mode == nil ? title : "the listening mode")"
+        }
+    }
+
+    private func release(after delay: Duration, _ body: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            body()
+        }
+    }
+
+    /// The headsets in the list that may have controls, while a panel is open.
+    private func followControls() {
+        guard openPanels > 0 else { return }
+        session?.followControls(of: devices.filter(\.mayHaveControls).map(\.uid))
+    }
+
     // MARK: Previews
 
     /// Made-up outputs, to try the panel without touching the Mac's sound: until
@@ -182,6 +318,9 @@ final class OutputPickerModel {
             case .volume(let device, let volume):
                 guard self.openPanels > 0, device == self.currentID else { return }
                 if self.volume != volume { self.volume = volume }
+            case .controls(let controls):
+                guard self.openPanels > 0 else { return }
+                self.apply(controls)
             }
         }
     }
@@ -194,6 +333,10 @@ final class OutputPickerModel {
         volume = nil
         batteries = [:]
         pendingID = nil
+        controls = [:]
+        pendingListeningModes = [:]
+        pendingSpatialAudio = [:]
+        requestedListeningModes = [:]
         profileTask?.cancel()
         profileTask = nil
         clearFailure()
@@ -209,8 +352,70 @@ final class OutputPickerModel {
             if openPanels > 0 { session?.followVolume(of: currentID) }
             if currentID == nil { volume = nil }
         }
-        // A headset that connects while the panel is open gets its levels.
-        if listChanged, openPanels > 0 { refreshBatteries() }
+        // A headset that connects while the panel is open gets its levels and its
+        // controls, and one that reconnected is followed under its new ID.
+        if listChanged, openPanels > 0 {
+            refreshBatteries()
+            followControls()
+        }
+    }
+
+    /// A control is no longer waiting once Core Audio reports what was asked.
+    private func apply(_ controls: [String: HeadsetControls]) {
+        for (uid, mode) in pendingListeningModes where controls[uid]?.listening?.current == mode {
+            pendingListeningModes[uid] = nil
+        }
+        for (uid, mode) in pendingSpatialAudio where controls[uid]?.spatial?.mode == mode {
+            pendingSpatialAudio[uid] = nil
+        }
+        if self.controls != controls { self.controls = controls }
+        noticeOff()
+    }
+
+    /// A headset in Off is remembered as allowing it once it is still in Off
+    /// `offSettle` later.
+    private func noticeOff() {
+        guard !isPreviewing else { return }
+        for device in devices where controls[device.uid]?.listening?.current == .off {
+            guard let address = device.headsetAddress, !headsetsAllowingOff.contains(address),
+                  offChecks.insert(device.uid).inserted
+            else { continue }
+            release(after: Self.offSettle) { [weak self] in
+                guard let self else { return }
+                self.offChecks.remove(device.uid)
+                guard !self.isPreviewing, self.controls[device.uid]?.listening?.current == .off else { return }
+                self.setAllowsOff(true, for: address)
+            }
+        }
+    }
+
+    /// Off asked for and refused, or not the headset's mode `offSettle` later while
+    /// it is still the last mode asked for: the AirPods do not allow it after all,
+    /// and it is not offered again until seen. Not reaching them says nothing either
+    /// way.
+    private func confirmOff(after result: HeadsetControlResult, for device: OutputDevice) {
+        guard !isPreviewing, let address = device.headsetAddress else { return }
+        switch result {
+        case .refused(let status) where status != kAudioHardwareNotRunningError:
+            setAllowsOff(false, for: address)
+        case .done:
+            release(after: Self.offSettle) { [weak self] in
+                guard let self, !self.isPreviewing, self.requestedListeningModes[device.uid] == .off,
+                      let current = self.controls[device.uid]?.listening?.current, current != .off
+                else { return }
+                self.setAllowsOff(false, for: address)
+            }
+        default:
+            break
+        }
+    }
+
+    private func setAllowsOff(_ allows: Bool, for address: String) {
+        var allowing = headsetsAllowingOff
+        if allows { allowing.insert(address) } else { allowing.remove(address) }
+        guard allowing != headsetsAllowingOff else { return }
+        headsetsAllowingOff = allowing
+        defaults.set(allowing.sorted(), forKey: Self.allowsOffKey)
     }
 
     // MARK: Battery
@@ -326,6 +531,8 @@ final class OutputSession: @unchecked Sendable {
     enum Event: Sendable {
         case snapshot(OutputSnapshot)
         case volume(AudioObjectID, OutputVolume?)
+        /// The followed headsets' controls, by UID; one with none is left out.
+        case controls([String: HeadsetControls])
     }
 
     typealias Report = @MainActor @Sendable (Event) -> Void
@@ -337,7 +544,10 @@ final class OutputSession: @unchecked Sendable {
     private var report: Report?
     private var scanScheduled = false
     private var volumeScheduled = false
+    private var controlsScheduled = false
     private var followed: AudioObjectID?
+    /// The UIDs of the headsets whose controls are followed.
+    private var controlled: [String] = []
     /// The slider's latest level and the device it is for, waiting to be written.
     private var pendingLevel: (level: Double, device: AudioObjectID)?
 
@@ -347,6 +557,8 @@ final class OutputSession: @unchecked Sendable {
     static let settle: TimeInterval = 0.25
     /// Volume keys held down step the level every few tens of milliseconds.
     static let volumeSettle: TimeInterval = 0.05
+    /// A spatial audio change moves two or three properties at once.
+    static let controlsSettle: TimeInterval = 0.05
 
     init(hardware: any OutputHardware) {
         self.hardware = hardware
@@ -368,6 +580,7 @@ final class OutputSession: @unchecked Sendable {
         queue.async { [self] in
             report = nil
             followed = nil
+            controlled = []
             hardware.stopListening()
         }
     }
@@ -378,6 +591,45 @@ final class OutputSession: @unchecked Sendable {
             hardware.followVolume(of: device)
             if let device { send(.volume(device, hardware.volume(of: device))) }
         }
+    }
+
+    /// Follows these headsets' listening modes and spatial audio, by UID, reporting
+    /// them now and whenever they change; none stops.
+    func followControls(of uids: [String]) {
+        queue.async { [self] in
+            controlled = uids
+            readControls()
+        }
+    }
+
+    /// Sets a headset's listening mode, found by its UID now. Its controls are read
+    /// again after, whatever came of it, for the listener may never hear a write the
+    /// headset turned down.
+    func setListeningMode(
+        _ mode: ListeningMode, of uid: String,
+        completion: @escaping @MainActor @Sendable (HeadsetControlResult) -> Void
+    ) {
+        queue.async { [self] in
+            let result = hardware.device(uid: uid).map { hardware.setListeningMode(mode, of: $0) } ?? .gone
+            finish(result, completion)
+        }
+    }
+
+    func setSpatialAudio(
+        _ mode: SpatialAudioMode, for content: SpatialContent, of uid: String,
+        completion: @escaping @MainActor @Sendable (HeadsetControlResult) -> Void
+    ) {
+        queue.async { [self] in
+            let result = hardware.device(uid: uid).map { hardware.setSpatialAudio(mode, for: content, of: $0) } ?? .gone
+            finish(result, completion)
+        }
+    }
+
+    private func finish(_ result: HeadsetControlResult, _ completion: @escaping @MainActor @Sendable (HeadsetControlResult) -> Void) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { completion(result) }
+        }
+        scheduleControlsRead()
     }
 
     func select(_ device: OutputDevice, completion: @escaping @MainActor @Sendable (OutputSwitchResult, OutputSnapshot) -> Void) {
@@ -419,15 +671,19 @@ final class OutputSession: @unchecked Sendable {
             scheduleScan()
         case .volume:
             scheduleVolumeRead()
+        case .controls:
+            scheduleControlsRead()
         case .restarted:
             // Its devices may be back under new IDs. Off and on again leaves one set
             // of listeners, whether or not the restart kept the old ones, and the
-            // scan puts the slider on the output's new ID.
+            // scan puts the slider on the output's new ID; headsets are looked up
+            // by UID again.
             hardware.stopListening()
             listen()
             if let followed { hardware.followVolume(of: followed) }
             scheduleScan()
             scheduleVolumeRead()
+            scheduleControlsRead()
         }
     }
 
@@ -448,6 +704,31 @@ final class OutputSession: @unchecked Sendable {
             guard let followed else { return }
             send(.volume(followed, hardware.volume(of: followed)))
         }
+    }
+
+    private func scheduleControlsRead() {
+        guard !controlsScheduled, !controlled.isEmpty else { return }
+        controlsScheduled = true
+        queue.asyncAfter(deadline: .now() + Self.controlsSettle) { [self] in
+            controlsScheduled = false
+            readControls()
+        }
+    }
+
+    /// Looks each headset up by UID, reads its controls, and listens to what the
+    /// read found under the ID it has now. Which properties to listen to is known
+    /// only from the read, so a listener just put on reads them once more, for a
+    /// change made from the stem or Control Center in between.
+    private func readControls() {
+        var listened: [AudioObjectID: [HeadsetProperty]] = [:]
+        var controls: [String: HeadsetControls] = [:]
+        for uid in controlled {
+            guard let device = hardware.device(uid: uid), let reading = hardware.readHeadset(device) else { continue }
+            listened[device] = reading.listened
+            controls[uid] = reading.controls
+        }
+        if hardware.followControls(listened) { scheduleControlsRead() }
+        send(.controls(controls))
     }
 
     private func send(_ event: Event) {

@@ -37,8 +37,9 @@ struct NowPlayingOutputButton: View {
 // MARK: - Panel
 
 /// The outputs, as the Sound menu lists them: the volume of the one in use, then
-/// every output with a checkmark on that one, and last a way to AirPlay receivers,
-/// which only Sound settings may list.
+/// every output with a checkmark on that one and AirPods' listening mode and spatial
+/// audio under theirs, and last a way to AirPlay receivers, which only Sound settings
+/// may list.
 struct NowPlayingOutputPanel: View {
     let model: NowPlayingModel
     let outputs: OutputPickerModel
@@ -58,7 +59,7 @@ struct NowPlayingOutputPanel: View {
                 // A handful of outputs, all made at once, so the current one's
                 // margins can be scrolled to wherever its row is.
                 PanelList(isLazy: false) {
-                    ForEach(OutputLine.lines(outputs.devices)) { line in
+                    ForEach(OutputLine.lines(outputs.devices, controls: outputs.controls)) { line in
                         switch line {
                         case .header(let title):
                             PanelHeader(title: title)
@@ -67,19 +68,36 @@ struct NowPlayingOutputPanel: View {
                                 .background {
                                     if device.id == outputs.currentID { CurrentOutputMargin() }
                                 }
+                        case .controls(let device):
+                            HeadsetControlsView(device: device, outputs: outputs, isCurrent: device.id == outputs.currentID)
+                                .transition(.opacity)
                         case .soundSettings:
                             AirPlayRow { outputs.openSoundSettings() }
                         }
                     }
                 }
-                // The checkmark in view: an AirPlay receiver can be below the fold.
-                .onAppear { proxy.scrollTo(CurrentOutputMargin.id) }
-                .onChange(of: outputs.currentID) { proxy.scrollTo(CurrentOutputMargin.id) }
+                // The checkmark in view: an AirPlay receiver can be below the fold,
+                // and headsets' controls, read only once the panel is up, push the
+                // rows under them down when they come.
+                .onAppear { scrollToCurrent(proxy) }
+                .onChange(of: outputs.currentID) { scrollToCurrent(proxy) }
+                .onChange(of: outputs.controls.keys.sorted()) { scrollToCurrent(proxy) }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { outputs.panelAppeared() }
         .onDisappear { outputs.panelDisappeared() }
+    }
+
+    /// Scrolls no further than it takes to show the current output's listening modes,
+    /// where it has them, and then its row: a list too short for both keeps the row.
+    ///
+    /// The row's scroll waits a turn. Of two scrolls asked for in one update SwiftUI
+    /// makes only the last, measured from where the list was, so the modes' scroll
+    /// would be dropped and a headset lower in the list shown without its modes.
+    private func scrollToCurrent(_ proxy: ScrollViewProxy) {
+        proxy.scrollTo(CurrentModesMargin.id)
+        DispatchQueue.main.async { proxy.scrollTo(CurrentOutputMargin.id) }
     }
 
     private func row(_ device: OutputDevice) -> some View {
@@ -110,19 +128,43 @@ private struct CurrentOutputMargin: View {
     }
 }
 
-/// A line of the panel's list: a header, an output, or the way to Sound settings.
+/// What the list scrolls to for the current output's listening modes: the row of
+/// them, with a note under it, and the depth of the list's faded edge below. It
+/// sits right under the output's row, whose own margin covers above.
+///
+/// The modes' height changes with the note, so the margin is measured from them.
+/// A negative padding would not do: the list scrolls to the padding's own frame,
+/// the modes' height, and would leave the note under the faded edge.
+struct CurrentModesMargin: View {
+    static let id = "currentOutputModes"
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .frame(height: proxy.size.height + PanelList<EmptyView>.fade)
+                .id(Self.id)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// A line of the panel's list: a header, an output, a headset's controls, or the way
+/// to Sound settings.
 ///
 /// One list rather than one per section, as Up Next has, because a stack per
 /// section showed stale rows when rows moved between sections.
-private enum OutputLine: Identifiable {
+enum OutputLine: Identifiable {
     case header(String)
     case device(OutputDevice)
+    /// A headset's listening mode and spatial audio, under its row.
+    case controls(OutputDevice)
     case soundSettings
 
     var id: String {
         switch self {
         case .header(let title): "header.\(title)"
         case .device(let device): "device.\(device.uid)"
+        case .controls(let device): "controls.\(device.uid)"
         case .soundSettings: "soundSettings"
         }
     }
@@ -130,10 +172,13 @@ private enum OutputLine: Identifiable {
     /// The Sound menu's sections. AirPlay gets a header of its own only while a
     /// receiver is playing, since otherwise its one row would sit alone under it and
     /// push the common case, speakers and a headset, past the panel's height.
-    static func lines(_ devices: [OutputDevice]) -> [OutputLine] {
+    static func lines(_ devices: [OutputDevice], controls: [String: HeadsetControls] = [:]) -> [OutputLine] {
         let airPlay = devices.filter(\.kind.isAirPlay)
         var lines: [OutputLine] = [.header("Output")]
-        lines += devices.filter { !$0.kind.isAirPlay }.map(OutputLine.device)
+        for device in devices where !device.kind.isAirPlay {
+            lines.append(.device(device))
+            if controls[device.uid] != nil { lines.append(.controls(device)) }
+        }
         if !airPlay.isEmpty {
             lines.append(.header("AirPlay"))
             lines += airPlay.map(OutputLine.device)

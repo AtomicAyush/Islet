@@ -558,9 +558,10 @@ final class NowPlayingFeature: Feature {
     }
 
     /// Opens the island on the sample song with the output panel showing, over
-    /// sample outputs: speakers, AirPods Pro with their battery, a display. The song
-    /// has no library, so no row of library buttons takes the room: the three outputs
-    /// show in full, with the AirPlay row just under them, a scroll away.
+    /// sample outputs: speakers, AirPods Pro with their battery, listening modes and
+    /// Spatialize Stereo, and a display. The song has no library, so no row of library
+    /// buttons takes the room: the AirPods show in full with their listening modes,
+    /// and the rest is a scroll away. Nothing the samples offer reaches a real device.
     private func previewOutputPicker() {
         preview(.midnightDrive(playing: true), for: Self.libraryPreviewLength)
         outputs.beginPreview()

@@ -18,6 +18,9 @@ enum OutputChange: Sendable {
     case devices
     /// The followed output's volume or mute changed.
     case volume
+    /// A followed headset's listening mode or spatial audio changed, from Islet, the
+    /// headset's stem, Control Center or an iPhone.
+    case controls
     /// The audio server started afresh, and its devices may have come back under new
     /// IDs.
     case restarted
@@ -34,6 +37,10 @@ protocol OutputHardware: AnyObject, Sendable {
     func candidates() -> [OutputCandidate]
     /// A device's UID, or `nil` once it has gone.
     func uid(of device: AudioObjectID) -> String?
+    /// The device with this UID now. A headset's ID changes when it reconnects and
+    /// when the audio server restarts, so one is looked up afresh for every read and
+    /// write of its controls.
+    func device(uid: String) -> AudioObjectID?
     func defaultOutput() -> AudioObjectID?
     /// Where alerts and sound effects play.
     func defaultSystemOutput() -> AudioObjectID?
@@ -49,6 +56,19 @@ protocol OutputHardware: AnyObject, Sendable {
     func stopListening()
     /// Reports `device`'s volume and mute changes as well, or stops with `nil`.
     func followVolume(of device: AudioObjectID?)
+
+    /// A headset's listening mode and spatial audio and the properties behind them,
+    /// or `nil` for a device that is not an Apple headset's output.
+    func readHeadset(_ device: AudioObjectID) -> HeadsetReading?
+    func setListeningMode(_ mode: ListeningMode, of device: AudioObjectID) -> HeadsetControlResult
+    func setSpatialAudio(_ mode: SpatialAudioMode, for content: SpatialContent, of device: AudioObjectID) -> HeadsetControlResult
+    /// Reports changes to these properties of these headsets as `.controls` as well,
+    /// in place of the last ones given, or stops with none. Given again after every
+    /// read, since a headset's properties can appear after it connects. Returns
+    /// whether it began listening anywhere, so that the headsets are read once more
+    /// for a change made between that read and now, which no listener heard.
+    @discardableResult
+    func followControls(_ headsets: [AudioObjectID: [HeadsetProperty]]) -> Bool
 }
 
 /// The Mac's outputs, from Core Audio.
@@ -63,6 +83,8 @@ final class CoreAudioOutputHardware: OutputHardware, @unchecked Sendable {
     private var listener: CoreAudioListener?
     private var volumeListener: CoreAudioListener?
     private var volumeDevice: AudioObjectID?
+    private let controlListeners = HeadsetListeners()
+    private let headsets = HeadsetControlsReader(hal: CoreAudioHeadsetHAL())
 
     private static let systemProperties = [
         MixerHAL.address(kAudioHardwarePropertyDevices),
@@ -132,6 +154,19 @@ final class CoreAudioOutputHardware: OutputHardware, @unchecked Sendable {
         MixerHAL.string(kAudioDevicePropertyDeviceUID, of: device)
     }
 
+    func device(uid: String) -> AudioObjectID? {
+        var address = MixerHAL.address(kAudioHardwarePropertyTranslateUIDToDevice)
+        var uid = uid as CFString
+        var device = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        let status = withUnsafeMutablePointer(to: &uid) { qualifier in
+            AudioObjectGetPropertyData(
+                MixerHAL.system, &address, UInt32(MemoryLayout<CFString>.size), qualifier, &size, &device
+            )
+        }
+        return status == noErr && device != kAudioObjectUnknown ? device : nil
+    }
+
     func defaultOutput() -> AudioObjectID? {
         Self.device(kAudioHardwarePropertyDefaultOutputDevice)
     }
@@ -193,6 +228,7 @@ final class CoreAudioOutputHardware: OutputHardware, @unchecked Sendable {
 
     func stopListening() {
         followVolume(of: nil)
+        controlListeners.removeAll()
         listener?.remove()
         listener = nil
         changed = nil
@@ -208,6 +244,48 @@ final class CoreAudioOutputHardware: OutputHardware, @unchecked Sendable {
         volumeListener = CoreAudioListener(on: device, [Self.volumeAddress, Self.muteAddress], queue: queue) { _ in
             changed(.volume)
         }
+    }
+
+    // MARK: Headset controls
+
+    func readHeadset(_ device: AudioObjectID) -> HeadsetReading? {
+        guard Self.mayHaveControls(device) else { return nil }
+        return headsets.read(device)
+    }
+
+    func setListeningMode(_ mode: ListeningMode, of device: AudioObjectID) -> HeadsetControlResult {
+        guard Self.mayHaveControls(device) else { return .gone }
+        return headsets.setListeningMode(mode, of: device)
+    }
+
+    func setSpatialAudio(_ mode: SpatialAudioMode, for content: SpatialContent, of device: AudioObjectID) -> HeadsetControlResult {
+        guard Self.mayHaveControls(device) else { return .gone }
+        return headsets.setSpatialAudio(mode, for: content, of: device)
+    }
+
+    /// One listener per headset, on the properties its read has just found, so
+    /// nothing is asked of it again here (see `HeadsetListeners`).
+    func followControls(_ headsets: [AudioObjectID: [HeadsetProperty]]) -> Bool {
+        guard let queue, let changed else {
+            controlListeners.removeAll()
+            return false
+        }
+        return controlListeners.follow(headsets) { device, properties in
+            let addresses = properties.map { CoreAudioHeadsetHAL.address($0) }
+            let listener = CoreAudioListener(on: device, addresses, queue: queue) { _ in changed(.controls) }
+            return listener.remove
+        }
+    }
+
+    /// Looks again at what the device is before asking it for a headset's private
+    /// properties, since an ID can be taken by another device once its own has gone.
+    private static func mayHaveControls(_ device: AudioObjectID) -> Bool {
+        guard let uid = MixerHAL.string(kAudioDevicePropertyDeviceUID, of: device),
+              let transport = MixerHAL.read(UInt32(0), kAudioDevicePropertyTransportType, of: device)
+        else { return false }
+        return HeadsetControlsReader.mayHaveControls(
+            transport: transport, uid: uid, modelUID: MixerHAL.string(kAudioDevicePropertyModelUID, of: device)
+        )
     }
 
     // MARK: Property access

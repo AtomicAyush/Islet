@@ -35,6 +35,9 @@ struct OutputDevice: Identifiable, Equatable, Sendable {
     /// A Bluetooth headset's address, in `BluetoothAudioDevice.canonicalAddress`
     /// spelling: the key its battery levels come under.
     var headsetAddress: String?
+    /// An Apple headset, which may have listening modes and spatial audio (see
+    /// `HeadsetControlsReader.mayHaveControls`). No other device is asked.
+    var mayHaveControls = false
 
     var symbol: String { kind.symbol }
 
@@ -170,7 +173,10 @@ enum OutputCatalog {
         }
         return OutputDevice(
             id: candidate.id, uid: candidate.uid, name: candidate.name, kind: kind,
-            canBeSystemDefault: candidate.canBeSystemDefault, headsetAddress: address
+            canBeSystemDefault: candidate.canBeSystemDefault, headsetAddress: address,
+            mayHaveControls: HeadsetControlsReader.mayHaveControls(
+                transport: candidate.transport, uid: candidate.uid, modelUID: candidate.modelUID
+            )
         )
     }
 

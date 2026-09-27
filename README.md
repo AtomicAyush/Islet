@@ -16,11 +16,16 @@ shuffle and repeat where the player reports them. The button at the end of the c
 the Mac's outputs as the Sound menu does — its speakers, AirPods with each bud's and the case's
 battery, a display, USB or HDMI — with the volume above them, and moves the sound to the one
 you click; macOS lets only its own Sound menu and Sound settings list AirPlay receivers, so for
-those the last row opens Sound settings. A song change gets a moment's banner. On macOS 15 and
-later, once Islet may record system audio (the permission the Sound Mixer asks
-for), the waveform follows the music itself, bass on the left and cymbals on the right, in time
-with what you hear; macOS shows its purple recording indicator while it listens. Without that,
-or with "Waveform follows the music" off, the bars dance on Core Animation as before.
+those the last row opens Sound settings. On macOS 27, under AirPods that have them sit their
+listening modes (Transparency, Adaptive, Noise Cancellation, and Off once the AirPods have been
+seen allowing it) and, while something they can spatialize plays, Spatialize Stereo or Spatial
+Audio: Off, Fixed or Head Tracked. Both follow changes made from the stem, Control Center or an
+iPhone, and change only when you click one; Noise Cancellation and Adaptive wait for both AirPods
+to be in. A song change gets a moment's banner. On macOS 15 and later, once Islet may record
+system audio (the permission the Sound Mixer asks for), the waveform follows the music itself,
+bass on the left and cymbals on the right, in time with what you hear; macOS shows its purple
+recording indicator while it listens. Without that, or with "Waveform follows the music" off, the
+bars dance on Core Animation as before.
 
 Video gets its own look — YouTube in a browser, the TV app, QuickTime, IINA, VLC: a 16:9
 thumbnail and a progress ring beside the notch, and 15-second jumps in the player.
