@@ -52,6 +52,12 @@ protocol IslandActivity: AnyObject {
     /// A two-finger swipe sideways over the island while it shows this activity.
     /// Returns whether the activity did something with it.
     func swipe(_ direction: ActivitySwipe) -> Bool
+    /// What of the person's own its opened page shows, as for a banner
+    /// (`IslandBanner.personal`): event titles, file names. While Presentation Mode holds
+    /// that kind back, the island opened by hover or a click starts on home rather than
+    /// on this page, which its tab still opens. `nil` for a timer and the like. The
+    /// compact views beside the notch say nothing personal, and always show.
+    var personal: PersonalContent? { get }
 }
 
 enum ActivitySwipe {
@@ -70,6 +76,7 @@ extension IslandActivity {
     func minimal() -> AnyView { compactLeading() }
     var appBundleIdentifier: String? { nil }
     func swipe(_ direction: ActivitySwipe) -> Bool { false }
+    var personal: PersonalContent? { nil }
 }
 
 /// A transient alert, the way plugging in a charger or connecting AirPods is on the
@@ -96,6 +103,11 @@ struct IslandBanner {
     var haptic: Bool = true
     /// Whether the banner may break through while a Focus asks for quiet.
     var interruption: BannerInterruption = .active
+    /// What of the person's own it shows, if anything: a file's name, a message, an
+    /// event's title. Presentation Mode holds back the kinds Settings name while the
+    /// screen is shared (`ActivityCenter.heldBack`). `nil` for one that says nothing of
+    /// theirs, the volume or a charger plugged in, which always shows.
+    var personal: PersonalContent? = nil
     /// The activity this banner is news from, if any: Now Playing, for its song
     /// changing. While that activity holds the compact island, a compact banner takes
     /// its place there, the new song over the old, rather than riding in a row under
@@ -154,6 +166,9 @@ struct IslandAttachment {
     var width: CGFloat
     /// How long a presented row stays. A standing row stays until it is removed.
     var duration: TimeInterval = 2.6
+    /// What of the person's own the row shows, as for a banner (`IslandBanner.personal`):
+    /// the line being sung. `nil` for the volume and the like.
+    var personal: PersonalContent? = nil
     /// The row. It takes no clicks: a click there is on the island.
     var content: AnyView
     /// The same thing as a banner of its own, for when there is nothing compact to
@@ -178,6 +193,39 @@ enum BannerInterruption {
     /// Worth the interruption: something the person did (plugging in, connecting
     /// headphones, a Focus changing) or something they asked to hear about (a timer).
     case active
+}
+
+/// The kinds of the person's own things a banner, a row or a home tile can show, which
+/// Presentation Mode holds back while the screen is shared, a call is on or slides are
+/// playing, as Settings choose. Anything that says nothing of theirs (the volume, the
+/// brightness, a battery running low) has no kind, and always shows.
+enum PersonalContent: String, CaseIterable, Hashable, Sendable {
+    /// What scripts, shortcuts and tools say through Show in Islet, Claude Code's hooks
+    /// among them.
+    case messages
+    /// Files and what was copied: screenshots, finished downloads, the clipboard, the
+    /// shelf.
+    case files
+    /// Calendar events and the Focus that is on, by name.
+    case schedule
+    /// The song that just started, and the line being sung.
+    case music
+    /// Headphones, keyboards and mice, which are often named after their owner:
+    /// connecting, running low, and on their home tiles. The Wi-Fi network or VPN a
+    /// banner names too, for the same reason.
+    case devices
+
+    /// Whether one held back is news the person may want to know they missed, and is
+    /// counted for the word afterwards (`ActivityCenter.heldBackCount`): a message, a
+    /// screenshot, a finished download. A song starting, a Focus coming on or off, or
+    /// headphones connecting only say how things are, which the island shows again as
+    /// the hold ends.
+    var isNews: Bool {
+        switch self {
+        case .messages, .files: true
+        case .schedule, .music, .devices: false
+        }
+    }
 }
 
 /// A small coloured dot beside the notch, like the iPhone's camera and microphone
@@ -245,6 +293,11 @@ struct HomeWidget: Identifiable {
     var order: Int
     /// Relative share of the row's width.
     var weight: CGFloat = 1
+    /// What of the person's own the tile shows, as for a banner
+    /// (`IslandBanner.personal`): the clipboard, the day's events. While Presentation
+    /// Mode holds that kind back, the tile keeps its place but says only that it is
+    /// hidden (`ActivityCenter.shownHomeWidgets`).
+    var personal: PersonalContent? = nil
     var view: AnyView
 }
 

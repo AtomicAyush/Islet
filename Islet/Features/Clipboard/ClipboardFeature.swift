@@ -130,7 +130,7 @@ final class ClipboardFeature: Feature {
         if wantsTile {
             // After the headphones, before the shelf: both are things kept to hand.
             center.setHomeWidget(HomeWidget(
-                id: id, order: Self.tileOrder, weight: 1.5,
+                id: id, order: Self.tileOrder, weight: 1.5, personal: .files,
                 view: AnyView(ClipboardHomeTile(model: model) {
                     IslandManager.shared.focusedController?.model.select(focus: Self.pageID)
                 })

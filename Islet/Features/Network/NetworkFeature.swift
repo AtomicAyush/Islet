@@ -225,9 +225,24 @@ final class NetworkFeature: Feature {
             duration: bannerDuration,
             haptic: false,
             interruption: interruption,
+            personal: personal(change),
             leading: AnyView(NetworkBannerLeading(announcement: announcement)),
             trailing: AnyView(NetworkBannerTrailing(announcement: announcement))
         )
+    }
+
+    /// A banner naming the network or VPN is held back with device names while
+    /// presenting (`PersonalContent.devices`): a Wi-Fi network, a phone's hotspot or a
+    /// VPN is as often named after its owner, their home or their work. One saying only
+    /// "Wi-Fi" or "Ethernet" names nothing of theirs, and always shows.
+    static func personal(_ change: NetworkChange) -> PersonalContent? {
+        let name: String? = switch change {
+        case let .offline(_, name), let .online(_, name): name
+        case let .joined(name): name
+        case let .wifiPower(_, network): network
+        case let .vpnConnected(name), let .vpnDisconnected(name): name
+        }
+        return name == nil ? nil : .devices
     }
 
     /// A preview is there to be looked at, so it shows whatever a Focus says.

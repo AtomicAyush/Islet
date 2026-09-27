@@ -122,6 +122,7 @@ final class BluetoothFeature: Feature {
             id: Self.cardID(headset.id),
             style: .card(width: 360, height: 60),
             duration: duration,
+            personal: .devices,
             content: AnyView(HeadsetConnectedCard(headset: headset))
         ))
     }
@@ -131,6 +132,7 @@ final class BluetoothFeature: Feature {
         ActivityCenter.shared.present(IslandBanner(
             id: "\(Self.bannerPrefix)disconnected.\(headset.id)",
             style: .compact(leading: wing, trailing: wing),
+            personal: .devices,
             rowWidths: HeadsetDisconnectedLayout.rowWidths(name: headset.shortName),
             leading: AnyView(HeadsetDisconnectedLeading(headset: headset)),
             trailing: AnyView(HeadsetDisconnectedTrailing())
@@ -143,7 +145,7 @@ final class BluetoothFeature: Feature {
         tileModel = source
         if let source {
             ActivityCenter.shared.setHomeWidget(
-                HomeWidget(id: "bluetooth", order: Self.tileOrder, weight: 1, view: AnyView(HeadsetHomeTile(model: source)))
+                HomeWidget(id: "bluetooth", order: Self.tileOrder, weight: 1, personal: .devices, view: AnyView(HeadsetHomeTile(model: source)))
             )
         } else {
             ActivityCenter.shared.removeHomeWidget(id: "bluetooth")

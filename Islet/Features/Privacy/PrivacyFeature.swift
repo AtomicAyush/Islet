@@ -26,7 +26,8 @@ final class PrivacyFeature: Feature {
     private static let captureID = "privacy.capture"
     private static let locationID = "privacy.location"
 
-    private let monitor = PrivacyMonitor()
+    /// The one monitor, which Presentation Mode reads too.
+    private let monitor = PrivacyMonitor.shared
     private var defaultsObserver: NSObjectProtocol?
 
     /// Mic Mute, for a Mute button on the card's microphone line while an app is using

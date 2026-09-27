@@ -26,6 +26,9 @@ final class BannerFeature: Feature {
         case held
         /// It was passive, and a Focus asks for quiet.
         case quieted
+        /// Presentation Mode is holding messages back while the screen is shared: it is
+        /// counted, for the word the island says afterwards, and not shown or heard.
+        case heldBack
         /// The feature is turned off.
         case off
     }
@@ -107,6 +110,12 @@ final class BannerFeature: Feature {
     func show(_ banner: CustomBanner) -> Outcome {
         guard isRunning else { return .off }
         if isQuieted(banner) { return .quieted }
+        if presenter.holdsBack(.messages) {
+            // Handed over all the same, for the island to count, but not throttled: the
+            // throttle keeps to a pace a person can read, and nothing is shown.
+            present(banner)
+            return .heldBack
+        }
         // Something already waiting goes out first, so this takes its place rather
         // than jumping ahead of it and being replaced by an older banner a moment later.
         if held != nil || throttle.admit(at: .now) != nil {
@@ -139,8 +148,12 @@ final class BannerFeature: Feature {
         // compact self, which the header shows, title and all.
         if banner.style == .card, isIslandOpen() { banner.style = .compact }
         serial += 1
-        presenter.present(banner.islandBanner(id: "\(Self.bannerPrefix)\(serial)"))
-        if let sound = banner.sound { playSound(sound) }
+        let island = banner.islandBanner(id: "\(Self.bannerPrefix)\(serial)")
+        // One Presentation Mode holds back is not heard either: a sound during a call
+        // is heard by everyone on it.
+        let isHeard = !presenter.holdsBack(island.personal)
+        presenter.present(island)
+        if isHeard, let sound = banner.sound { playSound(sound) }
     }
 
     /// Keeps `banner` in place of whatever was waiting, and waits for the throttle.
@@ -184,8 +197,16 @@ protocol BannerPresenter: AnyObject {
     var bannerID: String? { get }
     /// Whether a Focus asks for quiet, so passive banners are dropped.
     var silencesPassiveBanners: Bool { get }
+    /// Whether Presentation Mode holds this kind back now, so a banner of it is dropped,
+    /// and its sound goes unplayed.
+    func holdsBack(_ content: PersonalContent?) -> Bool
     func present(_ banner: IslandBanner)
     func dismissBanner(id: String?)
+}
+
+extension BannerPresenter {
+    /// A stand-in that knows nothing of presenting holds nothing back.
+    func holdsBack(_ content: PersonalContent?) -> Bool { false }
 }
 
 extension ActivityCenter: BannerPresenter {

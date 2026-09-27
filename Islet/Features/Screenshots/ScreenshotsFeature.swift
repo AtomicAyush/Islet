@@ -79,6 +79,7 @@ final class ScreenshotsFeature: Feature {
             id: Self.bannerID,
             style: .card(width: ScreenshotCardLayout.width, height: ScreenshotCardLayout.height),
             duration: Self.cardDuration,
+            personal: .files,
             // A card of its own for each screenshot, so a new one does not arrive already
             // saying "Copied".
             content: AnyView(ScreenshotCard(

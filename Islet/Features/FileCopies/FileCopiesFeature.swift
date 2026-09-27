@@ -205,6 +205,8 @@ final class FileCopiesActivity: IslandActivity {
 
     let id = "fileCopies"
     let symbol = "doc.on.doc.fill"
+    /// Its page names the files being copied.
+    var personal: PersonalContent? { .files }
     /// Below Now Playing's: music keeps the island, and a copy takes the bubble beside
     /// it. A copy is there to be glanced at, not waited on.
     let priority = ActivityPriority.background

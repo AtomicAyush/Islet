@@ -309,6 +309,8 @@ final class InputDevicesFeature: Feature {
             id: Self.lowID(device.id),
             style: .compact(leading: widths.leading, trailing: widths.trailing),
             duration: Self.lowDuration,
+            // It names the device, which may be named after its owner.
+            personal: .devices,
             leading: AnyView(InputDeviceLowLeading(device: device)),
             trailing: AnyView(InputDeviceLowTrailing(device: device))
         ))
@@ -320,6 +322,7 @@ final class InputDevicesFeature: Feature {
             id: Self.cardID(device),
             style: .card(width: 360, height: 60),
             duration: duration,
+            personal: .devices,
             content: AnyView(InputDeviceConnectedCard(device: device))
         ))
     }
@@ -335,7 +338,7 @@ final class InputDevicesFeature: Feature {
         if let source {
             // Beside the headphones' tile, the other things running on a battery.
             ActivityCenter.shared.setHomeWidget(
-                HomeWidget(id: Self.widgetID, order: Self.tileOrder, view: AnyView(InputDevicesHomeTile(model: source)))
+                HomeWidget(id: Self.widgetID, order: Self.tileOrder, personal: .devices, view: AnyView(InputDevicesHomeTile(model: source)))
             )
         } else {
             ActivityCenter.shared.removeHomeWidget(id: Self.widgetID)

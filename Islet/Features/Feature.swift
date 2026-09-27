@@ -81,6 +81,7 @@ final class FeatureRegistry {
         PrivacyFeature(),
         MicMuteFeature(),
         FocusFeature(),
+        PresentationFeature(),
         ShortcutsFeature(),
         BannerFeature(),
         ClaudeCodeFeature(),

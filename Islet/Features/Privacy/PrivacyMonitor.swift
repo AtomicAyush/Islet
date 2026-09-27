@@ -78,6 +78,15 @@ struct PrivacyUsage: Equatable, Sendable {
     var sensorsInUse: [PrivacyMonitor.Sensor] {
         PrivacyMonitor.Sensor.allCases.filter { self[$0].inUse }
     }
+
+    /// Only what `sensors` say, the rest left as unused. The Sound Mixer goes with the
+    /// Mac's sound.
+    func limited(to sensors: Set<PrivacyMonitor.Sensor>) -> PrivacyUsage {
+        var usage = PrivacyUsage()
+        for sensor in sensors { usage[sensor] = self[sensor] }
+        if sensors.contains(.systemAudio) { usage.soundMixer = soundMixer }
+        return usage
+    }
 }
 
 /// Knows which sensors are in use, and by which apps, without permission to use any:
@@ -92,9 +101,16 @@ struct PrivacyUsage: Equatable, Sendable {
 ///
 /// Readings settle for a moment before they are published, so a device that blinks
 /// on and off while an app sets up does not flicker the island.
+///
+/// There is one, shared: the Privacy feature shows what it watches (`watch`, `usage`),
+/// and other features read the sensors they need (`demand`, `readings`) — Presentation
+/// Mode, for a shared screen or a call — without a second set of watchers or a second
+/// stream of the log. A sensor only another feature needs is watched but never shown.
 @MainActor
 @Observable
 final class PrivacyMonitor {
+    static let shared = PrivacyMonitor()
+
     enum Sensor: CaseIterable, Hashable, Sendable {
         case camera, microphone, screen, systemAudio, location
     }
@@ -106,8 +122,12 @@ final class PrivacyMonitor {
         var app: PrivacyApp?
     }
 
-    /// What to show: the settled readings, or a preview standing in for them.
+    /// What to show: the settled readings of the sensors `watch` asked for, or a
+    /// preview standing in for them.
     private(set) var usage = PrivacyUsage()
+    /// The settled readings of every sensor watched, whoever asked for it, for the
+    /// features that `demand` them. Never a preview.
+    private(set) var readings = PrivacyUsage()
     /// Whether apps can be named from the system log, for Settings to explain when
     /// they cannot.
     private(set) var names = PrivacyNameTracker.Status.off
@@ -125,9 +145,14 @@ final class PrivacyMonitor {
     @ObservationIgnored private let screenWatcher = PrivacyScreenWatcher()
     @ObservationIgnored private let nameTracker = PrivacyNameTracker()
 
-    /// The sensors being watched. Recording what the Mac plays is watched with the
-    /// screen, as the two share macOS's purple dot.
+    /// The sensors being watched: those shown, and those other features demand.
+    /// Recording what the Mac plays is shown with the screen, as the two share macOS's
+    /// purple dot.
     @ObservationIgnored private var watched: Set<Sensor> = []
+    /// The sensors `watch` asked for, the only ones `usage` and `onChange` speak of.
+    @ObservationIgnored private var shown: Set<Sensor> = []
+    /// Sensors other features need readings of, and who to tell, by feature.
+    @ObservationIgnored private var demands: [String: (sensors: Set<Sensor>, report: (PrivacyUsage) -> Void)] = [:]
     /// Bumped on every start and stop, so a reading already on its way to the main
     /// queue from an earlier watch is recognised and dropped.
     @ObservationIgnored private var generations: [Sensor: Int] = [:]
@@ -157,14 +182,44 @@ final class PrivacyMonitor {
     /// How long a start waits for the log to name its app.
     static let nameWait: Duration = .seconds(1)
 
-    /// Starts or stops watching each sensor. Safe to call with unchanged values.
+    /// Starts or stops showing each sensor, watching it as needed. Safe to call with
+    /// unchanged values.
     func watch(camera: Bool, microphone: Bool, screen: Bool, location: Bool) {
         var wanted: Set<Sensor> = []
         if camera { wanted.insert(.camera) }
         if microphone { wanted.insert(.microphone) }
         if screen { wanted.formUnion([.screen, .systemAudio]) }
         if location { wanted.insert(.location) }
-        guard wanted != watched else { return }
+        guard wanted != shown else { return }
+        shown = wanted
+        rewatch()
+    }
+
+    /// Watches `sensors` for `reader`, another feature, alongside whatever is shown, and
+    /// gives it `readings` now and after every change. Asking again replaces what it
+    /// asked for before.
+    func demand(_ sensors: Set<Sensor>, for reader: String, report: @escaping (PrivacyUsage) -> Void) {
+        demands[reader] = (sensors, report)
+        rewatch()
+        report(readings)
+    }
+
+    /// Stops watching what `reader` asked for, unless something else needs it too.
+    func withdraw(_ reader: String) {
+        guard demands.removeValue(forKey: reader) != nil else { return }
+        rewatch()
+        if watched.isEmpty { forgetReadings() }
+    }
+
+    /// Watches what is shown and what is demanded. A sensor newly shown that was already
+    /// watched for someone else has no first reading coming; it is compared with what
+    /// its reading was, as any other is, so one already busy is not announced.
+    private func rewatch() {
+        let wanted = demands.values.reduce(shown) { $0.union($1.sensors) }
+        guard wanted != watched else {
+            scheduleSettle()
+            return
+        }
         let before = Self.watchers(for: watched)
         let running = Self.watchers(for: wanted)
         baseline.formUnion(Self.joiningRunningWatchers(from: watched, to: wanted))
@@ -202,17 +257,24 @@ final class PrivacyMonitor {
         scheduleSettle()
     }
 
-    /// Stops watching and forgets everything, a running preview included.
+    /// Stops showing anything and forgets what was shown, a running preview included.
+    /// Sensors other features demand are still watched for them.
     func stop() {
         watch(camera: false, microphone: false, screen: false, location: false)
-        settleTask?.cancel()
         heldTask?.cancel()
         heldStart = nil
         previewTask?.cancel()
         preview = nil
+        usage = PrivacyUsage()
+        if watched.isEmpty { forgetReadings() }
+    }
+
+    /// With nothing watched, nothing is known.
+    private func forgetReadings() {
+        settleTask?.cancel()
         settled = PrivacyUsage()
         baseline = []
-        usage = PrivacyUsage()
+        publishReadings()
     }
 
     /// Shows `sample` in place of the real readings for eight seconds, touching no
@@ -351,14 +413,18 @@ final class PrivacyMonitor {
             watching: watched, camera: cameraOn, microphone: microphone, screen: screenCaptured,
             names: named, ownPID: getpid()
         )
-        var started = Self.start(from: before, to: settled, ignoring: baseline)
+        publishReadings()
+        // Only what is shown is announced, compared with what the same sensors read
+        // before, whoever they were watched for then.
+        let shownNow = settled.limited(to: shown)
+        var started = Self.start(from: before.limited(to: shown), to: shownNow, ignoring: baseline)
         baseline = []
 
         // A held start whose app has since been named goes out now, named, unless
         // another sensor's start is going out (one banner at a time); one whose sensor
         // has gone again is dropped.
         if let held = heldStart {
-            let use = settled[held.sensor]
+            let use = shownNow[held.sensor]
             if !use.inUse {
                 releaseHeldStart(announce: false)
             } else if let app = use.apps.first {
@@ -385,13 +451,21 @@ final class PrivacyMonitor {
         heldTask = nil
         guard let held = heldStart else { return }
         heldStart = nil
-        if announce, preview == nil, settled[held.sensor].inUse {
-            onChange(Start(sensor: held.sensor, app: settled[held.sensor].apps.first))
+        let use = settled.limited(to: shown)[held.sensor]
+        if announce, preview == nil, use.inUse {
+            onChange(Start(sensor: held.sensor, app: use.apps.first))
         }
     }
 
+    /// Tells the features that demand readings of any change in them.
+    private func publishReadings() {
+        guard settled != readings else { return }
+        readings = settled
+        for demand in demands.values { demand.report(settled) }
+    }
+
     private func publish(started: Start?) {
-        let next = preview ?? settled
+        let next = preview ?? settled.limited(to: shown)
         guard next != usage else {
             // Nothing new to draw, but a start still needs announcing.
             if let started, preview == nil { onChange(started) }

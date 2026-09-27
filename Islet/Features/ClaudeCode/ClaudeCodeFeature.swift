@@ -149,6 +149,8 @@ final class ClaudeCodeActivity: IslandActivity {
     let id = "claudeCode"
     let priority = ActivityPriority.background
     let symbol = "sparkle"
+    /// Its page shows what each session is doing and asking, as its hooks' banners do.
+    var personal: PersonalContent? { .messages }
     let model: ClaudeCodeModel
     let open: (ClaudeSession) -> Void
 

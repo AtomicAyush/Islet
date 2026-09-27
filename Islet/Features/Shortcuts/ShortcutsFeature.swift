@@ -347,6 +347,9 @@ final class ShortcutsFeature: Feature {
 
     /// How often a result waiting on an island opened elsewhere looks again.
     static let resultRecheck: TimeInterval = 0.5
+    /// A result is whatever the shortcut gave back, which may be anything of the
+    /// person's: a message, a note, what was copied.
+    static let resultContent = PersonalContent.messages
 
     /// What a shortcut gave back, in a card, once its tick has shown.
     ///
@@ -366,12 +369,16 @@ final class ShortcutsFeature: Feature {
             }
             guard let self, !Task.isCancelled else { return }
             resultTask = nil
-            for island in islands() where island.isExpanded { island.collapse() }
             let center = ActivityCenter.shared
+            // A result Presentation Mode holds back leaves the island as it is.
+            if !center.holdsBack(Self.resultContent) {
+                for island in islands() where island.isExpanded { island.collapse() }
+            }
             let banner = IslandBanner(
                 id: Self.resultBannerID,
                 style: .card(width: ShortcutResultLayout.width, height: ShortcutResultLayout.height(for: output)),
                 duration: Self.resultDuration,
+                personal: Self.resultContent,
                 content: AnyView(ShortcutResultCard(shortcut: shortcut, output: output) { [weak self] in
                     self?.keepResult()
                 } dismiss: {

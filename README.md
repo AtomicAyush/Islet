@@ -195,6 +195,41 @@ the Set Focus action set to toggle Do Not Disturb, and pick it in Settings. Clic
 symbol for which Focus is on and until when, with Turn Off for Do Not Disturb once that
 shortcut is picked.
 
+**Presentation Mode.** While you share or record your screen, are on a call, or play a slideshow
+in Keynote or PowerPoint, the island holds back what would show your own things to everyone
+watching: banners from scripts and Claude Code, what a shortcut hands back, screenshots and
+finished downloads, which Focus comes on, a new song and the line being sung. The home page
+keeps its tiles where they are, but the clipboard, the shelf, the calendar, the Focus and the
+music say only "Hidden", and the island opens on home rather than on the calendar, the music,
+downloads or Claude Code, whose tabs still open them. A tile you hid yourself stays gone rather
+than saying "Hidden", and one held back can still be moved or hidden while you edit the page. On
+a call the calendar's Join camera stays beside the notch and still joins it: it says only which
+service the call is on, while the event's title waits on the calendar's page. A banner that
+comes in as a share starts waits until the share counts, then is held back, or shows a moment
+late if the share was over at once. The volume, the brightness and the Mac's battery warnings
+still show, and the island still opens when you rest the pointer on it. A crossed-out eye beside
+the notch says it is on; click it for why — "Screen shared by Zoom", "On a call in FaceTime" —
+how many alerts it has held back so far, and Turn Off Until This Ends. When presenting ends the
+island says how many messages and files it held back, once, rather than bring them all back;
+songs and Focus changes aren't counted. The screen counts as shared while any app but Islet
+captures it: the Sound Mixer's and the waveform's recording of what the Mac plays never counts,
+nor does a screenshot's moment of capture, since the screen must stay captured for three
+seconds. An app that captures the screen all the time, as DisplayLink's driver does for a
+monitor on a dock, would keep it on for good, so DisplayLink doesn't count, and the card offers
+Don't Turn On for any other such app; Settings list them. A call is the camera in use, or a call
+app — FaceTime, Zoom, Teams, Webex, Slack, Discord, Skype, WhatsApp, Signal, Telegram — or a
+browser using the microphone. A slideshow is Keynote or PowerPoint in front with the menu bar
+hidden, a window over a whole display, or PowerPoint's slide show window. Settings turn off each
+of these, and each kind of thing held back; device and network names ("Alex's AirPods", the
+Wi-Fi or VPN just joined) show unless you hide them too. The **Presentation Mode** action in
+Shortcuts and `islet://presentation/toggle` turn it on by hand, until you turn it off: do that
+for AirPlay to a TV or a projector, which doesn't count as sharing on an administrator account,
+since macOS leaves it unmarked (on other accounts Islet can't tell it from sharing, and it does
+count). Which app shares the screen is named from the system log, as for the privacy dots, so
+with the screen or call trigger on, Islet watches the sensors and reads the log even while
+Camera, Microphone & More is off; on other accounts the card says "Screen being shared", and no
+app can be left out.
+
 **Shortcuts.** While a shortcut runs, its icon sits left of the camera and a spinner right of
 it, as on the iPhone; a tick or a cross shows as it ends, and the island gives itself back.
 Opened, it says which shortcut is running and for how long, and offers Stop for one Islet
@@ -430,6 +465,7 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
 | `islet://micMute/toggle`, `/mute`, `/unmute` | Mutes or unmutes the microphone for every app |
+| `islet://presentation/on`, `/off`, `/toggle` | Turns Presentation Mode on until turned off, or off until what turned it on ends |
 | `islet://weather/refresh` | Fetches the forecast now |
 | `islet://calendar/join` | Joins the video call under way or starting within 15 minutes |
 | `islet://shortcuts/run?name=Morning%20Lights` | Runs a shortcut (`id=` takes the identifier `shortcuts list --show-identifiers` prints) |
@@ -467,7 +503,8 @@ wait their turn, and only the newest of those waiting is shown, so a script stuc
 cannot keep the island flickering. While something is already in the island — music, a video,
 a timer — a banner beside the notch goes in a slim row under it instead, as the volume does, so
 what was there stays in sight. With the island open, a banner shows in its header, and a card
-comes as a compact one instead. Settings → Activities → Show in Islet turns them all off.
+comes as a compact one instead. While Presentation Mode is on they are held back, sounds and
+all, and counted. Settings → Activities → Show in Islet turns them all off.
 
 `open -g` hands the URL over without bringing anything to the front:
 

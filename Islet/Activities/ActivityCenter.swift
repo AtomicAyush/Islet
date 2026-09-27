@@ -17,10 +17,12 @@ final class ActivityCenter {
     /// Brief content riding under the compact island, if any.
     private(set) var attachment: IslandAttachment?
     /// A row that stays under one activity while its feature keeps it there. A
-    /// presented `attachment` goes in front of it for as long as that is up.
+    /// presented `attachment` goes in front of it for as long as that is up. The island
+    /// shows it through `shownStandingAttachment`, which Presentation Mode can hide.
     private(set) var standingAttachment: StandingAttachment?
     /// Every tile features have put on the home page, by their `order`, hidden ones
-    /// included. The page shows `shownHomeWidgets`.
+    /// included. The page shows `shownHomeWidgets`, which the person's arrangement
+    /// orders and hides, and Presentation Mode can blank.
     private(set) var homeWidgets: [HomeWidget] = []
     /// How the person arranged the home page. Only a test replaces it.
     @ObservationIgnored var homeArrangement = HomeArrangement() {
@@ -39,6 +41,43 @@ final class ActivityCenter {
     /// dropped rather than shown, the way a Focus holds back passive notifications.
     /// Active banners, live activities and indicators are unaffected.
     var silencesPassiveBanners = false
+    /// The kinds of the person's own things held back while Presentation Mode is on,
+    /// and empty the rest of the time. A banner or row of one of these kinds is dropped
+    /// rather than shown, and counted if it is news (`heldBackCount`); a standing row of
+    /// one waits out of sight, a home tile keeps its place but says only that it is
+    /// hidden, and the opened island starts on home rather than on a live activity of
+    /// one (`IslandActivity.personal`). Whatever of them is up when the hold begins goes
+    /// at once. Anything with no kind (`IslandBanner.personal`), the compact live
+    /// activities and indicators are unaffected, and the island opens on hover as ever.
+    var heldBack: Set<PersonalContent> = [] {
+        didSet {
+            guard heldBack != oldValue else { return }
+            if oldValue.isEmpty {
+                heldBackCount = 0
+                lastHeldBack = nil
+            }
+            if let banner, holdsBack(banner.personal) { dismissBanner(id: banner.id) }
+            if let attachment, holdsBack(attachment.personal) { dismissAttachment(id: attachment.id) }
+            settleWaiting()
+        }
+    }
+    /// How many banners and rows have been held back since the hold began, for the word
+    /// the island says once it ends. Only news counts (`PersonalContent.isNews`): a
+    /// message or a file, not a song starting or a Focus coming on. Each counts once:
+    /// one presented again with the same id while the first would still have been up is
+    /// the same banner, updated in place, as it would have been on screen.
+    private(set) var heldBackCount = 0
+    /// The kinds Presentation Mode may be about to hold back: a share has just started,
+    /// say, and has not yet gone on long enough to count. A banner or row of one of
+    /// these kinds waits unseen meanwhile. Should the hold begin, it is held back like
+    /// any other; should the share turn out to be a moment's, it shows then, a few
+    /// seconds late. What is already in sight stays until the hold begins.
+    var mayHoldBack: Set<PersonalContent> = [] {
+        didSet {
+            guard mayHoldBack != oldValue else { return }
+            settleWaiting()
+        }
+    }
 
     /// Bumped whenever an activity re-publishes itself, so views that depend on its
     /// sizes are invalidated even though the array's identity did not change.
@@ -56,6 +95,37 @@ final class ActivityCenter {
     @ObservationIgnored private var attachmentTimer: Task<Void, Never>?
     /// When the attachment on screen is due to go, for a banner taking over from it.
     @ObservationIgnored private var attachmentDeadline = Date.distantPast
+    /// The last banner or row counted as held back, and when it would have gone.
+    @ObservationIgnored private var lastHeldBack: (id: String, until: Date)?
+    /// Banners and rows waiting to see whether the hold begins (`mayHoldBack`), oldest
+    /// first, one per id.
+    @ObservationIgnored private var waiting: [Waiting] = []
+
+    private enum Waiting {
+        case banner(IslandBanner)
+        case attachment(IslandAttachment)
+
+        var id: String {
+            switch self {
+            case .banner(let banner): banner.id
+            case .attachment(let attachment): attachment.id
+            }
+        }
+
+        var personal: PersonalContent? {
+            switch self {
+            case .banner(let banner): banner.personal
+            case .attachment(let attachment): attachment.personal
+            }
+        }
+
+        var duration: TimeInterval {
+            switch self {
+            case .banner(let banner): banner.duration
+            case .attachment(let attachment): attachment.duration
+            }
+        }
+    }
 
     private init() {}
 
@@ -108,10 +178,20 @@ final class ActivityCenter {
 
     /// Shows a banner for its duration. A banner with the same id as the current one
     /// updates in place; a different one replaces it. A passive banner is dropped
-    /// while passive banners are silenced. Over a live activity, a compact one rides in
-    /// a row under it (`bannerRidesUnder`).
+    /// while passive banners are silenced, and one of a kind Presentation Mode holds
+    /// back is dropped and counted (`heldBack`), or waits while it may be about to
+    /// (`mayHoldBack`). Over a live activity, a compact one rides in a row under it
+    /// (`bannerRidesUnder`).
     func present(_ banner: IslandBanner) {
         if banner.interruption == .passive, silencesPassiveBanners { return }
+        if holdsBack(banner.personal) {
+            noteHeldBack(banner.personal, id: banner.id, duration: banner.duration)
+            return
+        }
+        if isAboutToHoldBack(banner.personal) {
+            wait(.banner(banner))
+            return
+        }
         // Its clock starts afresh, whatever the one it replaces had left.
         bannerTimer?.cancel()
         bannerTimeOwed = nil
@@ -130,6 +210,7 @@ final class ActivityCenter {
     }
 
     func dismissBanner(id: String? = nil) {
+        if let id { waiting.removeAll { $0.id == id } }
         guard let current = banner, id == nil || current.id == id else { return }
         bannerTimer?.cancel()
         bannerTimeOwed = nil
@@ -248,6 +329,16 @@ final class ActivityCenter {
     /// notch. The island has already changed shape for the activity, so the hold still
     /// changes it only the once.
     func present(_ attachment: IslandAttachment) {
+        if holdsBack(attachment.personal) {
+            dismissAttachment(id: attachment.id)
+            noteHeldBack(attachment.personal, id: attachment.id, duration: attachment.duration)
+            return
+        }
+        if isAboutToHoldBack(attachment.personal) {
+            dismissAttachment(id: attachment.id)
+            wait(.attachment(attachment))
+            return
+        }
         if let banner = attachment.banner, self.banner?.id == banner.id, bannerRidesUnder {
             dismissBanner(id: banner.id)
         }
@@ -327,6 +418,67 @@ final class ActivityCenter {
         withAnimation(.islandMorph) { standingAttachment = nil }
     }
 
+    /// The standing row as the island shows it: none while Presentation Mode holds its
+    /// kind back. It stays set meanwhile, and comes back as the hold ends if its feature
+    /// still wants it there.
+    var shownStandingAttachment: StandingAttachment? {
+        guard let standingAttachment, !holdsBack(standingAttachment.attachment.personal) else { return nil }
+        return standingAttachment
+    }
+
+    // MARK: Holding back
+
+    /// Whether Presentation Mode holds back things of this kind now. Never for `nil`,
+    /// a banner or row with nothing of the person's in it.
+    func holdsBack(_ content: PersonalContent?) -> Bool {
+        guard let content else { return false }
+        return heldBack.contains(content)
+    }
+
+    /// Whether Presentation Mode may be about to hold back things of this kind, and
+    /// is not yet (`mayHoldBack`).
+    func isAboutToHoldBack(_ content: PersonalContent?) -> Bool {
+        guard let content else { return false }
+        return mayHoldBack.contains(content) && !heldBack.contains(content)
+    }
+
+    /// Counts a banner or row held back, if it is news, unless it is one already
+    /// counted, presented again while it would still have been up.
+    private func noteHeldBack(_ content: PersonalContent?, id: String, duration: TimeInterval) {
+        guard content?.isNews == true else { return }
+        let now = Date()
+        if let last = lastHeldBack, last.id == id, now < last.until {
+            // The same banner, updated in place.
+        } else {
+            heldBackCount += 1
+        }
+        lastHeldBack = (id, now.addingTimeInterval(duration))
+    }
+
+    /// Keeps a banner or row out of sight until it is known whether the hold begins. One
+    /// with the id of another waiting is that one, updated.
+    private func wait(_ item: Waiting) {
+        if let index = waiting.firstIndex(where: { $0.id == item.id }) {
+            waiting[index] = item
+        } else {
+            waiting.append(item)
+        }
+    }
+
+    /// What was waiting, once its kind is held back or no longer may be: held back and
+    /// counted as it would have been, or shown after all, in the order it came.
+    private func settleWaiting() {
+        guard !waiting.isEmpty else { return }
+        let ready = waiting.filter { !isAboutToHoldBack($0.personal) }
+        waiting.removeAll { !isAboutToHoldBack($0.personal) }
+        for item in ready {
+            switch item {
+            case .banner(let banner): present(banner)
+            case .attachment(let attachment): present(attachment)
+            }
+        }
+    }
+
     // MARK: Indicators
 
     func setIndicator(_ indicator: StatusIndicator) {
@@ -359,9 +511,19 @@ final class ActivityCenter {
 
     /// The home page's tiles as it shows them: in the person's order once they have
     /// arranged the page, by each tile's `order` until then, and without the ones they
-    /// hid (`HomeTileOrder`) unless a preview has put one up.
+    /// hid (`HomeTileOrder`) unless a preview has put one up. Of those, one whose kind
+    /// Presentation Mode holds back keeps its place but says only that it is hidden,
+    /// and takes no clicks (`HeldBackTile`). A tile the person hid stays gone rather
+    /// than turning into one of those: hiding it is theirs, and says nothing of it.
     var shownHomeWidgets: [HomeWidget] {
-        homeArrangement.shown(homeWidgets, shownAnyway: previewingHomeTiles)
+        let shown = homeArrangement.shown(homeWidgets, shownAnyway: previewingHomeTiles)
+        guard !heldBack.isEmpty else { return shown }
+        return shown.map { widget in
+            guard holdsBack(widget.personal) else { return widget }
+            var hidden = widget
+            hidden.view = AnyView(HeldBackTile())
+            return hidden
+        }
     }
 
     /// Whether a preview has tile `id` up, to show on the home page even if it is hidden.

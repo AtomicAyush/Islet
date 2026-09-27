@@ -180,6 +180,7 @@ final class DownloadsFeature: Feature {
             id: Self.bannerID,
             style: .card(width: DownloadedCardLayout.width, height: DownloadedCardLayout.height),
             duration: Self.bannerDuration,
+            personal: .files,
             content: AnyView(DownloadedCard(
                 file: file,
                 hover: { [weak self] in self?.holdBanner($0) },
@@ -244,6 +245,8 @@ final class DownloadsActivity: IslandActivity {
 
     let id = "downloads"
     let symbol = "arrow.down.circle.fill"
+    /// Its page names the files coming in.
+    var personal: PersonalContent? { .files }
     let model: DownloadsModel
 
     init(model: DownloadsModel) { self.model = model }

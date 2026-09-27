@@ -50,5 +50,14 @@ struct IsletShortcuts: AppShortcutsProvider {
             shortTitle: "Join Meeting",
             systemImageName: "video.fill"
         )
+        AppShortcut(
+            intent: PresentationModeIntent(),
+            phrases: [
+                "Turn presentation mode on or off in \(.applicationName)",
+                "Toggle presentation mode in \(.applicationName)",
+            ],
+            shortTitle: "Presentation Mode",
+            systemImageName: "eye.slash.fill"
+        )
     }
 }

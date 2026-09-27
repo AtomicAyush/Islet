@@ -14,6 +14,7 @@ extension CustomBanner {
                 ),
                 duration: duration,
                 interruption: interruption,
+                personal: .messages,
                 leading: AnyView(CustomBannerLeading(banner: self)),
                 trailing: AnyView(CustomBannerTrailing(banner: self))
             )
@@ -23,6 +24,7 @@ extension CustomBanner {
                 style: .card(width: CustomBannerLayout.cardWidth, height: CustomBannerLayout.cardHeight(for: self)),
                 duration: duration,
                 interruption: interruption,
+                personal: .messages,
                 content: AnyView(CustomBannerCard(banner: self))
             )
         }

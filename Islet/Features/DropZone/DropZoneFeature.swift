@@ -109,7 +109,7 @@ final class DropZoneFeature: Feature {
         widgetShown = wanted
         if wanted {
             ActivityCenter.shared.setHomeWidget(HomeWidget(
-                id: id, order: Self.tileOrder, weight: 1.5, view: AnyView(ShelfHomeTile(model: model))
+                id: id, order: Self.tileOrder, weight: 1.5, personal: .files, view: AnyView(ShelfHomeTile(model: model))
             ))
         } else {
             ActivityCenter.shared.removeHomeWidget(id: id)

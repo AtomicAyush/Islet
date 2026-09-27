@@ -285,7 +285,7 @@ final class NowPlayingFeature: Feature {
         if isActive, model.hasSession {
             if !homeWidgetShown {
                 center.setHomeWidget(HomeWidget(
-                    id: id, order: Self.tileOrder, weight: 2, view: AnyView(NowPlayingHomeTile(model: model))
+                    id: id, order: Self.tileOrder, weight: 2, personal: .music, view: AnyView(NowPlayingHomeTile(model: model))
                 ))
                 homeWidgetShown = true
             }
@@ -394,6 +394,7 @@ final class NowPlayingFeature: Feature {
                 id: Self.karaokeID,
                 height: NowPlayingKaraokeLayout.rowHeight,
                 width: NowPlayingKaraokeLayout.rowWidth,
+                personal: .music,
                 content: AnyView(NowPlayingKaraokeRow(lyrics: lyrics))
             ), under: activity.id)
         } else if !wanted, shown {
@@ -486,6 +487,7 @@ final class NowPlayingFeature: Feature {
             duration: 2.5,
             haptic: false,
             interruption: model.isPreviewing ? .active : .passive,
+            personal: .music,
             activityID: activity.id,
             leading: AnyView(NowPlayingSongBannerLeading(model: model)),
             trailing: AnyView(NowPlayingSongBannerTrailing(model: model))
@@ -668,6 +670,8 @@ final class NowPlayingActivity: IslandActivity {
     }
 
     var symbol: String { model.isVideo ? "play.rectangle.fill" : "music.note" }
+    /// Its page shows the song, as its tile and banner do.
+    var personal: PersonalContent? { .music }
     var appBundleIdentifier: String? { model.track?.bundleID }
 
     var expandedHeight: CGFloat {

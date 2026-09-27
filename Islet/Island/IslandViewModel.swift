@@ -163,7 +163,10 @@ final class IslandViewModel {
             if focus == Self.dropFocus, center.dropTarget != nil { return focus }
             if center.activity(id: focus) != nil || center.pages[focus] != nil { return focus }
         }
-        return center.primary?.id ?? Self.homeFocus
+        // Opened on nothing in particular, it starts on the activity in front, unless
+        // Presentation Mode holds back what that activity's page shows.
+        guard let primary = center.primary, !center.holdsBack(primary.personal) else { return Self.homeFocus }
+        return primary.id
     }
 
     /// Identity for the content layer, so a change of what is shown cross-fades
@@ -227,7 +230,7 @@ final class IslandViewModel {
             if let attachment = center.attachment { return attachment }
             // In compact mode, a banner on screen is one riding under the activity.
             if let row = center.banner?.row { return row }
-            guard let standing = center.standingAttachment, standing.activityID == id else { return nil }
+            guard let standing = center.shownStandingAttachment, standing.activityID == id else { return nil }
             return standing.attachment
         case .banner:
             guard let attachment = center.attachment, case .compact? = center.banner?.style else { return nil }
@@ -1010,7 +1013,7 @@ struct IslandLayout: Equatable {
                 func bubbleEnd(row: IslandAttachment?) -> CGFloat {
                     notch.width / 2 + max(leading, trailing, wing(for: row)) + ear + bubbleGap + layout.bubbleDiameter
                 }
-                let standing = center.standingAttachment.flatMap { $0.activityID == id ? $0.attachment : nil }
+                let standing = center.shownStandingAttachment.flatMap { $0.activityID == id ? $0.attachment : nil }
                 let passing = model.rowIsPassing
                 if bubbleEnd(row: passing ? standing : attachment) > model.menuBarRoomRight - 2 {
                     layout.foldedWidth = foldedInset + foldedDiameter + foldedSpacing

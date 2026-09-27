@@ -151,7 +151,7 @@ final class CalendarFeature: Feature {
             isWidgetShown = wantsWidget
             if wantsWidget {
                 center.setHomeWidget(HomeWidget(
-                    id: id, order: Self.tileOrder, weight: 1.5, view: AnyView(CalendarHomeTile(model: model))
+                    id: id, order: Self.tileOrder, weight: 1.5, personal: .schedule, view: AnyView(CalendarHomeTile(model: model))
                 ))
             } else {
                 center.removeHomeWidget(id: id)
@@ -176,6 +176,8 @@ final class CalendarFeature: Feature {
 final class CalendarActivity: IslandActivity {
     let id = "calendar"
     let symbol = "calendar"
+    /// Its page lists the events by title.
+    var personal: PersonalContent? { .schedule }
     let model: CalendarModel
 
     init(model: CalendarModel) { self.model = model }

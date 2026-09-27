@@ -147,7 +147,7 @@ final class FocusFeature: Feature {
         isTileShown = wantsTile
         if wantsTile {
             center.setHomeWidget(HomeWidget(
-                id: id, order: Self.tileOrder, view: AnyView(FocusHomeTile(model: model, toggle: toggle) { [weak self] in
+                id: id, order: Self.tileOrder, personal: .schedule, view: AnyView(FocusHomeTile(model: model, toggle: toggle) { [weak self] in
                     self?.tileClicked()
                 })
             ))
@@ -162,6 +162,7 @@ final class FocusFeature: Feature {
             id: id ?? Self.bannerID,
             style: .compact(leading: widths.leading, trailing: widths.trailing),
             duration: Self.bannerDuration,
+            personal: .schedule,
             leading: AnyView(FocusBannerLeading(announcement: announcement)),
             trailing: AnyView(FocusBannerTrailing(announcement: announcement))
         ))
