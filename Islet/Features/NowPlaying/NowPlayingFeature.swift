@@ -268,8 +268,12 @@ final class NowPlayingFeature: Feature {
         let isPreviewing = model.isPreviewing
         let isActive = isRunning || isPreviewing
         syncLibrary(isActive: isActive)
+        // The lyrics follow the song before the page is published, so its Lyrics button
+        // (and with it the page's height) is the new song's from the first publish,
+        // not the last song's for a moment.
+        followLyrics()
         // Once the activity is up or down, for the karaoke row to go with it.
-        defer { syncLyrics() }
+        defer { lyricsChanged() }
         // Only a real session's app is listened to: a preview's bars are canned.
         let listened = isRunning && !isPreviewing && model.isLive ? model.track?.bundleID : nil
         NowPlayingLevels.shared.show(listened, playing: model.isPlaying)
@@ -342,12 +346,12 @@ final class NowPlayingFeature: Feature {
         model.isPreviewing ? lyrics.isPreviewing : isRunning && model.isLive
     }
 
-    private func syncLyrics() {
+    private func followLyrics() {
         lyrics.follow(
             track: lyricsFollowSong ? model.track : nil, isVideo: lyricsTakesForVideo, timing: model.timing,
             isPlaying: model.isPlaying
         )
-        lyricsChanged()
+        library.offersLyrics = offersLyrics
     }
 
     /// Video, or perhaps video (see `LyricsQuery.takesForVideo`).
@@ -355,12 +359,18 @@ final class NowPlayingFeature: Feature {
         LyricsQuery.takesForVideo(isVideo: model.isVideo, bundleID: model.track?.bundleID, hasArtwork: model.artwork != nil)
     }
 
-    /// The Lyrics button, who is looking at the lyrics, and the karaoke row, to match
-    /// the lyrics. Every song has the button, the way in to turning lyrics on; a video
-    /// only once lyrics have been found for it; a podcast or an audiobook never.
-    private func lyricsChanged() {
-        library.offersLyrics = lyricsFollowSong && model.hasSession && !LyricsQuery.isSpokenWord(model.track?.bundleID)
+    /// Whether the player shows the Lyrics button. Every song has it, the way in to
+    /// turning lyrics on; a video only once lyrics have been found for it; a podcast or
+    /// an audiobook never.
+    private var offersLyrics: Bool {
+        lyricsFollowSong && model.hasSession && !LyricsQuery.isSpokenWord(model.track?.bundleID)
             && (!lyricsTakesForVideo || lyrics.status.hasLyrics)
+    }
+
+    /// The Lyrics button, who is looking at the lyrics, and the karaoke row, to match
+    /// the lyrics.
+    private func lyricsChanged() {
+        library.offersLyrics = offersLyrics
         let isUp = ActivityCenter.shared.isShowing(id: activity.id)
         lyrics.watch(panel: library.panel == .lyrics, island: isUp && lyrics.showsInIsland)
         syncKaraoke()
