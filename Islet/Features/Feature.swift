@@ -61,6 +61,7 @@ final class FeatureRegistry {
         BluetoothFeature(),
         InputDevicesFeature(),
         CalendarFeature(),
+        WeatherFeature(),
         PrivacyFeature(),
         MicMuteFeature(),
         FocusFeature(),

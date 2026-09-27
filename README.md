@@ -117,6 +117,20 @@ its own USB receiver (Logitech's Unifying or Bolt) tells only its maker's app.
 **Calendar.** Your next event counts down beside the notch from ten minutes before it
 starts, with a Join button when there is a Zoom, Meet, Teams, Webex or FaceTime link.
 
+**Weather.** The temperature on the home page beside a symbol for the sky, with the day's high
+and low and, when rain is on the way, when it should start: "Rain in about 20 min", "Rain
+around 3 PM". When rain is due within half an hour and it is dry now, a word beside the notch
+says so, "Rain in about 10 min", once for each spell of rain; over music or a timer it rides in
+a row underneath, and a Focus that asks for quiet drops it. Forecasts come from
+[Open-Meteo](https://open-meteo.com), free and with no account, every fifteen minutes while the
+Mac is awake, and the last one stays up, with its age, while it can't be reached. Nothing is
+sent until you search for a place in Settings or turn on this Mac's own location, which macOS
+asks you about the first time, and which is found roughly and at most once an hour. A search
+sends the words you type, with the Mac's language; a forecast sends only the place's
+coordinates, rounded to about a kilometre. Islet's own look-ups are left out of its location
+arrow. Temperatures follow the Mac's Language & Region settings (Fahrenheit in the US) unless
+you pick a scale.
+
 **Camera, Microphone & more.** A green dot beside the notch while the camera is in use, an
 orange one while only a microphone is — as on the iPhone — and a purple one while an app
 records the screen or what the Mac plays. Turn on Location in Settings for an arrow while an
@@ -329,8 +343,8 @@ Requires macOS 14 or later and Xcode 16 or later.
 
 builds a Release copy, signs it with your Apple Development certificate if you have one, and
 installs it to `/Applications`. A stable signature matters: macOS remembers Accessibility,
-Calendar and Full Disk Access permission against the signature, and an ad-hoc one changes with
-every build.
+Calendar, Location and Full Disk Access permission against the signature, and an ad-hoc one
+changes with every build.
 
 ## Scripting
 
@@ -349,6 +363,7 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |
 | `islet://micMute/toggle`, `/mute`, `/unmute` | Mutes or unmutes the microphone for every app |
+| `islet://weather/refresh` | Fetches the forecast now |
 | `islet://shortcuts/run?name=Morning%20Lights` | Runs a shortcut (`id=` takes the identifier `shortcuts list --show-identifiers` prints) |
 | `islet://banner?title=Build%20finished` | Puts up a banner of your own (below) |
 | `islet://banner/dismiss` | Takes it down |
@@ -478,6 +493,9 @@ Now Playing reads the system's media session through
 (BSD 3-Clause), vendored as source and compiled during the build. Since macOS 15.4
 MediaRemote only answers Apple's own processes; the adapter runs under `/usr/bin/perl`,
 which qualifies.
+
+Weather data by [Open-Meteo.com](https://open-meteo.com) (CC BY 4.0), with place names from
+its geocoding API, which draws on GeoNames.
 
 The idea of putting an island in the notch, and a good deal of what not to do, comes from
 [boring.notch](https://github.com/TheBoredTeam/boring.notch). Islet is its own code.

@@ -21,5 +21,9 @@
 	<string>Islet shows a screenshot you have just taken, when the Screenshot app saves to a folder in Documents.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Islet shows your downloads as they arrive, and the file once one has finished.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Islet shows the weather where this Mac is, when you turn on “Use this Mac’s location” in its Weather settings.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Islet shows the weather where this Mac is, when you turn on “Use this Mac’s location” in its Weather settings.</string>
 </dict>
 </plist>

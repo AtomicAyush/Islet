@@ -190,13 +190,19 @@ enum PrivacyPrefs {
     static let ignoredLocationApps = "privacy.ignoredLocationApps"
     static let defaultIgnoredLocationApps = ["com.apple.weather", "com.apple.findmy"]
 
+    /// Islet itself, which is never marked, whatever the list says: its own look-ups
+    /// are the Weather feature's, which the person turned on to have them.
+    static let ownBundleIdentifier = Bundle.main.bundleIdentifier ?? "com.ayush.Islet"
+
     static var ignoredLocationAppIDs: [String] {
         UserDefaults.standard.stringArray(forKey: ignoredLocationApps) ?? defaultIgnoredLocationApps
     }
 
     static func isIgnoredForLocation(_ bundleIdentifier: String?) -> Bool {
         guard let bundleIdentifier else { return false }
-        return ignoredLocationAppIDs.contains { bundleIdentifier == $0 || bundleIdentifier.hasPrefix($0 + ".") }
+        return ([ownBundleIdentifier] + ignoredLocationAppIDs).contains {
+            bundleIdentifier == $0 || bundleIdentifier.hasPrefix($0 + ".")
+        }
     }
 
     static func bool(_ key: String, default value: Bool) -> Bool {

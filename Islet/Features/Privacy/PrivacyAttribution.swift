@@ -857,10 +857,17 @@ final class PrivacyNameTracker: @unchecked Sendable {
         return names
     }
 
-    /// An app as Control Center names it, by bundle identifier, looked up once.
+    /// An app as Control Center names it, by bundle identifier, looked up once. Islet is
+    /// itself wherever it runs from, whether or not Launch Services would find it, so its
+    /// own look-ups of the Mac's location are always named, and so left out
+    /// (`PrivacyPrefs.isIgnoredForLocation`), rather than counted as a use by nobody
+    /// that can be named.
     private func app(bundleIdentifier: String) -> PrivacyApp? {
         if let app = bundles[bundleIdentifier] { return app }
-        guard let app = PrivacyAppResolver.app(bundleIdentifier: bundleIdentifier) else { return nil }
+        let found = bundleIdentifier == Bundle.main.bundleIdentifier
+            ? PrivacyApp(bundlePath: Bundle.main.bundlePath)
+            : PrivacyAppResolver.app(bundleIdentifier: bundleIdentifier)
+        guard let app = found else { return nil }
         bundles[bundleIdentifier] = app
         return app
     }
