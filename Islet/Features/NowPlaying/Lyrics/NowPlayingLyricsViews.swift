@@ -476,23 +476,46 @@ struct NowPlayingKaraokeRow: View {
     }
 }
 
-/// How a long line crosses the island's row: still for `hold` so its first words
-/// can be read, then across at `speed`, or faster where that would not finish before
-/// the next line is due.
+/// How a long line crosses the island's row: with the singing, a little ahead of it.
+///
+/// Lyrics are timed by the line, not the word, so where the singer is gets estimated:
+/// through the line at an even pace, over the time it takes to sing, which is its
+/// width at `pace` or, where the next line comes sooner, `share` of the time until
+/// then. (The time a line stays up is no measure of it, as that runs on through any
+/// pause before the next.) The row keeps that point `lead` of the way in, so the rest
+/// of the row shows what is coming, and it has reached the line's end, last word
+/// whole, before that word is due.
 enum KaraokeScroll {
-    static let hold: TimeInterval = 0.8
-    /// Points a second: slow enough to read as it goes.
-    static let speed: Double = 28
+    /// Points of the row's text a second: a brisk singing pace, about thirteen letters
+    /// a second. Where a line is sung slower the row is early, which reads better
+    /// than late.
+    static let pace: Double = 90
+    /// How much of the time until the next line its words take, at most.
+    static let share: Double = 0.9
+    /// How far into the row the words being sung are kept, as a share of its width.
+    static let lead: Double = 0.4
+    /// The shortest crossing, so a line only a little too wide eases over rather
+    /// than jumps.
+    static let minimumTravel: TimeInterval = 0.5
 
-    /// The scroll for a line `overflow` points wider than the row, sung for `duration`
-    /// seconds (0 when not known), drawn `elapsed` seconds after it started: how far
-    /// across it already is (0 to 1), and how long is left of the hold and of the
-    /// crossing. A line drawn afresh partway through takes up where it had got to.
-    static func plan(overflow: CGFloat, duration: TimeInterval, elapsed: TimeInterval)
+    /// The scroll for a line `width` points wide in a row `box` points wide, up for
+    /// `duration` seconds (0 when not known), drawn `elapsed` seconds after it
+    /// started: how far across it already is (0 to 1), and how long is left of the
+    /// wait before it moves and of the crossing. A line drawn afresh partway through
+    /// takes up where it had got to.
+    static func plan(width: CGFloat, box: CGFloat, duration: TimeInterval, elapsed: TimeInterval)
         -> (from: CGFloat, hold: TimeInterval, travel: TimeInterval) {
-        let full = max(0, Double(overflow)) / speed
-        let budget = duration > 0 ? max(1, duration * 0.85 - hold) : full
-        let travel = min(full, budget)
+        let width = Double(width), box = Double(box)
+        let overflow = width - box
+        guard box > 0, overflow > 0 else { return (1, 0, 0) }
+        var sung = width / pace
+        if duration > 0 { sung = min(sung, duration * share) }
+        let speed = width / max(sung, 0.1)
+        // At the end once the words being sung are `lead` into the row with none
+        // beyond it: well before the last word, whatever its length.
+        let arrival = (overflow + lead * box) / speed
+        let travel = min(arrival, max(overflow / speed, minimumTravel))
+        let hold = arrival - travel
         let elapsed = max(0, elapsed)
         guard elapsed > hold else { return (0, hold - elapsed, travel) }
         guard travel > 0 else { return (1, 0, 0) }
@@ -503,8 +526,8 @@ enum KaraokeScroll {
 
 /// A line in the island: whole where it fits, a touch smaller where that is enough,
 /// and otherwise scrolled across once (see `KaraokeScroll`), from its first word to
-/// its last, which for Hebrew or Arabic is from right to left. With Reduce Motion it
-/// is cut short instead.
+/// its last, which for Hebrew or Arabic is from right to left. Only with Reduce Motion
+/// is it ever cut short.
 private struct KaraokeLine: View {
     let text: String
     /// Seconds the line is sung for; 0 when not known.
@@ -528,54 +551,84 @@ private struct KaraokeLine: View {
     /// How long an edge takes to soften or sharpen.
     static let edgeTime: TimeInterval = 0.2
 
+    /// How the line is set in the row.
+    private enum Fit: Equatable {
+        case whole
+        /// Drawn at this scale, whole: a transform rather than a smaller font, which
+        /// the system spaces more loosely, so it is exactly as narrow as reckoned.
+        case shrunk(CGFloat)
+        case scrolled
+        /// With Reduce Motion, a line too long to shrink.
+        case cut
+    }
+
+    private var fit: Fit {
+        // Whole until both are known; a moment's overhang is clipped by the row.
+        guard boxWidth > 0, textWidth > boxWidth + 0.5 else { return .whole }
+        let scale = boxWidth / textWidth
+        if scale >= Self.smallest { return .shrunk(scale) }
+        return reduceMotion ? .cut : .scrolled
+    }
+
     var body: some View {
+        let fit = fit
         let overflow = textWidth - boxWidth
-        let scrolls = boxWidth > 0 && textWidth * Self.smallest > boxWidth && !reduceMotion
         // Left to right, the line starts with its left end showing and moves left;
         // right to left, the other way about.
         let direction: CGFloat = isRightToLeft ? -1 : 1
-        ZStack {
-            if scrolls {
-                Text(text)
-                    .font(NowPlayingKaraokeLayout.font)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .offset(x: direction * (overflow / 2 - progress * overflow))
-                    .frame(width: boxWidth)
-                    .mask(edges)
-            } else {
-                Text(text)
-                    .font(NowPlayingKaraokeLayout.font)
-                    .lineLimit(1)
-                    .minimumScaleFactor(Self.smallest)
-                    .truncationMode(.tail)
+        // The row's width is measured from a stand-in that takes all it is offered,
+        // not from the words, which are laid out at their full width and would widen
+        // whatever held them.
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boxWidth = $0 }
+            .overlay {
+                switch fit {
+                case .whole:
+                    line
+                case .shrunk(let scale):
+                    line.scaleEffect(scale)
+                case .scrolled:
+                    line
+                        .offset(x: direction * (overflow / 2 - progress * overflow))
+                        .frame(width: boxWidth)
+                        .mask(edges)
+                case .cut:
+                    Text(text)
+                        .font(NowPlayingKaraokeLayout.font)
+                        .lineLimit(1)
+                        .minimumScaleFactor(Self.smallest)
+                        .truncationMode(.tail)
+                }
             }
-        }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { boxWidth = $0 }
-        .background {
-            Text(text)
-                .font(NowPlayingKaraokeLayout.font)
-                .lineLimit(1)
-                .fixedSize()
-                .hidden()
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { textWidth = $0 }
-        }
-        .task(id: scrolls) {
-            guard scrolls else { return }
-            await scroll(overflow: overflow)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
+            .foregroundStyle(.white)
+            .background {
+                line
+                    .hidden()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { textWidth = $0 }
+            }
+            .task(id: fit == .scrolled) {
+                guard fit == .scrolled else { return }
+                await scroll()
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text)
+    }
+
+    /// The words on one line at their full width, whatever the room.
+    private var line: some View {
+        Text(text)
+            .font(NowPlayingKaraokeLayout.font)
+            .lineLimit(1)
+            .fixedSize()
     }
 
     /// Sets the line where it should be by now, then sends it the rest of the way.
     /// The edges soften and sharpen on their own, briefly, as the scroll sets off and
     /// arrives, rather than over the whole of it.
-    private func scroll(overflow: CGFloat) async {
+    private func scroll() async {
         let elapsed = started.map { Date().timeIntervalSince($0) } ?? 0
-        let plan = KaraokeScroll.plan(overflow: overflow, duration: duration, elapsed: elapsed)
+        let plan = KaraokeScroll.plan(width: textWidth, box: boxWidth, duration: duration, elapsed: elapsed)
         var still = Transaction()
         still.disablesAnimations = true
         withTransaction(still) {
