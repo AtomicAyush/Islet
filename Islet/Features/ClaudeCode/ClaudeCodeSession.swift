@@ -30,6 +30,44 @@ struct ClaudeWorkflow: Equatable, Identifiable, Sendable {
     var isRunning: Bool { status == "running" }
 }
 
+/// Anything else a session has running in the background, as Claude Code lists it with
+/// its Stop and SubagentStop hooks: an agent sent off to work on its own, a command left
+/// running, a monitor. The hook keeps workflows apart, in `ClaudeWorkflow`, as it always
+/// has.
+struct ClaudeBackgroundTask: Equatable, Identifiable, Sendable {
+    enum Kind: Equatable, Sendable {
+        /// An agent sent off in the background: the task's id is the agent's.
+        case agent
+        /// A shell command left running.
+        case shell
+        /// Anything else, by Claude Code's word for it: "monitor", "MCP task".
+        case other(String)
+
+        init(_ label: String) {
+            switch label {
+            case "subagent": self = .agent
+            case "shell": self = .shell
+            default: self = .other(label)
+            }
+        }
+    }
+
+    var id: String
+    var kind: Kind
+    /// What it was started to do; `""` when Claude Code gave only the command itself,
+    /// which the hook does not keep.
+    var summary: String
+    var status: String
+    /// When the hook first saw it listed.
+    var firstSeen: Date
+    /// For a command with nothing said of it but itself, the program it runs, which the
+    /// hook keeps in place of the command: "npm", "xcodebuild".
+    var program = ""
+
+    /// Claude Code lists only what is in flight: running, or about to be.
+    var isRunning: Bool { status == "running" || status == "pending" }
+}
+
 /// One session's file, as `Scripts/claude-code-hook.sh` writes it. Its header lists the
 /// fields. Anything missing reads as empty, so a file from a later version of the hook
 /// with more in it, or less, still reads.
@@ -57,10 +95,18 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
     /// The start of the last reply, while idle.
     var reply: String = ""
     var workflows: [ClaudeWorkflow] = []
+    /// Its other background tasks, as the latest event listed them.
+    var tasks: [ClaudeBackgroundTask] = []
 
     /// When the turn on show began: the prompt's time, or failing that the state's.
     var turnStart: Date { turnStarted ?? since }
     var runningWorkflows: [ClaudeWorkflow] { workflows.filter(\.isRunning) }
+    var runningAgents: [ClaudeBackgroundTask] { tasks.filter { $0.isRunning && $0.kind == .agent } }
+    /// Commands, monitors and the like: shown under a session shown anyway, but not
+    /// enough to show it, since a server left running can run for days.
+    var runningOthers: [ClaudeBackgroundTask] { tasks.filter { $0.isRunning && $0.kind != .agent } }
+    /// Workflows or agents at work in the background: enough to show the session.
+    var hasBackgroundWork: Bool { !runningWorkflows.isEmpty || !runningAgents.isEmpty }
     /// Claude's scratch folders have no project; they are named by their prompt.
     var isScratch: Bool { project.isEmpty }
 }
@@ -68,7 +114,7 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
 extension ClaudeSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
         case sessionId, project, cwd, transcriptPath, hostApp, pid, pidStarted, state, since, turnStarted, updated
-        case prompt, reply, workflows
+        case prompt, reply, workflows, tasks
     }
 
     init(from decoder: Decoder) throws {
@@ -97,6 +143,25 @@ extension ClaudeSessionRecord: Decodable {
         reply = (try? c.decodeIfPresent(String.self, forKey: .reply)) ?? ""
         workflows = ((try? c.decodeIfPresent([Lenient<ClaudeWorkflow>].self, forKey: .workflows)) ?? [])
             .compactMap(\.value)
+        tasks = ((try? c.decodeIfPresent([Lenient<ClaudeBackgroundTask>].self, forKey: .tasks)) ?? [])
+            .compactMap(\.value)
+    }
+}
+
+extension ClaudeBackgroundTask: Decodable {
+    private enum Keys: String, CodingKey {
+        case id, type, description, status, firstSeen, program
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = Kind((try? c.decodeIfPresent(String.self, forKey: .type)) ?? "")
+        summary = (try? c.decodeIfPresent(String.self, forKey: .description)) ?? ""
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? ""
+        firstSeen = ((try? c.decodeIfPresent(Double.self, forKey: .firstSeen)).flatMap { $0 })
+            .map(Date.init(timeIntervalSince1970:)) ?? .distantPast
+        program = (try? c.decodeIfPresent(String.self, forKey: .program)) ?? ""
     }
 }
 
@@ -146,7 +211,8 @@ struct ClaudeTranscriptProbe: Equatable, Sendable {
     /// turn has moved past them.
     var pendingTools: [String] = []
     /// When one of the session's agents last wrote to its transcript. Its background
-    /// workflows' agents are left out: they run beside the turn, not in it.
+    /// workflows' agents, and the agents it has sent off in the background, are left out:
+    /// they run beside the turn, not in it.
     var agentsModified: Date?
 
     /// Claude is waiting on a tool.
@@ -264,9 +330,10 @@ enum ClaudeTranscript {
 
     /// When the session's agents last wrote: their transcripts are the `agent-*.jsonl`
     /// files in a `subagents` folder named after the session's own transcript, beside it.
-    /// Background workflows' agents are further in, and not looked at. Called off the
-    /// main thread.
-    static func agentsModified(transcriptPath: String) -> Date? {
+    /// Background workflows' agents are further in, and not looked at; nor are those of
+    /// the agents the hook lists as sent off in the background, by their ids, `background`.
+    /// Called off the main thread.
+    static func agentsModified(transcriptPath: String, background: Set<String> = []) -> Date? {
         guard transcriptPath.hasSuffix(".jsonl") else { return nil }
         let folder = URL(fileURLWithPath: String(transcriptPath.dropLast(".jsonl".count)), isDirectory: true)
             .appendingPathComponent("subagents", isDirectory: true)
@@ -274,7 +341,11 @@ enum ClaudeTranscript {
             at: folder, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]
         ) else { return nil }
         return files.lazy
-            .filter { $0.lastPathComponent.hasPrefix("agent-") && $0.pathExtension == "jsonl" }
+            .filter { file in
+                let name = file.lastPathComponent
+                guard name.hasPrefix("agent-"), file.pathExtension == "jsonl" else { return false }
+                return background.isEmpty || !background.contains(String(name.dropFirst(6).dropLast(6)))
+            }
             .prefix(agentFileLimit)
             .compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
             .max()
@@ -353,8 +424,28 @@ enum ClaudeProcess {
 struct ClaudeSession: Equatable, Identifiable, Sendable {
     var record: ClaudeSessionRecord
     var state: ClaudeSessionState
+    /// How far its running workflows and background agents have got, by task id, where
+    /// their files say (`ClaudeTaskProgressReader`).
+    var progress: [String: ClaudeTaskProgress] = [:]
     var id: String { record.id }
     var runningWorkflows: [ClaudeWorkflow] { record.runningWorkflows }
+    var runningAgents: [ClaudeBackgroundTask] { record.runningAgents }
+    var runningOthers: [ClaudeBackgroundTask] { record.runningOthers }
+
+    func progress(of workflow: ClaudeWorkflow) -> ClaudeWorkflowProgress? { progress[workflow.id]?.workflow }
+    func progress(of task: ClaudeBackgroundTask) -> ClaudeAgentProgress? { progress[task.id]?.agent }
+
+    /// Whether the running workflow or agent `id` is still at work: the hook lists it as
+    /// running, and its files do not say it has since ended or finished.
+    func isAtWork(_ id: String) -> Bool { progress[id]?.isAtWork ?? true }
+    /// The running workflows and background agents still at work, which the compact
+    /// island counts and which keep a session done with its reply shown.
+    var workflowsAtWork: [ClaudeWorkflow] { runningWorkflows.filter { isAtWork($0.id) } }
+    var agentsAtWork: [ClaudeBackgroundTask] { runningAgents.filter { isAtWork($0.id) } }
+    var hasWorkAtWork: Bool { !workflowsAtWork.isEmpty || !agentsAtWork.isEmpty }
+    /// Whether any of its background work at work is followed in its files, and so worth
+    /// reading again every few seconds.
+    var isFollowed: Bool { progress.values.contains(where: \.isAtWork) }
 }
 
 /// Which sessions are live, from their files, their transcripts and their processes.
@@ -409,19 +500,21 @@ enum ClaudeLiveness {
 
     /// The sessions to show, in the order they are shown: those waiting for permission
     /// first, then those waiting for an answer, the longest waiting first; then those
-    /// working, the longest going first; then those with only workflows running, the
-    /// oldest first. The first is the one the compact island speaks for, so any session
-    /// waiting for permission puts up the hand. A session whose Claude Code has gone is
-    /// not shown, workflows and all.
+    /// working, the longest going first; then those with only workflows or background
+    /// agents at work, the oldest first: running, as the hook says, and not ended as their
+    /// files say since. The first is the one the compact island speaks for, so any session
+    /// waiting for permission puts up the hand. A session whose Claude Code has gone is not
+    /// shown, workflows and all.
     static func sessions(
         _ records: [ClaudeSessionRecord], transcripts: [String: ClaudeTranscriptProbe],
-        processes: [String: Bool] = [:], now: Date
+        processes: [String: Bool] = [:], progress: [String: [String: ClaudeTaskProgress]] = [:], now: Date
     ) -> [ClaudeSession] {
         let shown = records.compactMap { record -> ClaudeSession? in
             guard !isForgotten(record, now: now), processes[record.id] != false else { return nil }
             let state = state(of: record, transcript: transcripts[record.id], process: processes[record.id], now: now)
-            guard state != .idle || !record.runningWorkflows.isEmpty else { return nil }
-            return ClaudeSession(record: record, state: state)
+            let session = ClaudeSession(record: record, state: state, progress: progress[record.id] ?? [:])
+            guard state != .idle || session.hasWorkAtWork else { return nil }
+            return session
         }
         return shown.sorted { a, b in
             let (ra, rb) = (rank(a.state), rank(b.state))
@@ -433,7 +526,8 @@ enum ClaudeLiveness {
     }
 
     static func sessions(_ snapshot: ClaudeSessionSnapshot, now: Date) -> [ClaudeSession] {
-        sessions(snapshot.records, transcripts: snapshot.transcripts, processes: snapshot.processes, now: now)
+        sessions(snapshot.records, transcripts: snapshot.transcripts, processes: snapshot.processes,
+                 progress: snapshot.progress, now: now)
     }
 
     private static func rank(_ state: ClaudeSessionState) -> Int {
@@ -449,7 +543,9 @@ enum ClaudeLiveness {
         switch session.state {
         case .needsPermission, .waitingForInput: session.record.since
         case .working: session.record.turnStart
-        case .idle: session.runningWorkflows.map(\.firstSeen).min() ?? session.record.since
+        case .idle:
+            (session.workflowsAtWork.map(\.firstSeen) + session.agentsAtWork.map(\.firstSeen)).min()
+                ?? session.record.since
         }
     }
 
@@ -457,21 +553,26 @@ enum ClaudeLiveness {
     /// changes (a new prompt, or anything else from the hook).
     enum Watch: Equatable {
         /// Every few seconds: a session shown is working or waiting on the person, so a
-        /// turn that goes quiet is seen to end, and one given its permission to go on.
+        /// turn that goes quiet is seen to end, and one given its permission to go on;
+        /// or its workflows or agents are at work, and how far they have got is followed
+        /// in their files.
         case closely
-        /// Every minute: only workflows show, and a session that ended without saying
-        /// so is let go once a day old; or a session's file says it is under way while
-        /// it is not shown, having gone quiet, and it comes back if it carries on.
+        /// Every minute: only workflows or agents show whose files say nothing, and a
+        /// session that ended without saying so is let go once a day old; or a session's
+        /// file says it is under way, or has background work running, while it is not
+        /// shown, having gone quiet or its work having ended as its files say, and it
+        /// comes back if it carries on.
         case loosely
     }
 
     /// How `snapshot` needs watching; `nil` when not at all.
     static func watch(_ snapshot: ClaudeSessionSnapshot, now: Date) -> Watch? {
         let shown = sessions(snapshot, now: now)
-        if shown.contains(where: { $0.state != .idle }) { return .closely }
+        if shown.contains(where: { $0.state != .idle || $0.isFollowed }) { return .closely }
         if !shown.isEmpty { return .loosely }
         let hidden = snapshot.records.contains {
-            $0.state != .idle && !isForgotten($0, now: now) && snapshot.processes[$0.id] != false
+            ($0.state != .idle || $0.hasBackgroundWork) && !isForgotten($0, now: now)
+                && snapshot.processes[$0.id] != false
         }
         return hidden ? .loosely : nil
     }

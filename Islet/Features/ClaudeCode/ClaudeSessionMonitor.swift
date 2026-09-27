@@ -11,13 +11,25 @@ struct ClaudeSessionSnapshot: Equatable, Sendable {
     /// When any session's file was last written, idle ones and old ones included: when
     /// Islet last heard from the hook at all.
     var lastHeard: Date?
+    /// By session id, then task id, for sessions that could be shown with workflows or
+    /// agents at work: how far those have got, as their files say.
+    var progress: [String: [String: ClaudeTaskProgress]] = [:]
+}
+
+/// What the monitor's last read found, so what has not changed is not read again.
+struct ClaudeMonitorCache: Sendable {
+    /// The last look at each transcript, by path.
+    var transcripts: [String: (probe: ClaudeTranscriptProbe, size: Int64)] = [:]
+    /// Where each file behind the background tasks' progress was read to.
+    var progress = ClaudeProgressCache()
 }
 
 /// Follows the folder the hook writes a file per session into, reading it off the main
 /// thread whenever a file is written, moved in or deleted (`FolderWatcher`); and between
 /// times as `ClaudeLiveness.watch` asks, for what only the transcripts and the clock
-/// say: every few seconds while a session shown is working or waiting on the person,
-/// once a minute while only workflows show or a quiet session might yet carry on.
+/// say: every few seconds while a session shown is working or waiting on the person, or
+/// has workflows or agents at work whose progress is followed; once a minute while only
+/// workflows show that cannot be followed, or a quiet session might yet carry on.
 ///
 /// The folder is Islet's own, in Application Support, and is made if it is not there,
 /// so it can be watched before the hook has ever run. Nothing else is written: without
@@ -47,8 +59,9 @@ final class ClaudeSessionMonitor {
     private var poll: DispatchWorkItem?
     private(set) var isRunning = false
     private(set) var snapshot = ClaudeSessionSnapshot()
-    /// The last look at each transcript, by path, so an unchanged one is not read again.
-    private var transcriptCache: [String: (probe: ClaudeTranscriptProbe, size: Int64)] = [:]
+    /// The last look at each transcript, and at the files behind the background tasks'
+    /// progress, so an unchanged one is not read again.
+    private var cache = ClaudeMonitorCache()
     private var generation = 0
     private var isReading = false
     private var readAgain = false
@@ -101,7 +114,7 @@ final class ClaudeSessionMonitor {
         pollDelay = nil
         isReading = false
         readAgain = false
-        transcriptCache.removeAll()
+        cache = ClaudeMonitorCache()
         snapshot = ClaudeSessionSnapshot()
     }
 
@@ -117,14 +130,14 @@ final class ClaudeSessionMonitor {
         let generation = generation
         let directory = directory
         let date = now()
-        let cache = transcriptCache
+        let cache = cache
         DispatchQueue.global(qos: .utility).async {
             let (snapshot, cache) = Self.read(directory, now: date, cache: cache)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { [weak self] in
                     guard let self, self.isRunning, self.generation == generation else { return }
                     self.isReading = false
-                    self.transcriptCache = cache
+                    self.cache = cache
                     self.received(snapshot, at: date)
                     if self.readAgain {
                         self.readAgain = false
@@ -163,13 +176,14 @@ final class ClaudeSessionMonitor {
     }
 
     /// Every session file in `directory` that reads, less those a day old; a look at the
-    /// transcripts of those under way, and their agents'; and whether Claude Code is
-    /// still running for those that could be shown. Called off the main thread.
+    /// transcripts of those under way, and their agents'; whether Claude Code is still
+    /// running for those that could be shown; and how far the workflows and agents at
+    /// work in those have got. Called off the main thread.
     nonisolated static func read(
-        _ directory: URL, now: Date, cache: [String: (probe: ClaudeTranscriptProbe, size: Int64)]
-    ) -> (ClaudeSessionSnapshot, [String: (probe: ClaudeTranscriptProbe, size: Int64)]) {
+        _ directory: URL, now: Date, cache: ClaudeMonitorCache
+    ) -> (ClaudeSessionSnapshot, ClaudeMonitorCache) {
         var snapshot = ClaudeSessionSnapshot()
-        var nextCache: [String: (probe: ClaudeTranscriptProbe, size: Int64)] = [:]
+        var nextCache = ClaudeMonitorCache()
         let files = (try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]
         )) ?? []
@@ -182,15 +196,21 @@ final class ClaudeSessionMonitor {
                   !ClaudeLiveness.isForgotten(record, now: now)
             else { continue }
             snapshot.records.append(record)
-            guard record.state != .idle || !record.runningWorkflows.isEmpty else { continue }
+            guard record.state != .idle || record.hasBackgroundWork else { continue }
             if let running = ClaudeProcess.isRunning(record) { snapshot.processes[record.id] = running }
-            guard record.state != .idle, snapshot.processes[record.id] != false, !record.transcriptPath.isEmpty,
-                  let look = ClaudeTranscript.probe(path: record.transcriptPath, known: cache[record.transcriptPath])
+            guard snapshot.processes[record.id] != false else { continue }
+            if record.hasBackgroundWork {
+                let progress = ClaudeTaskProgressReader.read(record, cache: cache.progress, into: &nextCache.progress)
+                if !progress.isEmpty { snapshot.progress[record.id] = progress }
+            }
+            guard record.state != .idle, !record.transcriptPath.isEmpty,
+                  let look = ClaudeTranscript.probe(path: record.transcriptPath, known: cache.transcripts[record.transcriptPath])
             else { continue }
             var probe = look.probe
-            probe.agentsModified = ClaudeTranscript.agentsModified(transcriptPath: record.transcriptPath)
+            probe.agentsModified = ClaudeTranscript.agentsModified(
+                transcriptPath: record.transcriptPath, background: Set(record.runningAgents.map(\.id)))
             snapshot.transcripts[record.id] = probe
-            nextCache[record.transcriptPath] = look
+            nextCache.transcripts[record.transcriptPath] = look
         }
         snapshot.records.sort { $0.id < $1.id }
         return (snapshot, nextCache)

@@ -48,6 +48,16 @@
 #                   idle; "" otherwise
 #   workflows       the background workflows the latest event listed, with when each
 #                   was first seen: [{id, name, description, status, firstSeen}]
+#   tasks           the session's other background tasks the latest event listed, the
+#                   same way: [{id, type, description, status, firstSeen}], type being
+#                   Claude Code's word for each: subagent (an agent sent off in the
+#                   background, the id its agent's), shell (a command left running),
+#                   monitor, and so on. The command itself is never kept: where Claude
+#                   Code describes a task by its command alone, the description is ""
+#                   and a program field names the program it runs. A session started
+#                   afresh or resumed, not compacted, starts with none. Islet reads how
+#                   far the workflows and agents have got from the files Claude Code
+#                   keeps for them
 #
 # It has to be quick, and must never fail the hook: Claude Code waits for it before
 # sending a prompt, and adds anything it prints then to the prompt. So nothing is
@@ -240,13 +250,57 @@ program='
     | gsub("\\*\\*|__|`|^#+ *|\\[|\\]\\([^)]*\\)"; "") | gsub("  +"; " ")
     | sub("^ +"; "") | sub(" +$"; "") | clip($n);
   def text: if type == "string" then . else "" end;
+  # The program a command line mostly runs, as a plain word: past any `cd … &&`,
+  # variables set and wrappers like sudo or env; for an interpreter, its script. Words
+  # that are not plain names are passed over; "" if none is.
+  def program:
+    def setup: IN("cd", "export", "set", "unset", "source", ".", "true", "false", ":", "pushd", "popd", "local",
+                  "shopt", "trap", "umask", "ulimit", "echo", "printf", "sleep", "mkdir", "wait", "read", "declare",
+                  "alias");
+    def wrapper: IN("sudo", "env", "time", "nohup", "exec", "command", "caffeinate", "xcrun", "timeout", "nice",
+                    "if", "while", "until", "then", "else", "do", "!", "{", "(");
+    def keyword: IN("for", "case", "select", "done", "fi", "esac", "}", ")", "in");
+    def interpreter: IN("bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl", "swift", "osascript");
+    def lead($after):
+      if length == 0 then .
+      elif (.[0] | test("^[A-Za-z_][A-Za-z0-9_]*=")) then .[1:] | lead($after)
+      elif (.[0] | wrapper) then .[1:] | lead(true)
+      elif $after and (.[0] | test("^-|^[0-9.]+[sm]?$")) then .[1:] | lead($after)
+      else . end;
+    def base: sub("^.*/"; "");
+    [gsub("&&|\\|\\|"; "\n") | splits("[\n;|]")
+     | [splits("[[:space:]]+") | select(length > 0) | gsub("^[\"\u0027`]+|[\"\u0027`]+$"; "")
+        | sub("^[({!]+(?=.)"; "")]
+     | lead(false) | select(length > 0)
+     | (.[0] | gsub("^[\"\u0027`(){}]+|[\"\u0027`(){}]+$"; "")) as $word
+     | select($word != "" and ($word | keyword | not))
+     | ($word | base) as $name
+     | (if ($name | interpreter) then (.[1:] | map(select(startswith("-") | not)) | first // "") else "" end)
+     | if test("[./]") then (gsub("[\"\u0027]"; "") | base) else $name end
+     | select(test("^[A-Za-z0-9._+@:~-]+$"))] as $names
+    | (first($names[] | select(setup | not)) // $names[0] // "")
+    | if length > 40 then .[0:39] + "…" else . end;
   . as $in
   | now as $now
   | (if ($prev | type) == "object" then $prev else {} end) as $p
   | ($p.workflows // [] | if type == "array" then . else [] end) as $was
   | (try ($in | has("background_tasks")) catch false) as $listed
-  | (if $listed then [$in.background_tasks[]? | select(.type == "workflow") | {id, name, description, status}]
+  | (if $listed then [$in.background_tasks[]? | objects | select(.type == "workflow") | {id, name, description, status}]
      else null end) as $current
+  | ($p.tasks // [] | if type == "array" then map(objects) else [] end) as $wasTasks
+  | (if $listed then
+       [$in.background_tasks[]? | objects | select(.type != "workflow" and (.id | type) == "string")
+        | (.command // "" | text | gsub("^[[:space:]]+|[[:space:]]+$"; "")) as $command
+        | (.description // "" | text) as $description
+        | ($description | gsub("^[[:space:]]+|[[:space:]]+$"; "")) as $said
+        | ($command != "" and ($said == "" or $said == $command)) as $bare
+        | {id, type: (.type // "" | text), description: (if $bare then "" else $description | .[0:300] end),
+           status: (.status // "" | text)}
+          + (if $bare then {program: ($command | program)} else {} end)
+        | . as $t | ($wasTasks | map(select(.id == $t.id)) | first) as $o
+        | $t + {firstSeen: ($o.firstSeen // $now)}]
+     elif $kind == "start" and (try $in.source catch null) != "compact" then []
+     else $wasTasks end) as $tasks
   | (if $current == null then [] else
        [$was[] | select(.status == "running") | . as $w
         | ($current | map(select(.id == $w.id)) | first) as $n
@@ -296,7 +350,8 @@ program='
       reply: (if $state != "idle" then ""
               elif $kind == "stop" then ($reply | plain(160))
               else ($p.reply // "") end),
-      workflows: $workflows
+      workflows: $workflows,
+      tasks: $tasks
     },
     $finished'
 [ "$kind" = stop ] || message=""

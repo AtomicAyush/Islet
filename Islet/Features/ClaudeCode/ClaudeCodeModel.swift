@@ -14,7 +14,7 @@ final class ClaudeCodeModel {
         case waitingForInput
         /// A session is working on a reply.
         case working
-        /// Only workflows are running.
+        /// Only workflows, or agents sent off in the background, are running.
         case workflows
 
         /// A session's own mark.
@@ -42,7 +42,21 @@ final class ClaudeCodeModel {
     var isPreviewing: Bool { !samples.isEmpty }
     /// The session the compact island speaks for: the first one shown.
     var displayed: ClaudeSession? { shown.first }
-    var runningWorkflowCount: Int { shown.reduce(0) { $0 + $1.runningWorkflows.count } }
+    /// The workflows and background agents at work: running, and not ended or finished
+    /// as their files say since.
+    var runningWorkflowCount: Int { shown.reduce(0) { $0 + $1.workflowsAtWork.count } }
+    var runningAgentCount: Int { shown.reduce(0) { $0 + $1.agentsAtWork.count } }
+    /// The workflows and background agents at work, which the compact island counts.
+    var backgroundCount: Int { runningWorkflowCount + runningAgentCount }
+    /// How far the workflows at work have got, together: the mean of those whose files
+    /// say; `nil` when none do.
+    var workflowFraction: Double? {
+        let fractions = shown.flatMap { session in
+            session.workflowsAtWork.compactMap { session.progress(of: $0)?.fraction }
+        }
+        guard !fractions.isEmpty else { return nil }
+        return fractions.reduce(0, +) / Double(fractions.count)
+    }
 
     /// The displayed session's: sessions waiting for permission come first, then those
     /// waiting for an answer, then those working, so the mark and the time beside it

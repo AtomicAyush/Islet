@@ -3,14 +3,19 @@ import SwiftUI
 
 /// Claude Code at work, beside the notch: a sparkle left of the camera while a session
 /// works on a reply, a raised hand while one waits for permission, and right of it how
-/// long the turn has been going, or how many background workflows are running.
-/// Opened, a row for each session: its project, what it is doing and for how long,
-/// what was asked, and its workflows under it. Clicking a session brings forward the
-/// app it runs in.
+/// long the turn has been going, or while background workflows run, a ring filling as
+/// they get on. Opened, a row for each session: its project, what it is doing and for
+/// how long, what was asked, and its background tasks under it: each workflow with its
+/// phase, a bar and the agents at work in it, or once it has ended, how; each agent sent
+/// off with what it is doing and how many steps it has taken, and whether it has gone
+/// quiet; each command left running. Clicking a session brings forward the app it runs
+/// in.
 ///
 /// Claude Code says what it is doing through hooks, and `Scripts/claude-code-hook.sh`
 /// keeps a file per session for Islet (`ClaudeSessionMonitor`), alongside the banners
-/// it has always put up. Without the hook there are no files, and nothing shows.
+/// it has always put up. Without the hook there are no files, and nothing shows. How
+/// far the background tasks have got comes from the files Claude Code keeps for them
+/// beside the session's transcript (`ClaudeTaskProgressReader`).
 ///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead. There it gives way to the Sound Mixer, the other
@@ -20,7 +25,7 @@ final class ClaudeCodeFeature: Feature {
     let id = "claudeCode"
     let title = "Claude Code"
     let symbol = "sparkle"
-    let summary = "Claude Code sessions beside the notch while they work, wait for you or run workflows."
+    let summary = "Claude Code sessions beside the notch while they work, wait for you or work in the background."
 
     /// How long a preview's made-up sessions show.
     static let previewLength: TimeInterval = 12

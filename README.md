@@ -193,11 +193,17 @@ you can read; see [Banners from scripts](#banners-from-scripts).
 **Claude Code.** While a Claude Code session works on a reply, a sparkle breathes left of the
 camera and the turn's time counts up right of it. While it waits for your permission the
 sparkle becomes an orange hand, and while it has asked you something, an orange question mark;
-background workflows show as a count beside a spinner. Opened, there is a row for each session:
-its project (or the start of its prompt, for one outside a project), what it is doing and for
-how long, what you asked, and its workflows under it with what each is doing and for how long.
-Click a session to bring forward the app it runs in — Terminal, iTerm, VS Code or the Claude
-app. It never takes the island from music or a timer, and sits in the bubble beside them
+while background workflows run, a ring fills as they get through their phases, with how many
+are running beside it when there are several (in the bubble beside music, the ring goes round
+the sparkle). Opened, there is a row for each session: its project (or the start of its prompt,
+for one outside a project), what it is doing and for how long, what you asked, and its
+background work under it: each workflow with the phase it is in ("Implement · 3 of 8 done"), a
+bar, the agents at work in it now, any it has given up on or is trying again, and for how long;
+each agent sent off in the background with what it is doing ("Editing Store.swift") and how
+many steps it has taken, marked quiet once it has written nothing for ten minutes; and each
+command left running. A workflow that has ended shows how it ended until Claude Code next says
+so. Click a session to bring forward the app it runs in — Terminal, iTerm, VS Code or the
+Claude app. It never takes the island from music or a timer, and sits in the bubble beside them
 instead, behind the Sound Mixer unless a session is waiting for you. Claude Code tells Islet
 all this through hooks, with the script in `Scripts/` (see
 [Claude Code hooks](#claude-code-hooks)); without them nothing shows. The hooks say when a turn
@@ -207,6 +213,17 @@ over, and so is a turn you have interrupted, or one whose transcript and its age
 quiet for ten minutes while Claude waits on nothing (a long build keeps it going). A permission
 you give shows once the approved command or agent next writes, so for a long command the hand
 stays until it is done.
+
+How far the background work has got comes from the files Claude Code keeps beside the
+session's transcript in `~/.claude/projects`: each workflow run's journal of agents started and
+finished, the phases its script plans, the record written as a run ends, and each background
+agent's own transcript. To find which run is which workflow's, Islet looks through the last few
+megabytes of the session's transcript for where Claude started it, and after that only at what
+is added; failing that, it goes by the script's name. A workflow run again counts only what the
+new try has done, and the agents finished before it. Islet reads these files every few seconds
+while the work goes on, only what has been added since it last looked, and never writes there.
+Where they are missing, or not as expected, a workflow shows as before, by its name and what it
+was started to do.
 
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
@@ -482,10 +499,14 @@ Activities → Claude Code copies them too):
 Each hook hands the script its kind of event. SessionStart and SessionEnd make and delete the
 session's file, UserPromptSubmit marks it working, Notification says when Claude needs your
 permission or an answer, and Stop marks it done. Claude Code sends no event when a background
-workflow finishes, but every event lists the workflows running, so SubagentStop and
-TaskCompleted, which come often while workflows run, keep the list current, and a workflow gone
-from it gets its banner. Claude Code waits for UserPromptSubmit's hooks before it sends the
-prompt, so the script is quick, prints nothing and always succeeds. It needs `jq`, part of
+workflow finishes, but Stop and SubagentStop list the session's background tasks — workflows,
+agents sent off in the background, commands left running — and SubagentStop comes often while
+workflows run, so the list stays current, and a workflow gone from it gets its banner. The
+script keeps no command line: a command Claude Code describes by the command alone is kept by
+the name of the program it runs. If you copied the script before background agents and
+commands showed, copy it again to see them; workflows' progress needs no new copy. Claude Code
+waits for UserPromptSubmit's hooks before it sends the prompt, so the script is quick, prints
+nothing and always succeeds. It needs `jq`, part of
 macOS from 15 on (`brew install jq` before that). It keeps the last 200 events other than
 agents stopping in `~/.claude/hooks/islet-hook-log.jsonl`, to show what each carries (a
 prompt by its length alone), and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing
