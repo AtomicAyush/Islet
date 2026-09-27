@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The whole canvas: the island hanging from the top centre, and the detached bubble
-/// beside it when two activities are running and the menu bar has room for it.
+/// The whole canvas: the island hanging from the top centre, and a detached bubble
+/// beside it for each further activity running, as many as the menu bar has room for.
 struct IslandRootView: View {
     let model: IslandViewModel
     /// Told whenever the island's footprint changes, so the controller can update
@@ -108,9 +108,13 @@ private struct IslandSurface: View {
         }
         .shadow(color: .black.opacity(layout.showsShadow ? 0.5 : 0), radius: 18, y: 8)
         .onTapGesture { location in
-            // The folded second activity's end of the island opens that activity: the
-            // same patch the controller treats as hovering it, not just its circle.
-            if let folded = model.foldedActivity, layout.foldedTarget.contains(location) {
+            // The count riding on the folded icon opens the home page, where every
+            // activity has its tab. The folded activity's end of the island opens that
+            // activity: the same patch the controller treats as hovering it, not just
+            // its circle.
+            if layout.foldedBadgeRect.contains(location) {
+                model.expand(focus: IslandViewModel.homeFocus)
+            } else if let folded = model.foldedActivity, layout.foldedTarget.contains(location) {
                 model.expand(focus: folded.id)
             } else if let id = IndicatorCardLayout.compactIndicator(at: location, in: layout, indicators: model.center.indicators) {
                 model.expand(showingCardOf: id)
@@ -157,7 +161,10 @@ private struct IslandSurface: View {
                     indicators: model.center.indicators,
                     layout: layout,
                     folded: model.foldedActivity,
-                    isFoldedHovered: model.isHoveringSecondary
+                    counted: layout.badgesFolded ? model.countedActivities.map(\.name) : [],
+                    isFoldedHovered: model.foldedActivity.map { model.hoveredSecondary == .activity($0.id) } ?? false,
+                    isCountHovered: model.hoveredSecondary == .overflow,
+                    open: { model.expand(focus: $0) }
                 )
             }
 
@@ -248,15 +255,21 @@ extension AnyTransition {
 
 /// Compact content: one view left of the notch, one right, and the camera between.
 /// Each view gets the width it asked for at its wing's outer edge; indicator dots,
-/// if any, sit at the far right, and a second activity with no room for its bubble
-/// sits at the far left.
+/// if any, sit at the far right, and a further activity with no room for its bubble
+/// sits at the far left, with a count of any others with no room either.
 private struct CompactRow: View {
     let leading: AnyView
     let trailing: AnyView
     let indicators: [StatusIndicator]
     let layout: IslandLayout
     var folded: (any IslandActivity)? = nil
+    /// The names of the activities with neither a bubble nor the fold, when their
+    /// count rides on the folded icon (`IslandLayout.badgesFolded`).
+    var counted: [String] = []
     var isFoldedHovered = false
+    var isCountHovered = false
+    /// Opens the island on the activity with this id, or on the home page.
+    var open: (String) -> Void = { _ in }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -267,6 +280,17 @@ private struct CompactRow: View {
                         .frame(width: IslandLayout.foldedDiameter, height: IslandLayout.foldedDiameter)
                         .clipShape(Circle())
                         .secondaryHover(isFoldedHovered)
+                        .accessibilityElement(children: .ignore)
+                        .activityAccessibility(folded) { open(folded.id) }
+                        .overlay(alignment: .bottomTrailing) {
+                            if layout.badgesFolded {
+                                OverflowBadge(count: layout.overflowCount, counted: counted, isHovered: isCountHovered) {
+                                    open(IslandViewModel.homeFocus)
+                                }
+                                .offset(layout.foldedBadgeOffset)
+                                .transition(.opacity)
+                            }
+                        }
                         .padding(.leading, IslandLayout.foldedInset)
                         .frame(width: layout.foldedWidth, alignment: .leading)
                         .id(folded.id)
@@ -294,10 +318,57 @@ private struct CompactRow: View {
     }
 }
 
+/// The count of activities with no room beside the island, where it rides on the
+/// folded icon or the last bubble: small and dim, a note rather than a label. It
+/// opens the home page, where each has its tab, and brightens with the pointer on it.
+private struct OverflowBadge: View {
+    let count: Int
+    /// The names of those it counts, for VoiceOver.
+    let counted: [String]
+    var isHovered = false
+    let open: () -> Void
+
+    var body: some View {
+        Text("+\(count)")
+            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(.white.opacity(isHovered ? 0.95 : 0.7))
+            .padding(.horizontal, 2.5)
+            .frame(minWidth: IslandLayout.badgeSize.width)
+            .frame(height: IslandLayout.badgeSize.height)
+            .background(Capsule().fill(Color(white: isHovered ? 0.27 : 0.16)))
+            .background(Capsule().stroke(Color.black, lineWidth: 1.5))
+            .fixedSize()
+            .animation(.islandHover, value: isHovered)
+            .accessibilityElement(children: .ignore)
+            .countAccessibility(count, counted: counted, open: open)
+    }
+}
+
 extension View {
-    /// The second activity's circle — the bubble, or its icon folded into the island —
-    /// with the pointer on it: it swells a little and gains a faint ring, to say a
-    /// click opens it.
+    /// A further activity's circle, in its bubble or folded into the island, for
+    /// VoiceOver: a button named for the activity, with what it is doing now, if it
+    /// says, that opens the island on it.
+    fileprivate func activityAccessibility(_ activity: any IslandActivity, open: @escaping () -> Void) -> some View {
+        accessibilityLabel(activity.name)
+            .accessibilityValue(activity.spokenStatus ?? "")
+            .accessibilityHint("Opens it in the island")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default, open)
+    }
+
+    /// The count of activities with no room beside the island, for VoiceOver: a button
+    /// saying how many and which, that opens the home page.
+    fileprivate func countAccessibility(_ count: Int, counted: [String], open: @escaping () -> Void) -> some View {
+        accessibilityLabel("\(count) more \(count == 1 ? "activity" : "activities")")
+            .accessibilityValue(ListFormatter.localizedString(byJoining: counted))
+            .accessibilityHint("Opens the island's home page")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default, open)
+    }
+
+    /// A further activity's circle, in its bubble or folded into the island, with the
+    /// pointer on it: it swells a little and gains a faint ring, to say a click opens it.
     fileprivate func secondaryHover(_ isHovered: Bool, scale: CGFloat = 1) -> some View {
         overlay(Circle().strokeBorder(Color.white.opacity(isHovered ? 0.22 : 0), lineWidth: 1))
             .scaleEffect(scale * (isHovered ? 1.14 : 1))
@@ -322,95 +393,404 @@ struct IndicatorDots: View {
     }
 }
 
-/// The detached bubble the iPhone uses for a second live activity. It keeps the
-/// activity it last showed so it can merge back into the island after that
-/// activity has already gone.
+/// The detached bubbles the iPhone uses for further live activities, side by side
+/// right of the island, and after them the count of any with no room. Each keeps what
+/// it last showed, so it can merge back into its neighbour or the island after its
+/// activity has already gone, and keeps its place while it does, so the others slide
+/// into theirs rather than jump.
 private struct BubbleLayer: View {
     let model: IslandViewModel
     let layout: IslandLayout
-    @State private var shown: (any IslandActivity)?
-    @State private var progress: CGFloat = 0
+    @State private var bubbles: [ShownBubble] = []
+    /// The island the bubbles were last brought in line with.
+    @State private var drawnBeside: IslandLayout?
 
     var body: some View {
-        BubbleDroplet(progress: progress, layout: layout, activity: shown, isHovered: model.isHoveringSecondary) { id in
-            model.expand(focus: id)
+        let wanted = self.wanted
+        let targets = Set(wanted.map(\.target))
+        /// The island each bubble sits beside. One no longer wanted keeps to the island
+        /// it was drawn beside, from the moment it is no longer wanted: before it is
+        /// marked as leaving, the island may already have opened, and an opened island
+        /// has no room for bubbles at all.
+        func beside(_ bubble: ShownBubble) -> IslandLayout {
+            bubble.leftFrom ?? (targets.contains(bubble.target) ? layout : drawnBeside ?? layout)
         }
-        .onChange(of: model.bubbleActivity?.id, initial: true) { _, id in
-            if let activity = model.bubbleActivity { shown = activity }
-            withAnimation(id == nil ? .islandClose : .islandMorph) {
-                progress = id == nil ? 0 : 1
-            } completion: {
-                if model.bubbleActivity == nil { shown = nil }
+        return ZStack(alignment: .top) {
+            // Every bubble's neck under every bubble, so one budding off its neighbour
+            // never draws over that neighbour's content.
+            ForEach(bubbles) { bubble in
+                BubbleNeck(progress: bubble.progress, slot: bubble.slot, layout: beside(bubble), bubble: bubble)
             }
+            ForEach(bubbles) { bubble in
+                BubbleDroplet(
+                    progress: bubble.progress, slot: bubble.slot, layout: beside(bubble), bubble: bubble,
+                    isHovered: model.hoveredSecondary == bubble.target,
+                    isCountHovered: model.hoveredSecondary == .overflow
+                ) { target in
+                    switch target {
+                    case .activity(let id): model.expand(focus: id)
+                    case .overflow: model.expand(focus: IslandViewModel.homeFocus)
+                    }
+                }
+            }
+        }
+        .onChange(of: Snapshot(wanted: wanted, layout: layout), initial: true) { old, new in
+            drawnBeside = new.layout
+            guard old.wanted != new.wanted || bubbles.isEmpty && !new.wanted.isEmpty else { return }
+            update(to: new.wanted, from: old.layout, to: new.layout)
+        }
+    }
+
+    /// What the bubbles were drawn beside, as the layer last saw it.
+    private struct Snapshot: Equatable {
+        let wanted: [Wanted]
+        let layout: IslandLayout
+    }
+
+    /// What goes beside the island now, in order: each activity's bubble, the last
+    /// carrying the count of those left over when that rides on it, then the count's
+    /// own bubble, if it has one.
+    private var wanted: [Wanted] {
+        let activities = model.bubbleActivities
+        let counted = layout.overflowCount > 0 ? model.countedActivities.map(\.name) : []
+        var wanted = activities.enumerated().map { slot, activity in
+            let badged = layout.badgesLastBubble && slot == activities.count - 1
+            return Wanted(
+                target: .activity(activity.id), activity: activity,
+                count: badged ? layout.overflowCount : 0, counted: badged ? counted : []
+            )
+        }
+        if model.showsOverflowBubble {
+            wanted.append(Wanted(target: .overflow, activity: nil, count: layout.overflowCount, counted: counted))
+        }
+        return wanted
+    }
+
+    /// Brings the bubbles drawn in line with `wanted`, as the island goes from
+    /// `previous` to `current`. A bubble already drawn springs to its new place, or
+    /// back out if it was merging away; a new one is put in place inside what it buds
+    /// from, and sets off a moment later, so there is a first frame to spring from; one
+    /// no longer wanted merges back and is let go once it has.
+    ///
+    /// The first bubble buds off the island and merges back into it. Any other buds
+    /// off the bubble before it, or merges back into that one, when that one stays
+    /// where it is; when it is on its way somewhere else, or the island's width changes
+    /// and moves them all, its old place would be left behind as a blob of nothing,
+    /// and the island is too far off to reach without crossing the others. So there
+    /// the bubble grows or shrinks where it stands instead, and a neighbour sliding
+    /// over it as it shrinks takes it in.
+    ///
+    /// Those merging back keep to their places beside the island as it was, not as it
+    /// is now: opened, it is far wider, and they would be flung out to its new edge.
+    private func update(to wanted: [Wanted], from previous: IslandLayout, to current: IslandLayout) {
+        let targets = wanted.map(\.target)
+        // Budding off the island, or merging into it, is from and to its rounded right
+        // end as the narrower of the two islands has it, which stays inside the island
+        // whether it grows or shrinks meanwhile.
+        let island = previous.size.width <= current.size.width ? previous : current
+        let steady = previous.size.width == current.size.width
+        var next = bubbles
+        var isNew = false
+        for (slot, want) in wanted.enumerated() {
+            if let i = next.firstIndex(where: { $0.target == want.target }) {
+                if let activity = want.activity { next[i].activity = activity }
+                next[i].count = want.count
+                next[i].counted = want.counted
+                if next[i].isLeaving { next[i].island = island }
+                next[i].isLeaving = false
+                next[i].leftFrom = nil
+            } else {
+                // Out of the island, as the first always is; out of the bubble before
+                // it, when that one is settled in its place; otherwise where it stands.
+                let before = slot > 0 ? next.first { $0.target == targets[slot - 1] } : nil
+                let settled = steady && before.map {
+                    !$0.isLeaving && $0.progress == 1 && $0.slot == CGFloat(slot - 1)
+                } ?? false
+                next.append(ShownBubble(
+                    target: want.target, activity: want.activity, count: want.count, counted: want.counted,
+                    slot: CGFloat(slot), progress: 0, isLeaving: false,
+                    origin: slot == 0 ? .island : settled ? .neighbour : .place, island: island
+                ))
+                isNew = true
+            }
+        }
+        // One let go again before it set off has nothing to merge back.
+        next.removeAll { !targets.contains($0.target) && !$0.hasSetOff }
+        for i in next.indices where !targets.contains(next[i].target) && !next[i].isLeaving {
+            // Back into the island, as the first always goes; into the bubble before
+            // it, when that one stays where it is; otherwise where it stands.
+            let slot = next[i].slot
+            let stays = steady && next.contains {
+                !$0.isOverflow && $0.slot == slot - 1 && targets.firstIndex(of: $0.target).map(CGFloat.init) == slot - 1
+            }
+            next[i].origin = slot < 0.5 ? .island : stays ? .neighbour : .place
+            next[i].isLeaving = true
+            next[i].leftFrom = previous
+            next[i].island = island
+            next[i].departure &+= 1
+        }
+        // Bottom to top: those merging away under all the rest, then the others from
+        // the last to the first, so one budding off its neighbour, or merging back into
+        // it, passes under it rather than over its content.
+        func place(_ bubble: ShownBubble) -> CGFloat {
+            targets.firstIndex(of: bubble.target).map(CGFloat.init) ?? bubble.slot
+        }
+        bubbles = next.sorted { a, b in
+            a.isLeaving != b.isLeaving ? a.isLeaving : place(a) > place(b)
+        }
+        if isNew {
+            DispatchQueue.main.async { settle(wanted: targets) }
+        } else {
+            settle(wanted: targets)
+        }
+    }
+
+    /// Springs each bubble wanted to its place and out to its full size, and merges the
+    /// others back, letting each go once it has, unless it was wanted again meanwhile.
+    private func settle(wanted targets: [IslandViewModel.SecondaryTarget]) {
+        withAnimation(.islandMorph) {
+            for i in bubbles.indices {
+                guard let slot = targets.firstIndex(of: bubbles[i].target), !bubbles[i].isLeaving else { continue }
+                bubbles[i].slot = CGFloat(slot)
+                bubbles[i].progress = 1
+                bubbles[i].hasSetOff = true
+            }
+        }
+        let departures = bubbles.filter(\.isLeaving).map { ($0.target, $0.departure) }
+        guard !departures.isEmpty else { return }
+        withAnimation(.islandClose) {
+            for i in bubbles.indices where bubbles[i].isLeaving { bubbles[i].progress = 0 }
+        } completion: {
+            bubbles.removeAll { bubble in
+                bubble.isLeaving && departures.contains { $0.0 == bubble.target && $0.1 == bubble.departure }
+            }
+        }
+    }
+
+    private struct Wanted: Equatable {
+        let target: IslandViewModel.SecondaryTarget
+        let activity: (any IslandActivity)?
+        let count: Int
+        let counted: [String]
+
+        static func == (a: Wanted, b: Wanted) -> Bool {
+            a.target == b.target && a.count == b.count && a.counted == b.counted
         }
     }
 }
 
-/// The bubble budding off the island like a droplet. Both are drawn as black
-/// circles through a blur and an alpha threshold, so while they are close a neck
-/// of "liquid" joins them, stretches, and snaps — the way the iPhone's island
-/// splits in two. Once the bubble has settled it is drawn plainly.
-private struct BubbleDroplet: View, Animatable {
+/// One bubble as drawn: the activity it shows (or last showed), or the count, where
+/// it sits, and how far it has budded off.
+private struct ShownBubble: Identifiable {
+    let target: IslandViewModel.SecondaryTarget
+    var activity: (any IslandActivity)?
+    /// The number the count's bubble shows; on an activity's bubble, the count of those
+    /// left over riding on it, or 0.
+    var count: Int
+    /// The names of the activities that count stands for, for VoiceOver.
+    var counted: [String]
+    /// Its place in the row beside the island, from 0 beside it.
+    var slot: CGFloat
+    /// 0 inside what it buds from, 1 settled in its place.
     var progress: CGFloat
+    var isLeaving: Bool
+    /// What it buds off, or merges back into.
+    var origin: Origin
+    /// The island whose rounded right end it buds off or merges into, when it does.
+    var island: IslandLayout?
+    /// Counts its merges back, so letting go after one cannot take it from a later one.
+    var departure = 0
+    /// It has begun to bud off, so going it merges back rather than vanishing.
+    var hasSetOff = false
+    /// Merging back, the island it keeps its place beside, as it was when it began to.
+    var leftFrom: IslandLayout?
+
+    var id: IslandViewModel.SecondaryTarget { target }
+    var isOverflow: Bool { target == .overflow }
+
+    enum Origin {
+        /// The island's rounded right end.
+        case island
+        /// The bubble before it.
+        case neighbour
+        /// Nothing: it grows from, or shrinks to, half its size where it stands.
+        case place
+    }
+}
+
+/// Where a bubble is drawn at a point in its budding off, and what it buds from: the
+/// island's rounded right end, or the bubble before it.
+private struct BubbleGeometry {
+    let d: CGFloat
+    let target: CGSize
+    /// The centre and radius of what it buds from, relative to the notch's centre.
+    let anchorX: CGFloat
+    let anchorRadius: CGFloat
+    let x: CGFloat
+    let scale: CGFloat
+    /// How much of the whole bubble shows: all of it, but for one growing or
+    /// shrinking where it stands, which fades as it gets small.
+    let presence: Double
+    let isMoving: Bool
+
+    init(progress: CGFloat, slot: CGFloat, layout: IslandLayout, bubble: ShownBubble, reduceMotion: Bool) {
+        d = bubble.isOverflow ? layout.overflowDiameter : layout.bubbleDiameter
+        target = bubble.isOverflow ? layout.overflowCenterOffset(at: slot) : layout.bubbleCenterOffset(at: slot)
+        let tucked: CGFloat
+        switch bubble.origin {
+        case .neighbour:
+            anchorX = layout.bubbleCenterOffset(at: slot - 1).width
+            anchorRadius = layout.bubbleDiameter / 2
+            tucked = anchorX
+        case .island:
+            // The island's rounded right end, relative to the notch's centre.
+            let island = bubble.island ?? layout
+            let islandRight = island.size.width / 2 - island.earRadius
+            let cap = island.notch.height / 2 - 1
+            anchorX = islandRight - cap
+            anchorRadius = cap
+            tucked = islandRight - d / 2
+        case .place:
+            anchorX = target.width
+            anchorRadius = 0
+            tucked = target.width
+        }
+        let inPlace = bubble.origin == .place
+        x = reduceMotion ? target.width : tucked + (target.width - tucked) * progress
+        scale = reduceMotion ? 1 : inPlace ? 0.5 + 0.5 * min(progress, 1.2) : 0.55 + 0.45 * min(progress, 1.2)
+        presence = reduceMotion || !inPlace ? 1 : Double(min(1, max(0, (progress - 0.15) / 0.45)))
+        // With Reduce Motion on, the bubble just fades in place: no neck, no travel.
+        // Nor has one growing where it stands anything to be joined to.
+        isMoving = !reduceMotion && !inPlace && progress > 0.001 && abs(progress - 1) > 0.001
+    }
+}
+
+/// The "liquid" joining a bubble to what it buds from while it moves. Both are drawn
+/// as black circles through a blur and an alpha threshold, so while they are close a
+/// neck joins them, stretches, and snaps, the way the iPhone's island splits in two.
+private struct BubbleNeck: View, Animatable {
+    var progress: CGFloat
+    var slot: CGFloat
     let layout: IslandLayout
-    let activity: (any IslandActivity)?
-    /// The pointer is on the bubble: it swells a little and lifts, to say it opens.
-    let isHovered: Bool
-    let onTap: (String) -> Void
+    let bubble: ShownBubble
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(progress, slot) }
+        set { (progress, slot) = (newValue.first, newValue.second) }
     }
 
     var body: some View {
-        let d = layout.bubbleDiameter
-        let h = layout.notch.height
-        let target = layout.bubbleCenterOffset
-        // The island's rounded right end, relative to the notch's centre.
-        let islandRight = layout.size.width / 2 - layout.earRadius
-        let tucked = islandRight - d / 2
-        let x = reduceMotion ? target.width : tucked + (target.width - tucked) * progress
-        let scale = reduceMotion ? 1 : 0.55 + 0.45 * min(progress, 1.2)
-        // With Reduce Motion on, the bubble just fades in place: no neck, no travel.
-        let isMoving = !reduceMotion && progress > 0.001 && abs(progress - 1) > 0.001
-
-        ZStack(alignment: .top) {
-            if isMoving {
-                Canvas { context, size in
-                    context.addFilter(.alphaThreshold(min: 0.5, color: .black))
-                    context.addFilter(.blur(radius: 4))
-                    context.drawLayer { layer in
-                        let mid = size.width / 2
-                        let cap = h / 2 - 1
-                        layer.fill(
-                            Path(ellipseIn: CGRect(x: mid + islandRight - 2 * cap, y: target.height - cap, width: 2 * cap, height: 2 * cap)),
-                            with: .color(.black)
-                        )
-                        let r = d / 2 * scale
-                        layer.fill(
-                            Path(ellipseIn: CGRect(x: mid + x - r, y: target.height - r, width: 2 * r, height: 2 * r)),
-                            with: .color(.black)
-                        )
-                    }
+        let g = BubbleGeometry(progress: progress, slot: slot, layout: layout, bubble: bubble, reduceMotion: reduceMotion)
+        if g.isMoving {
+            // Only as wide as the two circles and the blur's reach either side, rather
+            // than the whole window: several bubbles can be on the move at once.
+            let r = g.d / 2 * g.scale
+            let lo = (min(g.anchorX - g.anchorRadius, g.x - r) - 12).rounded(.down)
+            let hi = (max(g.anchorX + g.anchorRadius, g.x + r) + 12).rounded(.up)
+            Canvas { context, _ in
+                context.addFilter(.alphaThreshold(min: 0.5, color: .black))
+                context.addFilter(.blur(radius: 4))
+                context.drawLayer { layer in
+                    let cap = g.anchorRadius
+                    layer.fill(
+                        Path(ellipseIn: CGRect(x: g.anchorX - lo - cap, y: g.target.height - cap, width: 2 * cap, height: 2 * cap)),
+                        with: .color(.black)
+                    )
+                    layer.fill(
+                        Path(ellipseIn: CGRect(x: g.x - lo - r, y: g.target.height - r, width: 2 * r, height: 2 * r)),
+                        with: .color(.black)
+                    )
                 }
-                .frame(width: IslandLayout.canvas.width, height: layout.topInset + h + 12)
-                .allowsHitTesting(false)
             }
+            .frame(width: hi - lo, height: layout.topInset + layout.notch.height + 12)
+            .offset(x: (lo + hi) / 2)
+            .allowsHitTesting(false)
+        }
+    }
+}
 
-            if let activity, progress > 0.001 {
-                activity.minimal()
-                    .frame(width: d, height: d)
-                    .background(Circle().fill(Color.black))
-                    .clipShape(Circle())
-                    .opacity(Double(min(1, max(0, (progress - 0.35) / 0.5))))
-                    .background(Circle().fill(Color.black))
-                    .secondaryHover(isHovered, scale: scale)
-                    .contentShape(Circle())
-                    .onTapGesture { onTap(activity.id) }
-                    .offset(x: x, y: target.height - d / 2)
-            }
+/// A bubble budding off the island, or off the bubble before it, like a droplet, over
+/// its neck (`BubbleNeck`). Once it has settled it is drawn plainly.
+private struct BubbleDroplet: View, Animatable {
+    var progress: CGFloat
+    var slot: CGFloat
+    let layout: IslandLayout
+    let bubble: ShownBubble
+    /// The pointer is on the bubble: it swells a little and lifts, to say it opens.
+    let isHovered: Bool
+    /// The pointer is on the count, wherever it is.
+    let isCountHovered: Bool
+    let onTap: (IslandViewModel.SecondaryTarget) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(progress, slot) }
+        set { (progress, slot) = (newValue.first, newValue.second) }
+    }
+
+    var body: some View {
+        let g = BubbleGeometry(progress: progress, slot: slot, layout: layout, bubble: bubble, reduceMotion: reduceMotion)
+        let d = g.d
+        let fade = Double(min(1, max(0, (progress - 0.35) / 0.5)))
+        if progress > 0.001 {
+            content
+                .frame(width: d, height: d)
+                .background(Circle().fill(Color.black))
+                .clipShape(Circle())
+                .opacity(fade)
+                .background(Circle().fill(Color.black))
+                .opacity(g.presence)
+                .secondaryHover(isHovered, scale: g.scale)
+                .contentShape(Circle())
+                .onTapGesture { onTap(bubble.target) }
+                .accessibilityElement(children: .ignore)
+                .modifier(BubbleAccessibility(bubble: bubble) { onTap(bubble.target) })
+                .overlay(alignment: .bottomTrailing) {
+                    // Faded in and out as the count comes to this bubble and leaves it.
+                    ZStack {
+                        if !bubble.isOverflow, bubble.count > 0 {
+                            OverflowBadge(count: bubble.count, counted: bubble.counted, isHovered: isCountHovered) {
+                                onTap(.overflow)
+                            }
+                            .offset(IslandLayout.bubbleBadgeOffset)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onTap(.overflow) }
+                            .opacity(fade * g.presence)
+                            .transition(.opacity)
+                        }
+                    }
+                    .animation(.islandMorph, value: bubble.count > 0)
+                }
+                // One merging away is on its way out: VoiceOver has done with it.
+                .accessibilityHidden(bubble.isLeaving)
+                .offset(x: g.x, y: g.target.height - d / 2)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let activity = bubble.activity {
+            activity.minimal()
+        } else {
+            Text("+\(bubble.count)")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.7))
+        }
+    }
+}
+
+/// A bubble for VoiceOver: its activity, or the count of those left over.
+private struct BubbleAccessibility: ViewModifier {
+    let bubble: ShownBubble
+    let open: () -> Void
+
+    func body(content: Content) -> some View {
+        if let activity = bubble.activity {
+            content.activityAccessibility(activity, open: open)
+        } else {
+            content.countAccessibility(bubble.count, counted: bubble.counted, open: open)
         }
     }
 }

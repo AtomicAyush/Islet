@@ -244,6 +244,12 @@ final class DownloadsActivity: IslandActivity {
     }
 
     let id = "downloads"
+    let name = "Downloads"
+    var spokenStatus: String? {
+        guard let item = model.displayed else { return nil }
+        guard let fraction = item.fraction else { return item.name }
+        return "\(item.name), \(Int((fraction * 100).rounded())) percent"
+    }
     let symbol = "arrow.down.circle.fill"
     /// Its page names the files coming in.
     var personal: PersonalContent? { .files }

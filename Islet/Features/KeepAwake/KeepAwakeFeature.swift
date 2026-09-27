@@ -255,6 +255,7 @@ final class KeepAwakeFeature: Feature {
 @MainActor
 final class KeepAwakeActivity: IslandActivity {
     let id = "keepAwake"
+    let name = "Keep Awake"
     /// Below everything else. It runs for hours at a time, and music, a timer or a
     /// meeting about to start matter more in the moment: beside one of them it waits in
     /// the bubble, and with two it is out of the closed island's sight until one ends.

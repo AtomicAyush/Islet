@@ -11,10 +11,10 @@ final class IslandManager {
     private var observers: [NSObjectProtocol] = []
     private var pendingRebuild: DispatchWorkItem?
     private let fullScreen = FullScreenWatcher()
-    /// The second activity on show, to notice it arriving, changing or leaving.
-    private var secondaryID: String?
-    /// Re-measures the menu bar while there is a second activity: status items come
-    /// and go without telling anyone.
+    /// The activities after the first, to notice one arriving, leaving or moving.
+    private var otherIDs: [String] = []
+    /// Re-measures the menu bar while there is more than one activity: status items
+    /// come and go without telling anyone.
     private var roomTimer: Timer?
 
     private init() {}
@@ -161,23 +161,23 @@ final class IslandManager {
 
     // MARK: Menu bar
 
-    /// Whether the second activity's bubble fits beside each island depends on where
+    /// How many further activities' bubbles fit beside each island depends on where
     /// the menu bar's status items begin, so they are measured again whenever the
-    /// second activity changes, and every 20 seconds while there is one.
+    /// activities after the first change, and every 20 seconds while there are any.
     private func watchSecondary() {
-        let id = withObservationTracking {
-            ActivityCenter.shared.secondary?.id
+        let ids = withObservationTracking {
+            ActivityCenter.shared.activities.dropFirst().map(\.id)
         } onChange: { [weak self] in
             // Called as the change is about to happen; look again once it has.
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.watchSecondary() }
             }
         }
-        guard id != secondaryID else { return }
-        secondaryID = id
+        guard ids != otherIDs else { return }
+        otherIDs = ids
         measureMenuBars()
 
-        if id == nil {
+        if ids.isEmpty {
             roomTimer?.invalidate()
             roomTimer = nil
         } else if roomTimer == nil {

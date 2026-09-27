@@ -79,10 +79,10 @@ final class IslandWindowController {
     }
 
     /// Finds where the status items begin right of this island, for the model to
-    /// decide whether the second activity's bubble fits there. Read off the main
+    /// decide how many further activities' bubbles fit there. Read off the main
     /// thread: the first read of the window list takes tens of milliseconds, and
     /// asking every app through Accessibility, when it comes to that, longer. When
-    /// nothing can tell where the items are, there is no room, and the second
+    /// nothing can tell where the items are, there is no room, and the first further
     /// activity folds into the island. The moment it was asked for goes along, so an
     /// Accessibility read from before whatever prompted it is not reused.
     func measureMenuBarRoom() {
@@ -308,8 +308,9 @@ final class IslandWindowController {
             || PictureDrag.isPictureDrag(pasteboard)
     }
 
-    /// Works out whether the pointer is over the island or its second activity (the
-    /// bubble, or the icon folded into the island), for hover. Clicks need no help:
+    /// Works out whether the pointer is over the island or one of its further
+    /// activities (a bubble, the icon folded into the island, or the count of those
+    /// left over), for hover. Clicks need no help:
     /// the panel only catches them on pixels it has drawn.
     ///
     /// When the island changes shape on its own (a banner arriving, say) the pointer
@@ -328,7 +329,7 @@ final class IslandWindowController {
         guard let layout else { return }
         let point = NSEvent.mouseLocation
         let (overIsland, overSecondary) = Self.hitTest(point, layout: layout, model: model)
-        let inside = overIsland || overSecondary
+        let inside = overIsland || overSecondary != nil
         // A press that began on the island (dragging the scrubber, say) holds it open
         // until release, wherever the pointer wanders; mouse-up clears the press and
         // comes back through here. Outgoing file drags change the drag pasteboard and
@@ -342,18 +343,41 @@ final class IslandWindowController {
                 inside: overIsland, overSecondary: overSecondary,
                 at: point, buttonsDown: NSEvent.pressedMouseButtons != 0
             )
+        } else if model.hoveredSecondary != nil, overSecondary != model.hoveredSecondary {
+            // The bubble under the resting pointer slid away, or ended: it is no longer
+            // hovered, and what came under the pointer instead waits for it to move.
+            model.secondaryMovedFromPointer()
         }
     }
 
-    /// Whether `point`, in global coordinates, is over the island or over its second
-    /// activity (the bubble, or the icon folded into the island), for `model` laid out
-    /// as `layout`. The folded icon's patch of the island counts as the second
-    /// activity's only.
-    static func hitTest(_ point: CGPoint, layout: IslandLayout, model: IslandViewModel) -> (island: Bool, secondary: Bool) {
-        let overFolded = foldedRect(for: layout, model: model).contains(point)
-        let overIsland = !overFolded && islandRect(for: layout, model: model).contains(point)
-        let overBubble = !overFolded && !overIsland && bubbleRect(for: layout, model: model)?.contains(point) == true
-        return (overIsland, overFolded || overBubble)
+    /// Whether `point`, in global coordinates, is over the island, or which further
+    /// activity it is over (a bubble, the icon folded into the island, or the count of
+    /// those left over), for `model` laid out as `layout`. The folded icon's patch of
+    /// the island counts as that activity's only, and the count riding on the folded
+    /// icon or the last bubble as the count's, over the circle it rides on.
+    static func hitTest(
+        _ point: CGPoint, layout: IslandLayout, model: IslandViewModel
+    ) -> (island: Bool, secondary: IslandViewModel.SecondaryTarget?) {
+        let others = model.otherActivities
+        if badgeRects(for: layout, model: model).contains(where: { $0.contains(point) }) {
+            return (false, .overflow)
+        }
+        if foldedRect(for: layout, model: model).contains(point) {
+            // The folded one follows the bubbles, as `IslandViewModel.foldedActivity`.
+            let folded = others.dropFirst(layout.bubbleCount).first
+            return (false, folded.map { .activity($0.id) })
+        }
+        if islandRect(for: layout, model: model).contains(point) { return (true, nil) }
+        for (slot, activity) in others.prefix(layout.bubblesShown).enumerated()
+        where circle(at: layout.bubbleCenterOffset(at: CGFloat(slot)), diameter: layout.bubbleDiameter, model: model).contains(point) {
+            return (false, .activity(activity.id))
+        }
+        if model.showsOverflowBubble,
+           circle(at: layout.overflowCenterOffset(at: CGFloat(layout.bubbleCount)), diameter: layout.overflowDiameter, model: model)
+            .contains(point) {
+            return (false, .overflow)
+        }
+        return (false, nil)
     }
 
     /// The island's top-left corner on screen, which its own coordinates start from.
@@ -380,9 +404,9 @@ final class IslandWindowController {
         return rect.insetBy(dx: -slop, dy: -slop)
     }
 
-    /// The folded second activity's patch of the island (`IslandLayout.foldedTarget`)
+    /// The folded activity's patch of the island (`IslandLayout.foldedTarget`)
     /// on screen, with the island's resting slop on its outer sides only: its inner
-    /// edge is where a click stops opening the second activity, so hovering stops
+    /// edge is where a click stops opening the folded activity, so hovering stops
     /// there too.
     private static func foldedRect(for layout: IslandLayout, model: IslandViewModel) -> CGRect {
         let target = layout.foldedTarget
@@ -397,14 +421,35 @@ final class IslandWindowController {
         )
     }
 
-    private static func bubbleRect(for layout: IslandLayout, model: IslandViewModel) -> CGRect? {
-        guard model.bubbleActivity != nil else { return nil }
+    /// Where the count riding on the folded icon, or on the last bubble, is on screen,
+    /// a point larger all round; empty when it has a bubble of its own or there is none.
+    private static func badgeRects(for layout: IslandLayout, model: IslandViewModel) -> [CGRect] {
+        var rects: [CGRect] = []
+        let folded = layout.foldedBadgeRect
+        if !folded.isNull {
+            let origin = islandOrigin(for: layout, model: model)
+            rects.append(CGRect(x: origin.x + folded.minX, y: origin.y - folded.maxY, width: folded.width, height: folded.height))
+        }
+        let last = layout.bubbleBadgeRect
+        if !last.isNull, model.bubbleActivities.count == layout.bubbleCount {
+            let metrics = model.metrics
+            rects.append(CGRect(
+                x: metrics.notchMidX + last.minX, y: metrics.screenFrame.maxY - last.maxY,
+                width: last.width, height: last.height
+            ))
+        }
+        return rects.map { $0.insetBy(dx: -1, dy: -1) }
+    }
+
+    /// A bubble's square on screen, a little larger than its circle, from where its
+    /// centre sits relative to the notch's top centre.
+    private static func circle(at offset: CGSize, diameter: CGFloat, model: IslandViewModel) -> CGRect {
         let metrics = model.metrics
         let center = CGPoint(
-            x: metrics.notchMidX + layout.bubbleCenterOffset.width,
-            y: metrics.screenFrame.maxY - layout.bubbleCenterOffset.height
+            x: metrics.notchMidX + offset.width,
+            y: metrics.screenFrame.maxY - offset.height
         )
-        let r = layout.bubbleDiameter / 2 + 2
+        let r = diameter / 2 + 2
         return CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r)
     }
 }

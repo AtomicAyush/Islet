@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// How strongly an activity claims the island. The highest one is shown compact
-/// around the notch; the runner-up gets the detached bubble beside it.
+/// around the notch; the others get detached bubbles beside it, as many as fit.
 enum ActivityPriority: Int, Comparable {
     case background = 0
     case normal = 1
@@ -30,6 +30,11 @@ protocol IslandActivity: AnyObject {
     var rank: Int { get }
     /// SF Symbol for this activity's tab in the expanded island.
     var symbol: String { get }
+    /// What VoiceOver calls the activity's bubble beside the island ("Calendar").
+    var name: String { get }
+    /// What VoiceOver adds after the name, the state the bubble shows at a glance
+    /// ("Stand-up, in 5 minutes"); `nil` adds nothing.
+    var spokenStatus: String? { get }
 
     /// Width of the compact content left of the notch. `nil` uses the default.
     var compactLeadingWidth: CGFloat? { get }
@@ -69,6 +74,8 @@ enum ActivitySwipe {
 
 extension IslandActivity {
     var priority: ActivityPriority { .normal }
+    var name: String { "Live activity" }
+    var spokenStatus: String? { nil }
     var rank: Int { 0 }
     var compactLeadingWidth: CGFloat? { nil }
     var compactTrailingWidth: CGFloat? { nil }

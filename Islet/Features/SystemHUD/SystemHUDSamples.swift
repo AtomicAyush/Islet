@@ -7,6 +7,7 @@ import SwiftUI
 @MainActor
 final class SystemHUDSampleSong: IslandActivity {
     let id = "systemHUD.sampleSong"
+    let name = "Now Playing"
     let symbol = "music.note"
     /// Above everything real, for the moment it is up: the preview is there to be
     /// looked at.

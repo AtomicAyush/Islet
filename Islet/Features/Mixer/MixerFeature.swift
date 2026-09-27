@@ -164,6 +164,7 @@ final class MixerActivity: IslandActivity {
     }
 
     let id = "mixer"
+    let name = "Sound Mixer"
     let priority = ActivityPriority.background
     let symbol = "slider.horizontal.3"
     let model: MixerModel

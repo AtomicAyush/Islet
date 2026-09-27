@@ -420,14 +420,19 @@ meeting about to start — shows compactly: a glance on the left of the notch, a
 right, and the camera in the gap. When the two sides differ in width, the island shifts so
 the gap stays exactly over the camera.
 
-**A second activity gets the bubble.** As on the iPhone, when two things are running the
-more important one keeps the island and the other buds off into a circle beside it. The two
-are drawn through a blur and an alpha threshold while they are close, so a neck of black
-joins them, stretches and snaps as the bubble springs out — and forms again when it merges
-back. Where the menu bar's icons leave no room for the bubble, the second activity folds into
-the island instead, as a small circle at its left end. macOS 27 draws the whole menu bar as
-one window, so there Islet finds the icons through Accessibility when it has it, and
-otherwise folds rather than risk covering them.
+**The others get bubbles.** As on the iPhone, when several things are running the
+most important one keeps the island and each of the others buds off into a circle of its own,
+side by side to its right in order of importance, as many as the menu bar leaves room for (four
+at most). Each is drawn through a blur and an alpha threshold while it is close to the island or
+the bubble before it, so a neck of black joins them, stretches and snaps as the bubble springs
+out — and forms again when it merges back; the others slide along to make room or close the gap.
+Where the menu bar's icons leave no room for the next bubble, that activity folds into the
+island instead, as a small circle at its left end, so long as that costs none of the bubbles
+beside it. Any still left over are counted: a small "+2" bubble after the others, or, with no
+room for that, a little "+2" on the folded circle or the last bubble. Clicking a bubble opens the
+island on that activity, and clicking the count opens the home page, with a tab for each. macOS 27
+draws the whole menu bar as one window, so there Islet finds the icons through Accessibility
+when it has it, and otherwise folds rather than risk covering them.
 
 **Rest the pointer on it to open it.** The island stretches sideways a beat before it drops,
 with a small squash and rebound, and its content arrives out of a blur. There is a tab for
@@ -450,8 +455,8 @@ location, a banner from a script — joins it in a slim row underneath instead, 
 does, so the music stays in sight; only a card, or a new song's own banner, takes its place.
 Changing the volume puts its row in front, and the alert waits, its time held, until the volume
 has gone. The row hangs below the menu bar, over the top of the window beneath, so resting the
-pointer there does not open the island (a click on it does), and a wide one takes the second
-activity's bubble in until it has gone, rather than push it over the menu bar's icons.
+pointer there does not open the island (a click on it does), and a wide one takes in the
+bubbles it would push over the menu bar's icons until it has gone.
 
 **It never gets in the way of a click.** The island's window is a fixed transparent canvas,
 and a transparent window only catches clicks on the pixels it has drawn — so the menu bar

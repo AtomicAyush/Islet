@@ -204,6 +204,7 @@ final class FileCopiesActivity: IslandActivity {
     }
 
     let id = "fileCopies"
+    let name = "File Copies"
     let symbol = "doc.on.doc.fill"
     /// Its page names the files being copied.
     var personal: PersonalContent? { .files }

@@ -175,6 +175,12 @@ final class CalendarFeature: Feature {
 @MainActor
 final class CalendarActivity: IslandActivity {
     let id = "calendar"
+    let name = "Calendar"
+    var spokenStatus: String? {
+        guard let event = model.featured else { return nil }
+        let minutes = CalendarCountdown.minutes(until: event.start, at: Date())
+        return minutes > 0 ? "\(event.title), in \(minutes) \(minutes == 1 ? "minute" : "minutes")" : "\(event.title), now"
+    }
     let symbol = "calendar"
     /// Its page lists the events by title.
     var personal: PersonalContent? { .schedule }

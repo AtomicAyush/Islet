@@ -57,7 +57,7 @@ enum IndicatorCardLayout {
 
     /// The indicator with a card at `point` in the resting or compact island, in the
     /// island's own coordinates (origin at its top left), laid out as `layout`. Only the
-    /// notch row counts, as for the folded second activity (`IslandLayout.foldedTarget`),
+    /// notch row counts, as for the folded activity (`IslandLayout.foldedTarget`),
     /// so a row the island grows beneath it is never an indicator's. Each indicator
     /// takes its mark and half the gap either side, the first from the start of the
     /// strip and the last `compactReach` past its mark, so a small dot is still easy to

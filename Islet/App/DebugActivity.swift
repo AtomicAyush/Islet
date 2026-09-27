@@ -8,6 +8,7 @@ final class DebugActivity: IslandActivity {
     static let shared = DebugActivity()
 
     let id = "debug.second"
+    let name = "Debug"
     let symbol = "ladybug.fill"
     var priority: ActivityPriority { .background }
 

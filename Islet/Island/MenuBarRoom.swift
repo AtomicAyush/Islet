@@ -1,8 +1,8 @@
 import AppKit
 
 /// Where the menu bar's status items begin beside the island. On a MacBook they crowd
-/// up against the notch, and the bubble would land on top of them; when it would not
-/// fit in the gap, the island folds the second activity in instead.
+/// up against the notch, and the bubbles would land on top of them; as many as fit in
+/// the gap go there, and the island folds the next activity in instead.
 enum MenuBarRoom {
     /// What a look along one display's menu bar found right of an edge.
     enum Finding: Equatable {
@@ -13,9 +13,9 @@ enum MenuBarRoom {
         /// The display has a menu bar, but nothing could say where its items are.
         case unknown
 
-        /// How far right of `center` the bubble may reach before it meets a status
-        /// item. Not knowing counts as no room at all: folding the second activity
-        /// into the island is always safe, and a bubble over the icons is not.
+        /// How far right of `center` the bubbles may reach before they meet a status
+        /// item. Not knowing counts as no room at all: folding an activity into the
+        /// island is always safe, and a bubble over the icons is not.
         func roomRight(of center: CGFloat) -> CGFloat {
             switch self {
             case .item(let x): x - center

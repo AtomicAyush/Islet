@@ -431,6 +431,7 @@ final class ShortcutsActivity: IslandActivity {
     }
 
     let id = "shortcuts"
+    let name = "Shortcuts"
     let symbol = "square.2.layers.3d.fill"
     let runs: ShortcutRuns
     let stop: (String) -> Void

@@ -369,6 +369,10 @@ final class PomodoroFeature: Feature {
 @MainActor
 final class PomodoroActivity: IslandActivity {
     let id = "pomodoro"
+    let name = "Pomodoro"
+    var spokenStatus: String? {
+        model.shown.map { PomodoroWords.title($0, rounds: model.settings.rounds) }
+    }
     /// Something being timed, as the timer is, so it goes ahead of Keep Awake and the
     /// other activities that run for hours in the background. But it lasts all day, a
     /// phase at a time, and gives way to its peers: beside music the song keeps the

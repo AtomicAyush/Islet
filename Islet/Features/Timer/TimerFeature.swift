@@ -112,6 +112,11 @@ final class TimerFeature: Feature {
 @MainActor
 final class TimerActivity: IslandActivity {
     let id = "timer"
+    let name = "Timer"
+    var spokenStatus: String? {
+        let left = Duration.seconds(model.remaining().rounded(.up))
+        return "\(left.formatted(.units(allowed: [.hours, .minutes, .seconds], width: .wide))) left"
+    }
     let priority = ActivityPriority.high
     let symbol = "timer"
     let model: TimerModel

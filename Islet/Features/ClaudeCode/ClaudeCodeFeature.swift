@@ -147,6 +147,14 @@ final class ClaudeCodeActivity: IslandActivity {
     }
 
     let id = "claudeCode"
+    let name = "Claude Code"
+    var spokenStatus: String? {
+        let count = model.backgroundCount
+        guard count > 0 else { return nil }
+        let working = "\(count) at work in the background"
+        guard let fraction = model.workflowFraction else { return working }
+        return "\(working), \(Int((fraction * 100).rounded())) percent done"
+    }
     let priority = ActivityPriority.background
     let symbol = "sparkle"
     /// Its page shows what each session is doing and asking, as its hooks' banners do.

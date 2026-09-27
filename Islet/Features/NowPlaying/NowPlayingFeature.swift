@@ -657,6 +657,12 @@ final class NowPlayingFeature: Feature {
 @MainActor
 final class NowPlayingActivity: IslandActivity {
     let id = "nowPlaying"
+    let name = "Now Playing"
+    var spokenStatus: String? {
+        guard let track = model.track else { return nil }
+        let song = track.artist.isEmpty ? track.title : "\(track.title) by \(track.artist)"
+        return model.isPlaying ? song : "\(song), paused"
+    }
     let model: NowPlayingModel
     let library: NowPlayingLibraryModel
     let outputs: OutputPickerModel

@@ -42,16 +42,26 @@ final class IslandViewModel {
     var opensFromNotchInFullScreen = false
     /// How far right of the notch's centre the menu bar's first status item begins:
     /// infinity when none does, and 0 when nothing can tell where the items are
-    /// (macOS 27 without Accessibility), so the second activity folds. Set by the
-    /// controller; decides whether the second activity's bubble fits beside the
-    /// island or folds into it.
+    /// (macOS 27 without Accessibility), so the first further activity folds. Set by the
+    /// controller; decides how many further activities have bubbles beside the island,
+    /// and whether one folds into it.
     var menuBarRoomRight = CGFloat.infinity
+
+    /// Something beside the island's own content that takes a click of its own: a
+    /// further activity, in its bubble or folded into the island, or the bubble that
+    /// counts those with no room.
+    enum SecondaryTarget: Hashable {
+        case activity(String)
+        case overflow
+    }
 
     private(set) var isExpanded = false
     private(set) var isHovering = false
-    /// The pointer is over the second activity: the detached bubble, or its icon
-    /// folded into the island.
-    private(set) var isHoveringSecondary = false
+    /// Which further activity the pointer is over, if any: a bubble, the icon folded
+    /// into the island, or the count of those left over.
+    private(set) var hoveredSecondary: SecondaryTarget?
+    /// The pointer is over a further activity rather than the island itself.
+    var isHoveringSecondary: Bool { hoveredSecondary != nil }
     /// A file drag is in progress anywhere on screen.
     private(set) var isDraggingFile = false
     /// The tab picked in the expanded island; `nil` follows the primary activity.
@@ -190,22 +200,45 @@ final class IslandViewModel {
         }
     }
 
-    /// The activity in the detached bubble: the runner-up, while the island is
-    /// compact and the bubble fits beside it. A banner in the island's place, and the
-    /// opened island, absorb it; a banner riding under the activity leaves it be, unless
-    /// its row widens the island too far for the bubble (`IslandLayout.takesInBubble`).
-    var bubbleActivity: (any IslandActivity)? {
-        guard case .compact = mode else { return nil }
-        let layout = self.layout
-        guard !layout.foldsSecondary, !layout.takesInBubble else { return nil }
-        return center.secondary
+    /// Every ongoing activity after the one the compact island shows, in
+    /// `ActivityCenter`'s order; none in any other mode. `IslandLayout` decides where
+    /// each goes: a bubble of its own, folded into the island, or counted.
+    var otherActivities: [any IslandActivity] {
+        guard case .compact = mode else { return [] }
+        return Array(center.activities.dropFirst())
     }
 
-    /// The runner-up folded into the island's leading wing, because the menu bar has
-    /// no room for its bubble.
+    /// The activities in detached bubbles, side by side right of the island, while it
+    /// is compact and they fit beside it. A banner in the island's place, and the
+    /// opened island, absorb them; a banner riding under the activity leaves them be,
+    /// but for those its row pushes too far (`IslandLayout.takesInBubble`).
+    var bubbleActivities: [any IslandActivity] {
+        Array(otherActivities.prefix(layout.bubblesShown))
+    }
+
+    /// The first activity with no bubble, folded into the island's leading wing,
+    /// because the menu bar has no room for its bubble, or the bubbles are at their
+    /// most.
     var foldedActivity: (any IslandActivity)? {
-        guard case .compact = mode, layout.foldsSecondary else { return nil }
-        return center.secondary
+        let layout = self.layout
+        guard layout.foldsSecondary else { return nil }
+        return otherActivities.dropFirst(layout.bubbleCount).first
+    }
+
+    /// The activities with neither a bubble nor the fold, which the count
+    /// (`IslandLayout.overflowCount`) stands for, in order.
+    var countedActivities: [any IslandActivity] {
+        let layout = self.layout
+        return Array(otherActivities.dropFirst(layout.bubbleCount + (layout.foldsSecondary ? 1 : 0)))
+    }
+
+    /// Whether the bubble counting the activities with neither a bubble nor the fold
+    /// (`IslandLayout.overflowCount`) is beside the island. Without room for it, the
+    /// count rides on the folded icon or the last bubble instead.
+    var showsOverflowBubble: Bool {
+        guard case .compact = mode else { return false }
+        let layout = self.layout
+        return layout.showsOverflowBubble && !layout.takesInBubble
     }
 
     /// The row under this island's compact content, if any. One shows at a time, the
@@ -344,21 +377,23 @@ final class IslandViewModel {
     // MARK: Pointer
 
     /// Called by the window controller as the pointer moves, with whether it is over
-    /// the island and whether it is over the second activity (its bubble, or its icon
-    /// folded into the island).
+    /// the island and which further activity it is over, if any (a bubble, the icon
+    /// folded into the island, or the count of those left over).
     ///
-    /// The second activity is a target of its own: resting on it makes only it react,
-    /// and it opens on a click. Were it part of the island's hover, the island would
-    /// swell and open by itself as the pointer arrived, swallowing it before it could
-    /// be clicked.
+    /// Each further activity is a target of its own: resting on it makes only it
+    /// react, and it opens on a click. Were it part of the island's hover, the island
+    /// would swell and open by itself as the pointer arrived, swallowing it before it
+    /// could be clicked.
     ///
     /// `point` is where the pointer is, in global coordinates, and `buttonsDown` whether
     /// a mouse button is held; only the notch of an island hidden for a full-screen app
     /// looks at them.
-    func pointer(inside: Bool, overSecondary: Bool = false, at point: CGPoint? = nil, buttonsDown: Bool = false) {
+    func pointer(
+        inside: Bool, overSecondary: SecondaryTarget? = nil, at point: CGPoint? = nil, buttonsDown: Bool = false
+    ) {
         if let point { pointerLocation = point }
-        if overSecondary != isHoveringSecondary {
-            withAnimation(.islandHover) { isHoveringSecondary = overSecondary }
+        if overSecondary != hoveredSecondary {
+            withAnimation(.islandHover) { hoveredSecondary = overSecondary }
         }
         guard inside != isHovering else {
             if inside { followPointer() }
@@ -390,6 +425,15 @@ final class IslandViewModel {
                 scheduleCollapse(after: 0.28)
             }
         }
+    }
+
+    /// What the pointer rests on beside the island moved away, or something else came
+    /// under it, without the pointer moving: nothing there is hovered any more, and
+    /// whatever is under it now waits for the pointer to move, as anything arriving
+    /// under a resting pointer does. The island's own hover is left be.
+    func secondaryMovedFromPointer() {
+        guard hoveredSecondary != nil else { return }
+        withAnimation(.islandHover) { hoveredSecondary = nil }
     }
 
     /// The pointer came onto a button in the compact row that acts on a click of its
@@ -780,6 +824,16 @@ struct IslandLayout: Equatable {
     static let homeHeight: CGFloat = 116
     static let expandedInset = EdgeInsets(top: 0, leading: 20, bottom: 16, trailing: 20)
     static let bubbleGap: CGFloat = 7
+    /// The most further activities beside the island in bubbles of their own. One more
+    /// folds into the island, and any beyond that are counted.
+    static let maxBubbles = 4
+    /// How far short of the window's edge the bubbles stop at rest: the island's hover
+    /// growth moves them out by 5, and a hovered bubble swells by 2 more, and neither
+    /// may be cut off.
+    static let windowEdgeClearance: CGFloat = 7
+    /// The count of the activities with no room, where it rides on the folded icon or
+    /// the last bubble: a small capsule at the circle's bottom trailing corner.
+    static let badgeSize = CGSize(width: 15, height: 10)
     /// How much wider than its notch-sized core the resting pill on a display without a
     /// notch is.
     static let pillWidening: CGFloat = 36
@@ -788,7 +842,7 @@ struct IslandLayout: Equatable {
     /// round as the housing's, so no edge of it can show beside the housing.
     static let tuckInset: CGFloat = 2
     static let tuckedRadius: CGFloat = 14
-    /// The second activity folded into the island: its circle, inset from the island's
+    /// A further activity folded into the island: its circle, inset from the island's
     /// end so it sits concentric with the rounded corner (with room to swell under the
     /// pointer), and the gap between it and the primary's leading content.
     static let foldedDiameter: CGFloat = 20
@@ -831,13 +885,31 @@ struct IslandLayout: Equatable {
     var trailingContentWidth: CGFloat = 0
     /// Width at the right edge given to indicator dots.
     var indicatorWidth: CGFloat = 0
-    /// Width at the leading wing's outer end given to the folded second activity (its
+    /// Width at the leading wing's outer end given to the folded further activity (its
     /// circle, and the inset and gap either side), part of `leadingContentWidth`. Zero
-    /// unless the bubble has no room beside the island.
+    /// unless one has no room for its bubble beside the island.
     var foldedWidth: CGFloat = 0
+    /// How many further activities have bubbles beside the island, in order, as the
+    /// island is at rest (see `make(for:)`). The one folded in, if any, is the next.
+    var bubbleCount = 0
+    /// How many of those bubbles are beside the island now: fewer than `bubbleCount`
+    /// while a passing row takes the last of them in.
+    var bubblesShown = 0
+    /// How many further activities have neither a bubble nor the fold, which a small
+    /// bubble after the others counts, or, with no room for it, the folded icon.
+    var overflowCount = 0
+    /// Whether the count of those left over has a bubble of its own. Without one, it
+    /// rides on the folded icon, or, with nothing folded, on the last bubble.
+    var showsOverflowBubble = false
+    /// The count rides on the folded icon.
+    var badgesFolded: Bool { overflowCount > 0 && !showsOverflowBubble && foldsSecondary }
+    /// The count rides on the last bubble, while that bubble is beside the island.
+    var badgesLastBubble: Bool {
+        overflowCount > 0 && !showsOverflowBubble && !foldsSecondary && bubbleCount > 0 && bubblesShown == bubbleCount
+    }
     /// A passing row (`IslandViewModel.rowIsPassing`) widens the island too far for
-    /// the bubble beside it, and the island takes the runner-up in until the row has
-    /// gone, rather than fold it in (see `make(for:)`).
+    /// some of the bubbles beside it, and the island takes them in until the row has
+    /// gone, rather than fold one in (see `make(for:)`).
     var takesInBubble = false
     /// Expanded body height below the notch row.
     var bodyHeight: CGFloat = 0
@@ -848,6 +920,8 @@ struct IslandLayout: Equatable {
     /// again every time the pointer arrives.
     var attachmentWidth: CGFloat = 0
     var bubbleDiameter: CGFloat = 0
+    /// The bubble counting the activities left over is a little smaller than theirs.
+    var overflowDiameter: CGFloat { max(16, bubbleDiameter - 6) }
     var showsShadow = false
     /// Whether the island is drawn. When it is not, it is fully transparent, and the
     /// window passes clicks where it would be straight through.
@@ -868,11 +942,12 @@ struct IslandLayout: Equatable {
 
     var foldsSecondary: Bool { foldedWidth > 0 }
 
-    /// Where the folded second activity takes the pointer, in the island's own
-    /// coordinates (origin at its top left): the notch row from the island's leading
-    /// end to halfway across the gap after the circle. The end beyond the circle counts
-    /// as the circle's, so the island's hover growth, which moves the circle outwards,
-    /// cannot bounce the pointer between the two.
+    /// Where the folded activity takes the pointer, in the island's own coordinates
+    /// (origin at its top left): the notch row from the island's leading end to halfway
+    /// across the gap after the circle. The end beyond the circle counts as the
+    /// circle's, so the island's hover growth, which moves the circle outwards, cannot
+    /// bounce the pointer between the two. The count riding on it, if any, is a target
+    /// of its own (`foldedBadgeRect`).
     var foldedTarget: CGRect {
         guard foldsSecondary else { return .null }
         return CGRect(
@@ -883,11 +958,112 @@ struct IslandLayout: Equatable {
         )
     }
 
-    /// Where the bubble's centre sits relative to the notch's top centre.
-    var bubbleCenterOffset: CGSize {
+    /// How far past the folded circle's bottom trailing corner the count riding on it
+    /// sits: out beyond the circle, and inside the island's bottom edge, however low
+    /// the island is.
+    var foldedBadgeOffset: CGSize {
+        CGSize(width: 5, height: min(4, (notch.height - Self.foldedDiameter) / 2 - 1))
+    }
+
+    /// Where the count riding on the folded icon is, in the island's own coordinates;
+    /// null when it rides elsewhere or there is none.
+    var foldedBadgeRect: CGRect {
+        guard badgesFolded else { return .null }
+        let corner = CGPoint(
+            x: earRadius + Self.foldedInset + Self.foldedDiameter + foldedBadgeOffset.width,
+            y: (notch.height + Self.foldedDiameter) / 2 + foldedBadgeOffset.height
+        )
+        return CGRect(
+            x: corner.x - Self.badgeSize.width, y: corner.y - Self.badgeSize.height,
+            width: Self.badgeSize.width, height: Self.badgeSize.height
+        )
+    }
+
+    /// How far past the last bubble's bottom trailing corner the count riding on it
+    /// sits: no further right than the bubble, which may end just short of the status
+    /// items, and a point below it.
+    static let bubbleBadgeOffset = CGSize(width: 0, height: 1)
+
+    /// Where the count riding on the last bubble is, relative to the notch's top
+    /// centre (x rightwards, y downwards); null when it rides elsewhere or there is none.
+    var bubbleBadgeRect: CGRect {
+        guard badgesLastBubble else { return .null }
+        let center = bubbleCenterOffset(at: CGFloat(bubbleCount - 1))
+        let corner = CGPoint(
+            x: center.width + bubbleDiameter / 2 + Self.bubbleBadgeOffset.width,
+            y: center.height + bubbleDiameter / 2 + Self.bubbleBadgeOffset.height
+        )
+        return CGRect(
+            x: corner.x - Self.badgeSize.width, y: corner.y - Self.badgeSize.height,
+            width: Self.badgeSize.width, height: Self.badgeSize.height
+        )
+    }
+
+    /// Where the centre of the bubble in `slot` sits relative to the notch's top
+    /// centre: the first beside the island, each next one a bubble and a gap further
+    /// right. A fractional slot is on its way between two.
+    func bubbleCenterOffset(at slot: CGFloat) -> CGSize {
         CGSize(
-            width: size.width / 2 + Self.bubbleGap + bubbleDiameter / 2,
+            width: size.width / 2 + Self.bubbleGap + bubbleDiameter / 2 + slot * (bubbleDiameter + Self.bubbleGap),
             height: topInset + notch.height / 2
+        )
+    }
+
+    /// Where the centre of the bubble counting the activities left over sits relative
+    /// to the notch's top centre: in the slot after the last of the others, its
+    /// smaller circle a gap from theirs.
+    func overflowCenterOffset(at slot: CGFloat) -> CGSize {
+        CGSize(
+            width: size.width / 2 + Self.bubbleGap + overflowDiameter / 2 + slot * (bubbleDiameter + Self.bubbleGap),
+            height: topInset + notch.height / 2
+        )
+    }
+
+    /// Where the further activities go, given how far right of the island at rest the
+    /// bubbles may reach (`room`) and how far with one folded in, which can widen it
+    /// (`roomFolded`). Every one of them has a bubble when there are no more than
+    /// `maxBubbles` and they all fit. Otherwise as many as fit (no more than
+    /// `maxBubbles`) have bubbles, and the first to miss out folds into the island,
+    /// so long as that costs none of those bubbles: the fold widens the island, and
+    /// moves them all out. Any left over are counted, in a bubble of their own after
+    /// the others if that fits too, or else on the folded icon, or, with nothing
+    /// folded, on the last bubble.
+    ///
+    /// So the fold never takes a bubble away: the activity after the island has the
+    /// bubble it would have were only the two of them running, whenever there is room.
+    struct Bubbles: Equatable {
+        var count = 0
+        var folds = false
+        var overflow = 0
+        var overflowBubble = false
+    }
+
+    static func arrangeBubbles(
+        others: Int, room: CGFloat, roomFolded: CGFloat, diameter: CGFloat, overflowDiameter: CGFloat
+    ) -> Bubbles {
+        let pitch = diameter + bubbleGap
+        guard others > 0 else { return Bubbles() }
+        func fitting(_ most: Int, in room: CGFloat) -> Int {
+            var count = min(maxBubbles, most)
+            while count > 0, CGFloat(count) * pitch > room { count -= 1 }
+            return count
+        }
+        func countFits(after count: Int, in room: CGFloat) -> Bool {
+            CGFloat(count) * pitch + bubbleGap + overflowDiameter <= room
+        }
+        let unfolded = fitting(others, in: room)
+        if unfolded == others { return Bubbles(count: others) }
+        let folded = fitting(others - 1, in: roomFolded)
+        if folded >= unfolded {
+            let overflow = others - 1 - folded
+            return Bubbles(
+                count: folded, folds: true, overflow: overflow,
+                overflowBubble: overflow > 0 && countFits(after: folded, in: roomFolded)
+            )
+        }
+        return Bubbles(
+            count: unfolded, folds: false, overflow: others - unfolded,
+            overflowBubble: countFits(after: unfolded, in: room)
         )
     }
 
@@ -999,26 +1175,48 @@ struct IslandLayout: Equatable {
             let leading = activity?.compactLeadingWidth ?? side
             let trailing = (activity?.compactTrailingWidth ?? side) + dots
             layout.indicatorWidth = dots
-            if center.secondary != nil {
-                // Where the bubble would end with the island at rest, so neither the
+            let others = center.activities.count - 1
+            if others > 0 {
+                // Where the bubbles would end with the island at rest, so neither the
                 // pointer's hover growth nor the fold's own widening can flip the choice.
                 // A row wider than the compact row widens the island, and moves the
-                // bubble out with it. The standing row, there as long as its activity,
+                // bubbles out with it. The standing row, there as long as its activity,
                 // counts; a passing one (the volume, a banner's) does not. Gone in
-                // seconds, it would fold the runner-up into the activity's compact
+                // seconds, it would fold a further activity into the activity's compact
                 // content only to take it out again, reshuffling what the row was meant
-                // to leave be. Where it pushes the bubble into the status items instead,
-                // the island takes the bubble in until the row has gone, as a banner in
-                // the island's place does.
-                func bubbleEnd(row: IslandAttachment?) -> CGFloat {
-                    notch.width / 2 + max(leading, trailing, wing(for: row)) + ear + bubbleGap + layout.bubbleDiameter
+                // to leave be. Where it pushes bubbles into the status items instead,
+                // the island takes those in until the row has gone, as a banner in the
+                // island's place does. Nor do the bubbles reach so near the window's edge
+                // that the island's hover growth could push one past it.
+                let fold = foldedInset + foldedDiameter + foldedSpacing
+                let limit = min(model.menuBarRoomRight - 2, canvas.width / 2 - windowEdgeClearance)
+                func islandEnd(row: IslandAttachment?, folded: Bool) -> CGFloat {
+                    notch.width / 2 + max(leading + (folded ? fold : 0), trailing, wing(for: row)) + ear
                 }
                 let standing = center.shownStandingAttachment.flatMap { $0.activityID == id ? $0.attachment : nil }
                 let passing = model.rowIsPassing
-                if bubbleEnd(row: passing ? standing : attachment) > model.menuBarRoomRight - 2 {
-                    layout.foldedWidth = foldedInset + foldedDiameter + foldedSpacing
-                } else if passing, bubbleEnd(row: attachment) > model.menuBarRoomRight - 2 {
-                    layout.takesInBubble = true
+                let resting = passing ? standing : attachment
+                let bubbles = arrangeBubbles(
+                    others: others,
+                    room: limit - islandEnd(row: resting, folded: false),
+                    roomFolded: limit - islandEnd(row: resting, folded: true),
+                    diameter: layout.bubbleDiameter,
+                    overflowDiameter: layout.overflowDiameter
+                )
+                if bubbles.folds { layout.foldedWidth = fold }
+                layout.bubbleCount = bubbles.count
+                layout.bubblesShown = bubbles.count
+                layout.overflowCount = bubbles.overflow
+                layout.showsOverflowBubble = bubbles.overflowBubble
+                if passing {
+                    let room = limit - islandEnd(row: attachment, folded: bubbles.folds)
+                    let pitch = layout.bubbleDiameter + bubbleGap
+                    while layout.bubblesShown > 0, CGFloat(layout.bubblesShown) * pitch > room {
+                        layout.bubblesShown -= 1
+                    }
+                    let overflowEnd = CGFloat(bubbles.count) * pitch + bubbleGap + layout.overflowDiameter
+                    layout.takesInBubble = layout.bubblesShown < bubbles.count
+                        || (bubbles.overflowBubble && overflowEnd > room)
                 }
             }
             wings(leading: leading + layout.foldedWidth, trailing: trailing, grow: 5 * hover)
