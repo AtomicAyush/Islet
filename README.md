@@ -76,11 +76,26 @@ island is showing something else, such as a song or a timer, the bar joins it in
 underneath instead of taking its place. Needs Accessibility (called Device Control and Data
 Access from macOS 27), so it is off until you turn it on.
 
+**Caps Lock.** Pressing Caps Lock flashes a word either side of the camera, as the iPhone does
+for its Ring/Silent switch: the Caps Lock symbol and name on the left, a green "On" or a grey
+"Off" on the right, never over another alert such as a timer's. Its symbol can stay beside the
+notch while it is on, too. macOS says nothing when Caps Lock changes, so Islet watches the
+modifier keys, which needs the same Accessibility permission as Volume & Brightness; until it
+has it, the island shows nothing for Caps Lock pressed in other apps.
+
 **Headphones.** AirPods and other headphones connecting, as a card with a battery ring for
 each earbud and the case. Connections are read from CoreAudio, so they need no permission;
 exact levels (and the only levels for AirPods Max) come over Bluetooth once you allow it.
 macOS shows its own "Connected" notification for them from a source it hides from System
 Settings; Islet can install a profile that turns it off.
+
+**Mouse & Keyboard.** A Magic Mouse, Keyboard or Trackpad running low gets the iPhone's
+low-battery warning: its name left of the camera, and its level and a battery on the right, in
+orange at 20% and red at 10% and 5%, each once until it has been charged. The home page can
+list each one's level, and a card can show one connecting, as for headphones. The levels are
+the ones macOS keeps from each device's own report, so they need no permission. Other makes'
+Bluetooth mice, keyboards and game controllers show too where macOS keeps their level; one on
+its own USB receiver (Logitech's Unifying or Bolt) tells only its maker's app.
 
 **Calendar.** Your next event counts down beside the notch from ten minutes before it
 starts, with a Join button when there is a Zoom, Meet, Teams, Webex or FaceTime link.
