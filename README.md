@@ -239,6 +239,24 @@ Safari's own download folder is followed too when it is set to another; a downlo
 browser saves elsewhere shows only once it has finished. The first time, macOS asks whether
 Islet may see your Downloads folder.
 
+**File Copies.** While Finder copies something big (to an external drive, a network share,
+another folder), moves it to another disk or duplicates it, what it is copying sits left of the
+camera and a ring fills right of it, with a count when several copies are under way. Opened, it
+says where the copy is going, how much is done, how fast and how long is left, and has a Stop
+button when the copy allows one, which Islet only ever uses when you click it. Copies of 50 MB
+or more come up once they have been going a second (pick another size in Settings), smaller
+ones when they will take more than a few seconds, and one that's over in a moment never shows;
+a copy that finishes shows a tick as it goes. Finder tells other apps how a copy is going the
+way browsers tell it how a download is, naming the folder the copy goes into, and an app can
+only listen at particular folders, hearing about copies into each and into the folders directly
+inside it. So Islet listens at your home folder; its Desktop, Documents, Downloads, Movies,
+Music and Pictures; Applications; iCloud Drive; the folder where apps such as Dropbox keep
+theirs; the top of every disk; and any deeper folder once something starts being written there,
+which the Mac's own record of file changes says. Nothing in those folders is listed or read: to
+say where a copy is going, Islet asks only for the path of the folder Finder names. Copies into
+the rest of the Library folder, the Trash or hidden folders are left alone, and so are
+downloads, which Downloads shows.
+
 **Screenshots.** Take a screenshot and it comes up in a card for a few seconds, as on the
 iPhone, and stays while the pointer rests on it: drag the picture straight into another app, or
 copy it, put it on the Drop Zone shelf, show it in Finder or move it to the Trash (only ever on

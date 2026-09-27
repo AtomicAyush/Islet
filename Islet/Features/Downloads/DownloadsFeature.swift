@@ -249,10 +249,10 @@ final class DownloadsActivity: IslandActivity {
     init(model: DownloadsModel) { self.model = model }
 
     /// Wider on the right while several download, for their count beside the ring.
-    var sizes: Sizes { Sizes(trailing: model.count > 1 ? DownloadsLayout.countedTrailingWidth : nil) }
+    var sizes: Sizes { Sizes(trailing: model.count > 1 ? ProgressWingLayout.countedTrailingWidth : nil) }
 
     var compactTrailingWidth: CGFloat? { sizes.trailing }
-    var expandedHeight: CGFloat { DownloadsLayout.expandedHeight }
+    var expandedHeight: CGFloat { ProgressWingLayout.expandedHeight }
 
     func compactLeading() -> AnyView { AnyView(DownloadsCompactLeading(model: model)) }
     func compactTrailing() -> AnyView { AnyView(DownloadsCompactTrailing(model: model)) }

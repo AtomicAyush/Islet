@@ -70,6 +70,7 @@ final class FeatureRegistry {
         ClaudeCodeFeature(),
         DropZoneFeature(),
         DownloadsFeature(),
+        FileCopiesFeature(),
         ScreenshotsFeature(),
         ClipboardFeature(),
         HiddenMenuBarIconsFeature(),

@@ -6,22 +6,6 @@ import UniformTypeIdentifiers
 let downloadsBlue = Color(red: 10 / 255, green: 132 / 255, blue: 255 / 255)
 private let downloadsBlueNS = NSColor(srgbRed: 10 / 255, green: 132 / 255, blue: 255 / 255, alpha: 1)
 
-enum DownloadsLayout {
-    static let compactIcon: CGFloat = 20
-    static let compactMark: CGFloat = 16
-    /// Room for the count beside the ring while several download at once.
-    static let countedTrailingWidth: CGFloat = 60
-    static let expandedHeight: CGFloat = 76
-
-    /// Between the ring and the island's outer end, in a row `rowHeight` tall: the icon
-    /// on the left is centred in the default wing, so the ring is centred in the same
-    /// width at the right, whatever the notch's height, and stays there when the count
-    /// widens its wing.
-    static func trailingInset(rowHeight: CGFloat) -> CGFloat {
-        max(0, (IslandLayout.defaultSide(for: CGSize(width: 0, height: rowHeight)) - compactMark) / 2)
-    }
-}
-
 // MARK: - Pieces
 
 /// The icon Finder gives a download's type (a PDF's page, a disk image's drive), from
@@ -55,23 +39,6 @@ enum DownloadIcons {
     }
 }
 
-/// How far a download has come: a ring that fills, eased from one look to the next.
-struct DownloadRing: View {
-    let fraction: Double
-    var lineWidth: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle().stroke(downloadsBlue.opacity(0.25), lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0, to: fraction)
-                .stroke(downloadsBlue, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .animation(.easeOut(duration: 0.4), value: fraction)
-    }
-}
-
 /// The ring while the download's size is known; while it is not, the spinner Shortcuts
 /// runs on, turned by Core Animation so it costs nothing per frame.
 struct DownloadMark: View {
@@ -80,7 +47,7 @@ struct DownloadMark: View {
 
     var body: some View {
         if let fraction = item?.fraction {
-            DownloadRing(fraction: fraction, lineWidth: lineWidth)
+            ProgressRing(fraction: fraction, lineWidth: lineWidth, tint: downloadsBlue)
         } else {
             ShortcutSpinner(lineWidth: lineWidth, color: downloadsBlueNS)
         }
@@ -94,15 +61,11 @@ struct DownloadsCompactLeading: View {
     let model: DownloadsModel
 
     var body: some View {
-        ZStack {
+        ProgressWingLeading(id: model.displayed?.id) {
             if let item = model.displayed {
-                DownloadTypeIcon(fileExtension: item.fileExtension, size: DownloadsLayout.compactIcon)
-                    .id(item.id)
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                DownloadTypeIcon(fileExtension: item.fileExtension, size: ProgressWingLayout.compactIcon)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: model.displayed?.id)
     }
 }
 
@@ -112,21 +75,8 @@ struct DownloadsCompactTrailing: View {
     let model: DownloadsModel
 
     var body: some View {
-        GeometryReader { proxy in
-            HStack(spacing: 5) {
-                if model.count > 1 {
-                    Text("\(model.count)")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.6))
-                        .fixedSize()
-                        .transition(.opacity)
-                }
-                DownloadMark(item: model.displayed)
-                    .frame(width: DownloadsLayout.compactMark, height: DownloadsLayout.compactMark)
-            }
-            .padding(.trailing, DownloadsLayout.trailingInset(rowHeight: proxy.size.height))
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .trailing)
+        ProgressWingTrailing(count: model.count) {
+            DownloadMark(item: model.displayed)
         }
     }
 }
