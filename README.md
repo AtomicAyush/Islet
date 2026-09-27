@@ -235,7 +235,14 @@ click anywhere else; a two-finger swipe down opens it. Clicking works too, if yo
 it did not open on hover.
 
 **Alerts take it over for a moment.** Plugging in a charger, AirPods connecting, a timer
-finishing: the island widens or drops into a card, then gives itself back.
+finishing: the island widens or drops into a card, then gives itself back. While music, a video
+or a timer is showing, an alert beside the notch — an app starting on the camera or using your
+location, a banner from a script — joins it in a slim row underneath instead, as the volume
+does, so the music stays in sight; only a card, or a new song's own banner, takes its place.
+Changing the volume puts its row in front, and the alert waits, its time held, until the volume
+has gone. The row hangs below the menu bar, over the top of the window beneath, so resting the
+pointer there does not open the island (a click on it does), and a wide one takes the second
+activity's bubble in until it has gone, rather than push it over the menu bar's icons.
 
 **It never gets in the way of a click.** The island's window is a fixed transparent canvas,
 and a transparent window only catches clicks on the pixels it has drawn — so the menu bar
@@ -307,8 +314,10 @@ query. Titles are cut at 60 characters and subtitles at 120, and a colour too da
 the island's black is lightened until it shows. Nothing in a banner can be clicked, whatever
 the URL says. Banners that come faster than one a second, or more than five in ten seconds,
 wait their turn, and only the newest of those waiting is shown, so a script stuck in a loop
-cannot keep the island flickering. With the island open, a banner shows in its header, and a
-card comes as a compact one instead. Settings → Activities → Show in Islet turns them all off.
+cannot keep the island flickering. While something is already in the island — music, a video,
+a timer — a banner beside the notch goes in a slim row under it instead, as the volume does, so
+what was there stays in sight. With the island open, a banner shows in its header, and a card
+comes as a compact one instead. Settings → Activities → Show in Islet turns them all off.
 
 `open -g` hands the URL over without bringing anything to the front:
 

@@ -143,6 +143,13 @@ struct BatteryAlert: Equatable {
     /// Clear of the camera housing.
     static let innerPadding: CGFloat = 8
     static let glyphSize = CGSize(width: 26, height: 12)
+    static let glyphSpacing: CGFloat = 5
+    static let labelFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    static let valueFont: NSFont = {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        guard let rounded = font.fontDescriptor.withDesign(.rounded) else { return font }
+        return NSFont(descriptor: rounded, size: 13) ?? font
+    }()
 
     var id: String
     var label: String
@@ -161,9 +168,28 @@ struct BatteryAlert: Equatable {
             id: id,
             style: .compact(leading: Self.wingWidth, trailing: Self.wingWidth),
             duration: duration,
+            rowWidths: rowWidths,
             leading: AnyView(BatteryBannerLeading(alert: self)),
             trailing: AnyView(BatteryBannerTrailing(alert: self))
         )
+    }
+
+    /// Each side's content, for the row under an activity (`IslandBanner.rowWidths`):
+    /// the label with its paddings, and the level and glyph with the same paddings the
+    /// other way about. Beside the notch both sides are evened up to `wingWidth`, which
+    /// side by side in a row would leave the slack between the label and the level.
+    /// Neither is wider than it is there, where every label already fits.
+    var rowWidths: (leading: CGFloat, trailing: CGFloat) {
+        let leading = Self.outerPadding + Self.textWidth(label, font: Self.labelFont) + Self.innerPadding
+        let trailing = Self.innerPadding + Self.textWidth(value, font: Self.valueFont) + Self.glyphSpacing
+            + Self.glyphSize.width + Self.outerPadding
+        return (min(leading, Self.wingWidth), min(trailing, Self.wingWidth))
+    }
+
+    /// Two points of slack: SwiftUI sets text a hair wider than AppKit measures it,
+    /// which would otherwise cut short words that just fit.
+    private static func textWidth(_ text: String, font: NSFont) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
     }
 
     /// The charger went in or out.
@@ -228,7 +254,7 @@ struct BatteryBannerLeading: View {
         GeometryReader { geo in
             if geo.size.width >= 44 {
                 Text(alert.label)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Font(BatteryAlert.labelFont))
                     .foregroundStyle(alert.labelColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -251,7 +277,7 @@ struct BatteryBannerTrailing: View {
     let alert: BatteryAlert
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: BatteryAlert.glyphSpacing) {
             Text(alert.value)
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .monospacedDigit()

@@ -321,11 +321,13 @@ final class IslandWindowController {
         // that stands in for it, instead (`IslandViewModel.hiddenTarget`).
         if model.mode == .hidden { return model.hiddenTarget }
         let origin = islandOrigin(for: layout, model: model)
+        // A banner's row is not hovered (`IslandViewModel.showsBannerRow`).
+        let height = layout.size.height - (model.showsBannerRow ? layout.attachmentHeight : 0)
         let rect = CGRect(
             x: origin.x,
-            y: origin.y - layout.size.height,
+            y: origin.y - height,
             width: layout.size.width,
-            height: layout.size.height
+            height: height
         )
         // Once open, be forgiving about brushing past the edge.
         let slop: CGFloat = model.isExpanded ? 10 : 2

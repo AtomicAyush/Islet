@@ -189,8 +189,18 @@ enum HeadsetDisconnectedLayout {
 
     /// The width of each wing: whichever side needs more, used for both.
     static func wingWidth(name: String) -> CGFloat {
-        let leading = glyphWidth + glyphSpacing + min(textWidth(name), maximumNameWidth)
-        return max(leading, textWidth(status)) + outerInset + innerInset
+        let widths = rowWidths(name: name)
+        return max(widths.leading, widths.trailing)
+    }
+
+    /// Each side's content with its insets: the picture and name, and the status. The
+    /// row under an activity sets them side by side as they are
+    /// (`IslandBanner.rowWidths`), where beside the notch each is evened up to the wider.
+    static func rowWidths(name: String) -> (leading: CGFloat, trailing: CGFloat) {
+        (
+            leading: glyphWidth + glyphSpacing + min(textWidth(name), maximumNameWidth) + outerInset + innerInset,
+            trailing: textWidth(status) + outerInset + innerInset
+        )
     }
 
     /// Two points of slack: SwiftUI sets text a hair wider than AppKit measures it,

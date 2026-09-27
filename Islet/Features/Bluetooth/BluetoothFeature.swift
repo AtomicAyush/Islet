@@ -127,6 +127,7 @@ final class BluetoothFeature: Feature {
         ActivityCenter.shared.present(IslandBanner(
             id: "\(Self.bannerPrefix)disconnected.\(headset.id)",
             style: .compact(leading: wing, trailing: wing),
+            rowWidths: HeadsetDisconnectedLayout.rowWidths(name: headset.shortName),
             leading: AnyView(HeadsetDisconnectedLeading(headset: headset)),
             trailing: AnyView(HeadsetDisconnectedTrailing())
         ))

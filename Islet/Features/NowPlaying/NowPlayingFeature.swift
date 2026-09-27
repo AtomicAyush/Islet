@@ -459,7 +459,9 @@ final class NowPlayingFeature: Feature {
     }
 
     /// The same id every time, so skipping through several songs updates the banner
-    /// in place instead of stacking them.
+    /// in place instead of stacking them. It is the activity's own news, so it takes
+    /// the activity's place in the island; under another activity (a timer), it rides
+    /// in a row like any other banner.
     private func presentSongBanner() {
         let wing = NowPlayingSongBannerLayout.wingWidth(
             title: model.title, artist: model.subtitle, isVideo: model.isVideo
@@ -470,6 +472,7 @@ final class NowPlayingFeature: Feature {
             duration: 2.5,
             haptic: false,
             interruption: model.isPreviewing ? .active : .passive,
+            activityID: activity.id,
             leading: AnyView(NowPlayingSongBannerLeading(model: model)),
             trailing: AnyView(NowPlayingSongBannerTrailing(model: model))
         ))

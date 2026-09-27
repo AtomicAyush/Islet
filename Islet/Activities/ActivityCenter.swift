@@ -37,6 +37,13 @@ final class ActivityCenter {
 
     @ObservationIgnored private var startedAt: [String: Date] = [:]
     @ObservationIgnored private var bannerTimer: Task<Void, Never>?
+    /// When the banner on screen is due to go, while its clock runs.
+    @ObservationIgnored private var bannerDeadline = Date.distantPast
+    /// The time a riding banner still has to show, held while a presented row covers
+    /// it (`settleBannerClock`); `nil` while its clock runs.
+    @ObservationIgnored private var bannerTimeOwed: TimeInterval?
+    /// Whether the banner on screen has had any of its time uncovered.
+    @ObservationIgnored private var bannerHasShown = false
     @ObservationIgnored private var attachmentTimer: Task<Void, Never>?
     /// When the attachment on screen is due to go, for a banner taking over from it.
     @ObservationIgnored private var attachmentDeadline = Date.distantPast
@@ -66,10 +73,13 @@ final class ActivityCenter {
             activities = next
             revision &+= 1
         }
+        // An activity arriving under a banner may put it in the row, behind the volume.
+        settleBannerClock()
     }
 
     func end(id: String) {
         guard activities.contains(where: { $0.id == id }) else { return }
+        let bannerRode = bannerRidesUnder
         startedAt[id] = nil
         withAnimation(.islandMorph) {
             activities.removeAll { $0.id == id }
@@ -78,6 +88,8 @@ final class ActivityCenter {
             if standingAttachment?.activityID == id { standingAttachment = nil }
         }
         attachmentLostCarrier()
+        if bannerRode { bannerLostCarrier() }
+        settleBannerClock()
     }
 
     func isShowing(id: String) -> Bool { activities.contains { $0.id == id } }
@@ -86,23 +98,47 @@ final class ActivityCenter {
 
     /// Shows a banner for its duration. A banner with the same id as the current one
     /// updates in place; a different one replaces it. A passive banner is dropped
-    /// while passive banners are silenced.
+    /// while passive banners are silenced. Over a live activity, a compact one rides in
+    /// a row under it (`bannerRidesUnder`).
     func present(_ banner: IslandBanner) {
         if banner.interruption == .passive, silencesPassiveBanners { return }
+        // Its clock starts afresh, whatever the one it replaces had left.
+        bannerTimer?.cancel()
+        bannerTimeOwed = nil
         let isUpdate = self.banner?.id == banner.id
         if isUpdate {
             self.banner = banner
         } else {
             if banner.haptic { Haptics.tap(.levelChange) }
             withAnimation(.islandMorph) { self.banner = banner }
+            bannerHasShown = false
         }
         // A card takes the island over from an attachment as it would from any other
         // banner; a compact banner has a row for it to go on riding under.
         if !hasCompactContent { dismissAttachment() }
+        startBannerClock(banner.duration)
+    }
 
+    func dismissBanner(id: String? = nil) {
+        guard let current = banner, id == nil || current.id == id else { return }
         bannerTimer?.cancel()
-        let id = banner.id
-        let duration = banner.duration
+        bannerTimeOwed = nil
+        withAnimation(.islandMorph) { banner = nil }
+        attachmentLostCarrier()
+    }
+
+    /// Gives the banner on screen `duration` more, from now or, while a presented row
+    /// covers it, from when it is uncovered.
+    private func startBannerClock(_ duration: TimeInterval) {
+        bannerTimer?.cancel()
+        bannerTimeOwed = nil
+        guard let id = banner?.id else { return }
+        if bannerIsCovered {
+            bannerTimeOwed = duration
+            return
+        }
+        bannerHasShown = true
+        bannerDeadline = Date().addingTimeInterval(duration)
         bannerTimer = Task { [weak self] in
             try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }
@@ -110,18 +146,75 @@ final class ActivityCenter {
         }
     }
 
-    func dismissBanner(id: String? = nil) {
-        guard let current = banner, id == nil || current.id == id else { return }
-        bannerTimer?.cancel()
-        withAnimation(.islandMorph) { banner = nil }
-        attachmentLostCarrier()
+    /// A banner riding under the activity, with a presented row (the volume, while a
+    /// key is held) in front of it: out of sight, though still up.
+    private var bannerIsCovered: Bool { attachment != nil && bannerRidesUnder }
+
+    /// Stops the banner's clock while a presented row covers it, and starts it again
+    /// once nothing does, for the time it had left. A banner waiting behind the volume
+    /// is not seen, so it is not using up its time: held longer than the banner lasts,
+    /// the volume would otherwise outlast it, and it would never be seen at all. One
+    /// already seen, with less time left than the island takes to change shape, goes
+    /// with the row in front of it instead, rather than come back only to go straight
+    /// out again. Called after anything that can cover or uncover it: a row presented
+    /// or gone, a banner presented, an activity arriving or ending.
+    private func settleBannerClock() {
+        guard banner != nil else {
+            bannerTimeOwed = nil
+            return
+        }
+        if bannerIsCovered {
+            guard bannerTimeOwed == nil else { return }
+            bannerTimer?.cancel()
+            bannerTimeOwed = max(0, bannerDeadline.timeIntervalSinceNow)
+        } else if let owed = bannerTimeOwed {
+            if owed <= 0.5, bannerHasShown {
+                dismissBanner()
+            } else {
+                startBannerClock(owed)
+            }
+        }
+    }
+
+    /// The time the banner on screen has left to show.
+    private var bannerTimeLeft: TimeInterval {
+        bannerTimeOwed ?? bannerDeadline.timeIntervalSinceNow
+    }
+
+    /// Whether the banner on screen rides in a row under the live activity holding the
+    /// compact island, rather than take the island over: a compact banner, over an
+    /// activity it is not news of (`IslandBanner.activityID`). The activity's compact
+    /// content stays exactly as it was, and the banner's two sides go side by side in
+    /// the row beneath it (`IslandBanner.row`), as the volume does while music plays:
+    /// whatever the banner says, the music or the timer stays in sight. A card still
+    /// takes the island over, as does a compact banner with no live activity to ride
+    /// under, or one that is news of the activity showing.
+    ///
+    /// It follows the island, rather than being settled once as the banner goes up. A
+    /// live activity arriving under a banner takes the island back, the banner riding
+    /// under it; the last one it rode under ending gives it the island for the rest of
+    /// its time (`bannerLostCarrier`). Either way the banner's timer runs on as it was,
+    /// except while a presented row covers it (`settleBannerClock`).
+    var bannerRidesUnder: Bool {
+        guard let banner, case .compact = banner.style, let primary else { return false }
+        return banner.activityID != primary.id
+    }
+
+    /// The last live activity a banner rode under ended, and the banner takes the
+    /// island over for the rest of its time, as if it had gone up that way. With less
+    /// time left than the island takes to change shape, it goes with the activity
+    /// instead, rather than morph into a banner only to morph straight out again.
+    private func bannerLostCarrier() {
+        guard let banner, !bannerRidesUnder, bannerTimeLeft <= 0.5 else { return }
+        dismissBanner(id: banner.id)
     }
 
     // MARK: Attachments
 
     /// Whether the island has compact content for an attachment to ride under: a
-    /// compact banner, or a live activity with no banner over it. A card hides what is
-    /// under it and has no compact row of its own.
+    /// compact banner, or a live activity with no card over it. A card hides what is
+    /// under it and has no compact row of its own. Over a banner riding under an
+    /// activity, the attachment takes the row, and the banner waits behind it.
     private var hasCompactContent: Bool {
         if let banner {
             if case .compact = banner.style { return true }
@@ -138,8 +231,16 @@ final class ActivityCenter {
     /// as long as that form stays on screen: its banner is updated in place, rather than
     /// swapped for a row because something compact turned up beneath it, so the island
     /// changes shape once in a hold and not twice. Only a row that loses what it rides
-    /// under turns into its banner (`attachmentLostCarrier`).
+    /// under turns into its banner (`attachmentLostCarrier`). A live activity turning up
+    /// takes that banner into the row under it, as it does any compact banner; the next
+    /// time it is presented, it goes back to being the row, which lays out its content
+    /// for a row, where the banner's two sides were laid out for either side of the
+    /// notch. The island has already changed shape for the activity, so the hold still
+    /// changes it only the once.
     func present(_ attachment: IslandAttachment) {
+        if let banner = attachment.banner, self.banner?.id == banner.id, bannerRidesUnder {
+            dismissBanner(id: banner.id)
+        }
         if let banner = attachment.banner, self.banner?.id == banner.id || !hasCompactContent {
             dismissAttachment(id: attachment.id)
             present(banner)
@@ -168,6 +269,7 @@ final class ActivityCenter {
             guard !Task.isCancelled else { return }
             self?.dismissAttachment(id: id)
         }
+        settleBannerClock()
     }
 
     /// Something the attachment rode under went: the activity ended, or the banner
@@ -190,6 +292,8 @@ final class ActivityCenter {
         guard let current = attachment, id == nil || current.id == id else { return }
         attachmentTimer?.cancel()
         withAnimation(.islandMorph) { attachment = nil }
+        // A banner that waited behind the row comes back for the time it had left.
+        settleBannerClock()
     }
 
     /// Stands `attachment` under the activity `activityID` until it is removed. It shows

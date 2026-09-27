@@ -67,9 +67,13 @@ extension IslandActivity {
     func swipe(_ direction: ActivitySwipe) -> Bool { false }
 }
 
-/// A transient alert that takes over the island for a moment, the way plugging in a
-/// charger or connecting AirPods does on the iPhone, then gives it back. Something
-/// that should leave the island's content in place instead is an `IslandAttachment`.
+/// A transient alert, the way plugging in a charger or connecting AirPods is on the
+/// iPhone. A card drops down and takes the island over for a moment, then gives it
+/// back. A compact one does the same while the island has nothing else to show, or
+/// when it is news of the activity showing (a new song); over any other live activity
+/// it leaves that activity where it is and rides in a row beneath it, as the volume
+/// does, so the music or the timer stays in sight (`ActivityCenter.bannerRidesUnder`).
+/// The opened island shows a compact banner in its header.
 struct IslandBanner {
     enum Style: Equatable {
         /// Stays at notch height and widens: content either side of the notch.
@@ -87,6 +91,17 @@ struct IslandBanner {
     var haptic: Bool = true
     /// Whether the banner may break through while a Focus asks for quiet.
     var interruption: BannerInterruption = .active
+    /// The activity this banner is news from, if any: Now Playing, for its song
+    /// changing. While that activity holds the compact island, a compact banner takes
+    /// its place there, the new song over the old, rather than riding in a row under
+    /// it: a row naming the song under the song would say it twice.
+    var activityID: String? = nil
+    /// Compact style, in the row under an activity (`row`): how wide each side's
+    /// content is, where the banner evens its two sides up beside the notch, so the
+    /// island stays centred on it. `nil` when each side already asks for just what its
+    /// content takes. Side by side in a row, a side evened up would leave its slack in
+    /// the middle of the line, each side's content being against its outer edge.
+    var rowWidths: (leading: CGFloat, trailing: CGFloat)? = nil
     /// Compact style: left of the notch.
     var leading: AnyView = AnyView(EmptyView())
     /// Compact style: right of the notch.
@@ -107,17 +122,27 @@ struct IslandBanner {
 /// it has left. The opened island has no compact row either, so its header shows the
 /// banner, as it shows any compact banner.
 ///
+/// A compact banner over a live activity takes the same row, as `IslandBanner.row`
+/// (see `ActivityCenter.bannerRidesUnder`). One row shows at a time: a presented
+/// attachment first, since a held key wants its answer now; then a banner riding
+/// under the activity, which comes back once the attachment has gone, its time held
+/// while it waited.
+///
 /// A row can also stand under one activity for as long as its feature keeps it there,
 /// rather than for a moment: the line of a song being sung, under Now Playing (see
 /// `ActivityCenter.setStandingAttachment(_:under:)`). It shows only while that activity
-/// holds the compact island, and gives way to a presented one, such as the volume,
-/// coming back once that has gone. It has no banner and no timer.
+/// holds the compact island, and gives way to a presented row or a banner's, coming
+/// back once they have gone. It has no banner and no timer.
 struct IslandAttachment {
+    /// The rows' height: the volume's, a banner's and the line being sung alike, so the
+    /// island keeps its height as one gives way to another.
+    static let standardHeight: CGFloat = 26
+
     /// Presenting an attachment with the id of the one on screen updates it in place
     /// (and restarts its timer) instead of animating a new one in, as with banners.
     var id: String
     /// The row's height, below the notch row.
-    var height: CGFloat = 26
+    var height: CGFloat = IslandAttachment.standardHeight
     /// The least width the row's content needs. The row spans the island's body at
     /// rest, centred on the notch; an island narrower than this widens for it, on both
     /// sides alike.

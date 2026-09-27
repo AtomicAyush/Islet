@@ -17,7 +17,8 @@ final class IslandViewModel {
         case idle
         /// An activity either side of the notch.
         case compact(id: String)
-        /// A transient alert.
+        /// A transient alert, in the island's place: a card, or a compact banner with
+        /// no live activity to ride under (`ActivityCenter.bannerRidesUnder`).
         case banner(id: String)
         /// Opened, showing the home page, an activity, the drop zone or a feature's page.
         case expanded(focus: String)
@@ -112,7 +113,8 @@ final class IslandViewModel {
     var mode: Mode {
         if isExpanded { return .expanded(focus: resolvedFocus) }
         if isSuppressed { return .hidden }
-        if let banner = center.banner { return .banner(id: banner.id) }
+        // A compact banner over a live activity leaves it be, and rides under it.
+        if let banner = center.banner, !center.bannerRidesUnder { return .banner(id: banner.id) }
         if let primary = center.primary { return .compact(id: primary.id) }
         // Camera and microphone dots need somewhere to sit, notch or not; a
         // long-lived indicator such as a Focus's waits for the island to be up.
@@ -150,9 +152,13 @@ final class IslandViewModel {
     }
 
     /// The activity in the detached bubble: the runner-up, while the island is
-    /// compact and the bubble fits beside it. Banners and the opened island absorb it.
+    /// compact and the bubble fits beside it. A banner in the island's place, and the
+    /// opened island, absorb it; a banner riding under the activity leaves it be, unless
+    /// its row widens the island too far for the bubble (`IslandLayout.takesInBubble`).
     var bubbleActivity: (any IslandActivity)? {
-        guard case .compact = mode, !layout.foldsSecondary else { return nil }
+        guard case .compact = mode else { return nil }
+        let layout = self.layout
+        guard !layout.foldsSecondary, !layout.takesInBubble else { return nil }
         return center.secondary
     }
 
@@ -163,18 +169,28 @@ final class IslandViewModel {
         return center.secondary
     }
 
-    /// The attachment riding in a row under this island's compact content: the one
-    /// presented, while there is compact content here to ride under — an activity, or
-    /// a compact banner. Not while the island is open (its header shows the
-    /// attachment's banner instead), a card is up, or the island is hidden.
+    /// The row under this island's compact content, if any. One shows at a time, the
+    /// first of:
     ///
-    /// Otherwise the standing row, while its own activity holds the compact island
-    /// with no banner over it: a presented row goes in front of it, and it comes back
-    /// once that has gone.
+    /// - the attachment presented (the volume, while a key is held), while there is
+    ///   compact content here to ride under — an activity, or a compact banner;
+    /// - a compact banner riding under the activity (`ActivityCenter.bannerRidesUnder`),
+    ///   which waits behind a presented row, its time held, and comes back once that
+    ///   has gone;
+    /// - the standing row, while its own activity holds the compact island, which waits
+    ///   behind both and comes back once they have gone.
+    ///
+    /// None while the island is open (its header shows the attachment's banner, or the
+    /// banner, instead), a card is up, or the island is hidden.
+    ///
+    /// A presented row and a banner's pass in seconds; the standing row stays as long as
+    /// its activity (`rowIsPassing`).
     var attachment: IslandAttachment? {
         switch mode {
         case .compact(let id):
             if let attachment = center.attachment { return attachment }
+            // In compact mode, a banner on screen is one riding under the activity.
+            if let row = center.banner?.row { return row }
             guard let standing = center.standingAttachment, standing.activityID == id else { return nil }
             return standing.attachment
         case .banner:
@@ -183,6 +199,23 @@ final class IslandViewModel {
         case .hidden, .idle, .expanded:
             return nil
         }
+    }
+
+    /// Whether the row under the compact island is one that passes in seconds: a
+    /// presented one (the volume) or a banner's, rather than the standing one.
+    var rowIsPassing: Bool {
+        guard case .compact = mode else { return false }
+        return center.attachment != nil || center.bannerRidesUnder
+    }
+
+    /// Whether the row under the compact island is a banner's, riding under the
+    /// activity. Hanging below the menu bar, over the top of the window beneath (a
+    /// browser's tabs), for as long as a banner lasts, and banners come often, it does
+    /// not open the island on hover: a pointer resting there is on its way to that
+    /// window. The notch row still does, and a click on the row, as on the island.
+    var showsBannerRow: Bool {
+        guard case .compact = mode else { return false }
+        return center.attachment == nil && center.bannerRidesUnder
     }
 
     // MARK: Layout
@@ -624,6 +657,10 @@ struct IslandLayout: Equatable {
     /// circle, and the inset and gap either side), part of `leadingContentWidth`. Zero
     /// unless the bubble has no room beside the island.
     var foldedWidth: CGFloat = 0
+    /// A passing row (`IslandViewModel.rowIsPassing`) widens the island too far for
+    /// the bubble beside it, and the island takes the runner-up in until the row has
+    /// gone, rather than fold it in (see `make(for:)`).
+    var takesInBubble = false
     /// Expanded body height below the notch row.
     var bodyHeight: CGFloat = 0
     /// Height of the attachment's row below the notch row; zero without one.
@@ -711,7 +748,11 @@ struct IslandLayout: Equatable {
         // both alike, keeping the island centred on the notch however wide the row asks
         // to be.
         let attachment = model.attachment
-        let attachmentWing = attachment.map { max(0, ($0.width - notch.width) / 2) } ?? 0
+        /// How far either side of the notch a row asks the island's body to reach.
+        func wing(for row: IslandAttachment?) -> CGFloat {
+            row.map { max(0, ($0.width - notch.width) / 2) } ?? 0
+        }
+        let attachmentWing = wing(for: attachment)
 
         /// Lays out content either side of the notch at notch height, both wings as
         /// wide as the wider side asks (or the attachment below them), and makes room
@@ -783,12 +824,23 @@ struct IslandLayout: Equatable {
             if center.secondary != nil {
                 // Where the bubble would end with the island at rest, so neither the
                 // pointer's hover growth nor the fold's own widening can flip the choice.
-                // An attachment wider than the compact row widens the island, and moves
-                // the bubble out with it, so it counts.
-                wings(leading: leading, trailing: trailing, grow: 0)
-                let bubbleEnd = layout.size.width / 2 + bubbleGap + layout.bubbleDiameter
-                if bubbleEnd > model.menuBarRoomRight - 2 {
+                // A row wider than the compact row widens the island, and moves the
+                // bubble out with it. The standing row, there as long as its activity,
+                // counts; a passing one (the volume, a banner's) does not. Gone in
+                // seconds, it would fold the runner-up into the activity's compact
+                // content only to take it out again, reshuffling what the row was meant
+                // to leave be. Where it pushes the bubble into the status items instead,
+                // the island takes the bubble in until the row has gone, as a banner in
+                // the island's place does.
+                func bubbleEnd(row: IslandAttachment?) -> CGFloat {
+                    notch.width / 2 + max(leading, trailing, wing(for: row)) + ear + bubbleGap + layout.bubbleDiameter
+                }
+                let standing = center.standingAttachment.flatMap { $0.activityID == id ? $0.attachment : nil }
+                let passing = model.rowIsPassing
+                if bubbleEnd(row: passing ? standing : attachment) > model.menuBarRoomRight - 2 {
                     layout.foldedWidth = foldedInset + foldedDiameter + foldedSpacing
+                } else if passing, bubbleEnd(row: attachment) > model.menuBarRoomRight - 2 {
+                    layout.takesInBubble = true
                 }
             }
             wings(leading: leading + layout.foldedWidth, trailing: trailing, grow: 5 * hover)
