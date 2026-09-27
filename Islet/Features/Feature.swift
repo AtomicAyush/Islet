@@ -75,6 +75,7 @@ final class FeatureRegistry {
         CapsLockFeature(),
         BluetoothFeature(),
         InputDevicesFeature(),
+        NetworkFeature(),
         CalendarFeature(),
         WeatherFeature(),
         PrivacyFeature(),

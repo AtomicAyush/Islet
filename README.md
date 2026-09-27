@@ -115,6 +115,19 @@ the ones macOS keeps from each device's own report, so they need no permission. 
 Bluetooth mice, keyboards and game controllers show too where macOS keeps their level; one on
 its own USB receiver (Logitech's Unifying or Bolt) tells only its maker's app.
 
+**Wi-Fi & VPN.** A word beside the notch when the connection changes: "Offline" once the Mac
+has had no way out for three seconds (a drop that ends sooner says nothing, and one that keeps
+coming back has to last longer), "Back online" when it returns, "Joined" when Wi-Fi moves to
+another network, Wi-Fi turning off or on (on, once it has joined a network), and a VPN
+connecting or disconnecting, given time to reconnect first. Over music or a timer it rides in
+a row underneath, a Focus that asks for quiet drops it, and nothing stays up at rest. Waking
+on another network names it; waking where the Mac slept says nothing. macOS names Wi-Fi
+networks only to apps with Location access, which Islet has once you have allowed it, as
+Weather asks when it uses this Mac's own location; this never asks. Without it the banners say
+"Wi-Fi", and a change of network goes unsaid. A VPN counts once it carries all of the Mac's
+traffic, by the name System Settings gives it where Islet can read that. Settings picks which
+of these show.
+
 **Calendar.** Your next event counts down beside the notch from ten minutes before it
 starts, with a Join button when there is a Zoom, Meet, Teams, Webex or FaceTime link.
 
