@@ -1,5 +1,4 @@
 import SwiftUI
-import ServiceManagement
 
 struct SettingsView: View {
     /// Remembered, and settable from `islet://settings?tab=activities`.
@@ -25,106 +24,30 @@ struct SettingsView: View {
 // MARK: - General
 
 private struct GeneralSettings: View {
-    @AppStorage(Prefs.Key.expandOnHover) private var expandOnHover = true
-    @AppStorage(Prefs.Key.hoverDelay) private var hoverDelay = 0.25
-    @AppStorage(Prefs.Key.haptics) private var haptics = true
-    @AppStorage(Prefs.Key.homeLayout) private var homeLayout = HomeLayout.scroll.rawValue
-    @AppStorage(Prefs.Key.displays) private var displays = DisplayChoice.notched.rawValue
-    @AppStorage(Prefs.Key.hideInFullScreen) private var hideInFullScreen = true
-    @AppStorage(Prefs.Key.openFromNotchInFullScreen) private var openFromNotch = true
-    @AppStorage(Prefs.Key.idlePillOnPlainDisplays) private var idlePill = false
-    @AppStorage(Prefs.Key.showMenuBarIcon) private var showMenuBarIcon = true
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var loginError: String?
-
     var body: some View {
         Form {
             Section {
-                // Through a binding, not onChange: writing the real state back after a
-                // failure would otherwise run the change again and clear the error.
-                Toggle("Open at login", isOn: Binding(
-                    get: { launchAtLogin },
-                    set: { setLaunchAtLogin($0) }
-                ))
-                if let loginError {
-                    Text(loginError).font(.caption).foregroundStyle(.red)
-                }
-                Toggle(isOn: $showMenuBarIcon) {
-                    Text("Show menu bar icon")
-                    if !showMenuBarIcon {
-                        Text("Settings stay in the opened island's gear and open when Islet is launched again.")
-                    }
-                }
-                // Without the menu bar icon, this is the only way to quit.
-                LabeledContent("Quit Islet") {
-                    Button("Quit") { NSApp.terminate(nil) }
-                }
+                GeneralRow.openAtLogin
+                GeneralRow.menuBarIcon
+                GeneralRow.quit
             }
 
             Section("Island") {
-                Toggle("Open when the pointer rests on it", isOn: $expandOnHover)
-                if expandOnHover {
-                    LabeledContent("Delay") {
-                        HStack {
-                            Slider(value: $hoverDelay, in: 0...0.6)
-                            Text("\(Int(hoverDelay * 1000)) ms")
-                                .monospacedDigit()
-                                .frame(width: 52, alignment: .trailing)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } else {
-                    Text("Click the island to open it.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Toggle("Trackpad feedback", isOn: $haptics)
-                Picker("Home tiles that don't fit", selection: $homeLayout) {
-                    ForEach(HomeLayout.allCases) { layout in
-                        Text(layout.title).tag(layout.rawValue)
-                    }
-                }
+                GeneralRow.hover
+                GeneralRow.haptics
+                GeneralRow.homeLayout
             }
 
             HomeTilesSection(arrangement: ActivityCenter.shared.homeArrangement)
 
             Section("Displays") {
-                Picker("Show the island on", selection: $displays) {
-                    ForEach(DisplayChoice.allCases) { choice in
-                        Text(choice.title).tag(choice.rawValue)
-                    }
-                }
-                Toggle("Keep a resting island on displays without a notch", isOn: $idlePill)
-                Toggle("Hide while an app is full screen", isOn: $hideInFullScreen)
-                // Only means something while hiding is on, so it sits under that,
-                // greyed out when it is off. Someone who opens the island by clicking
-                // opens it from the notch that way too.
-                Toggle(isOn: $openFromNotch) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(expandOnHover ? "Open by resting the pointer on the notch" : "Open by clicking the notch")
-                        Text("On a display without a notch, the middle of the top edge stands in for it.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.leading, 16)
-                .disabled(!hideInFullScreen)
+                GeneralRow.displays
+                GeneralRow.idlePill
+                GeneralRow.fullScreen
             }
         }
         .formStyle(.grouped)
-    }
-
-    private func setLaunchAtLogin(_ on: Bool) {
-        do {
-            if on {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-            loginError = nil
-        } catch {
-            loginError = error.localizedDescription
-        }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        .settingsSearchScrolling(tab: "general")
     }
 }
 
@@ -138,15 +61,24 @@ private struct FeatureSettings: View {
             }
         }
         .formStyle(.grouped)
+        .settingsSearchScrolling(tab: "activities")
     }
 }
 
-private struct FeatureSection: View {
+/// A feature's switch and, while it is on, its options: in the Activities tab, and
+/// under a heading in search results.
+struct FeatureSection<Header: View>: View {
     let feature: any Feature
+    /// Whether, while the feature is off, it says that its options come with it: in
+    /// results, where it may have been found by one of them.
+    private let saysWhenOff: Bool
+    private let header: Header
     @AppStorage private var isEnabled: Bool
 
-    init(feature: any Feature) {
+    init(feature: any Feature, saysWhenOff: Bool = false, @ViewBuilder header: () -> Header) {
         self.feature = feature
+        self.saysWhenOff = saysWhenOff
+        self.header = header()
         _isEnabled = AppStorage(wrappedValue: feature.enabledByDefault, Prefs.Key.featureEnabled(feature.id))
     }
 
@@ -167,10 +99,23 @@ private struct FeatureSection: View {
                     }
                 }
             }
+            .settingsSearchTarget("feature." + feature.id)
             if isEnabled, let extra = feature.settingsView() {
                 extra
+            } else if saysWhenOff, !isEnabled, feature.settingsView() != nil {
+                Text("Turn on \(feature.title) to change its settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+        } header: {
+            header
         }
+    }
+}
+
+extension FeatureSection where Header == EmptyView {
+    init(feature: any Feature) {
+        self.init(feature: feature) { EmptyView() }
     }
 }
 

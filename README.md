@@ -593,6 +593,10 @@ goes once they have all been, or are a day old.
 - `Islet/Features/` — one folder per feature. Each owns its model and views and talks to
   the island only through `ActivityCenter`. The timer is the smallest and the pattern the
   rest follow.
+- `Islet/Settings/` — the Settings window and its search. The search finds a feature by its
+  title and summary with nothing more; the other words it goes by, its settings' labels and
+  other names for it, are in `SettingsSearchTerms.swift` beside every other feature's. A
+  section added to the General tab is found once it is a `GeneralRow`.
 - `Vendor/mediaremote-adapter/` — see below.
 
 ## Credits

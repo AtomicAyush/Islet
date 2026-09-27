@@ -533,8 +533,7 @@ struct NowPlayingLibraryPanel: View {
             // As the island's own settings button does: close, then open Settings.
             PanelMessage(text: reason, button: "Open Settings") {
                 IslandManager.shared.focusedController?.model.collapse()
-                UserDefaults.standard.set("activities", forKey: SettingsView.tabKey)
-                SettingsWindowController.shared.show()
+                SettingsWindowController.shared.show(tab: "activities")
             }
         }
     }

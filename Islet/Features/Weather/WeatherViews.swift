@@ -336,8 +336,7 @@ struct WeatherSettings: View {
     /// Settings is where the person is going.
     static func open() {
         IslandManager.shared.focusedController?.model.collapse()
-        UserDefaults.standard.set("activities", forKey: SettingsView.tabKey)
-        SettingsWindowController.shared.show()
+        SettingsWindowController.shared.show(tab: "activities")
     }
 
     static func openLocationPrivacy() {

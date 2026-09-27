@@ -13,8 +13,7 @@ struct ShortcutsSettingsView: View {
     @MainActor
     static func open() {
         IslandManager.shared.focusedController?.model.collapse()
-        UserDefaults.standard.set("activities", forKey: SettingsView.tabKey)
-        SettingsWindowController.shared.show()
+        SettingsWindowController.shared.show(tab: "activities")
     }
 
     var body: some View {

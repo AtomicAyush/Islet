@@ -66,9 +66,10 @@ enum URLRouter {
             island?.collapse()
         case "settings":
             if let tab = query["tab"] {
-                UserDefaults.standard.set(tab, forKey: SettingsView.tabKey)
+                SettingsWindowController.shared.show(tab: tab)
+            } else {
+                SettingsWindowController.shared.show()
             }
-            SettingsWindowController.shared.show()
         case "preview":
             guard let name = query["feature"], let feature = feature(named: name) else { return }
             let index = Int(query["index"] ?? "0") ?? 0

@@ -23,6 +23,11 @@ protocol Feature: AnyObject {
 
     /// Extra options, shown under the feature's toggle in Settings.
     func settingsView() -> AnyView?
+    /// Settings search finds every feature by its title and summary, so a new one is
+    /// found with nothing more. These add the labels of its settings and the other
+    /// names people use for it ("dnd" for Focus); list them in
+    /// Settings/SettingsSearchTerms.swift beside every other feature's.
+    var searchTerms: SettingsSearchTerms { get }
     /// Ways to see the feature without waiting for the real event, listed in the
     /// menu bar's Preview submenu. They work whether or not the feature is enabled.
     var previews: [FeaturePreview] { get }
@@ -40,6 +45,7 @@ protocol Feature: AnyObject {
 extension Feature {
     var enabledByDefault: Bool { true }
     func settingsView() -> AnyView? { nil }
+    var searchTerms: SettingsSearchTerms { SettingsSearchTerms() }
     var previews: [FeaturePreview] { [] }
     func handle(_ url: URL) -> Bool { false }
     var homeTile: HomeTileInfo? { nil }
