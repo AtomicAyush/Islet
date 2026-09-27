@@ -9,6 +9,11 @@ struct PrivacyApp: Hashable, Sendable {
     let bundlePath: String?
     let name: String
 
+    /// The app's bundle identifier, read from its bundle on disk.
+    var bundleIdentifier: String? {
+        bundlePath.flatMap { Bundle(path: $0)?.bundleIdentifier }
+    }
+
     init(bundlePath: String) {
         self.bundlePath = bundlePath
         var name = FileManager.default.displayName(atPath: bundlePath)
@@ -443,9 +448,18 @@ final class PrivacyMonitor {
             }
         }
         if watching.contains(.location) {
-            usage.location = names.location
+            usage.location = Self.withoutIgnoredApps(names.location)
         }
         return usage
+    }
+
+    /// Location with the apps the person has said they expect left out: when only
+    /// those are using it, it doesn't count as in use at all. An unnamed use still
+    /// counts, since it could be anyone.
+    nonisolated static func withoutIgnoredApps(_ use: PrivacyUse) -> PrivacyUse {
+        guard use.inUse, !use.apps.isEmpty else { return use }
+        let apps = use.apps.filter { !PrivacyPrefs.isIgnoredForLocation($0.bundleIdentifier) }
+        return apps.isEmpty ? PrivacyUse() : PrivacyUse(inUse: true, apps: apps)
     }
 
     /// What newly started between two readings: a sensor coming on, or a new app

@@ -176,6 +176,20 @@ enum PrivacyPrefs {
     /// and some apps look up often.
     static let location = "privacy.location"
     static let sayWhichApp = "privacy.sayWhichApp"
+    /// Apps whose use of location is expected and not worth a mark: Weather and Find
+    /// My look the Mac's location up on their own schedule. Bundle identifiers; an
+    /// app's widgets and helpers, whose identifiers sit under the app's, count as it.
+    static let ignoredLocationApps = "privacy.ignoredLocationApps"
+    static let defaultIgnoredLocationApps = ["com.apple.weather", "com.apple.findmy"]
+
+    static var ignoredLocationAppIDs: [String] {
+        UserDefaults.standard.stringArray(forKey: ignoredLocationApps) ?? defaultIgnoredLocationApps
+    }
+
+    static func isIgnoredForLocation(_ bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return ignoredLocationAppIDs.contains { bundleIdentifier == $0 || bundleIdentifier.hasPrefix($0 + ".") }
+    }
 
     static func bool(_ key: String, default value: Bool) -> Bool {
         UserDefaults.standard.object(forKey: key) as? Bool ?? value

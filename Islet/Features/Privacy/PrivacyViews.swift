@@ -399,13 +399,15 @@ struct PrivacySettingsView: View {
     let monitor: PrivacyMonitor
 
     var body: some View {
-        PrivacySettingsRows(names: monitor.names)
+        PrivacySettingsRows(names: monitor.names, locationInUse: monitor.usage.location.apps)
     }
 }
 
 /// The options, and why apps go unnamed when they do.
 struct PrivacySettingsRows: View {
     let names: PrivacyNameTracker.Status
+    /// Apps using location now, offered for leaving out.
+    var locationInUse: [PrivacyApp] = []
     @AppStorage(PrivacyPrefs.camera) private var camera = true
     @AppStorage(PrivacyPrefs.microphone) private var microphone = true
     @AppStorage(PrivacyPrefs.screen) private var screen = true
@@ -422,6 +424,9 @@ struct PrivacySettingsRows: View {
         Toggle(isOn: $location) {
             Text("Location")
             Text(Self.locationDetail(for: names))
+        }
+        if location {
+            IgnoredLocationApps(inUse: locationInUse)
         }
         Toggle(isOn: $sayWhichApp) {
             Text("Say which app")
@@ -466,5 +471,61 @@ struct PrivacySettingsRows: View {
         case .failed:
             "macOS isn't letting Islet see which app is using a sensor right now, so it names only microphone apps, and can't see system audio or location in use."
         }
+    }
+}
+
+
+/// Apps whose use of location isn't marked or announced: those the person expects
+/// to look it up, Weather and Find My to begin with. Offers those, a few other Apple
+/// apps that often use location, and whatever is using it right now.
+struct IgnoredLocationApps: View {
+    let inUse: [PrivacyApp]
+    @State private var ignored = PrivacyPrefs.ignoredLocationAppIDs
+
+    /// Apple apps that commonly look the Mac's location up.
+    private static let usual = [
+        "com.apple.weather", "com.apple.findmy", "com.apple.Maps", "com.apple.reminders",
+        "com.apple.Photos", "com.apple.Home", "com.apple.iCal",
+    ]
+
+    var body: some View {
+        LabeledContent("Don't show for location") {
+            Menu(summary) {
+                ForEach(candidates, id: \.self) { id in
+                    Toggle(Self.name(of: id), isOn: Binding(
+                        get: { ignored.contains(id) },
+                        set: { isOn in set(isOn ? ignored + [id] : ignored.filter { $0 != id }) }
+                    ))
+                }
+                Divider()
+                Button("Reset to Weather and Find My") { set(PrivacyPrefs.defaultIgnoredLocationApps) }
+            }
+            .fixedSize()
+        }
+    }
+
+    private var candidates: [String] {
+        var ids = Self.usual.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+        for id in ignored + inUse.compactMap(\.bundleIdentifier) where !ids.contains(id) { ids.append(id) }
+        return ids
+    }
+
+    private var summary: String {
+        let names = ignored.map(Self.name(of:))
+        return names.isEmpty ? "None" : names.joined(separator: ", ")
+    }
+
+    private func set(_ ids: [String]) {
+        ignored = ids
+        UserDefaults.standard.set(ids, forKey: PrivacyPrefs.ignoredLocationApps)
+    }
+
+    private static func name(of bundleIdentifier: String) -> String {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            return bundleIdentifier
+        }
+        var name = FileManager.default.displayName(atPath: url.path)
+        if name.hasSuffix(".app") { name.removeLast(4) }
+        return name
     }
 }
