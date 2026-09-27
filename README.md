@@ -141,6 +141,35 @@ deletes it when the picture comes off the shelf. Ordinary links and text selecti
 the island shut. Shelved files show on the home page and drag back out wherever they are
 needed; right-click one to save a copy to Downloads.
 
+**Downloads.** While Safari, Chrome, Arc, Firefox or another browser downloads into your
+Downloads folder, the file's icon sits left of the camera and a ring fills right of it (a
+spinner while the server hasn't said how big the file is), with a count when several are under
+way. Opened, it says how much has come, how fast, and how long is left. When one finishes, a
+card holds the file for a few seconds, and for as long as the pointer rests on it: drag it
+straight to where it's needed, open it, or show it in Finder. Browsers tell Finder how a
+download is going by publishing its progress, which is how Finder draws the bar under the
+file's icon, and Islet listens the same way; a browser that publishes nothing (Firefox) is
+followed by the size of its partial file. Browsers also tell the Dock when a download finishes,
+so one too quick to see still gets its card. Nothing runs while nothing is downloading: a
+download that stops for a minute (paused, or waiting for you to keep a file Chrome has warned
+about) leaves the island, and comes back the moment it moves again. Islet only watches: it
+can't pause or cancel another app's download, and one that fails or is cancelled just goes.
+Safari's own download folder is followed too when it is set to another; a download another
+browser saves elsewhere shows only once it has finished. The first time, macOS asks whether
+Islet may see your Downloads folder.
+
+**Screenshots.** Take a screenshot and it comes up in a card for a few seconds, as on the
+iPhone, and stays while the pointer rests on it: drag the picture straight into another app, or
+copy it, put it on the Drop Zone shelf, show it in Finder or move it to the Trash (only ever on
+your click). Islet knows a screenshot by the tag macOS gives it, through Spotlight and by
+watching the folder the Screenshot app saves to, so a picture that isn't one, or an old
+screenshot moved there, never shows. macOS holds each new screenshot in its floating thumbnail
+for about five seconds before saving it, so the card comes after that; turn off Show Floating
+Thumbnail under Options in the Screenshot app (⇧⌘5) for it to come at once. A screenshot copied
+to the clipboard (with Control held down) makes no file, so Islet doesn't see it. The first
+time, macOS asks whether Islet may see the folder screenshots are saved to (the Desktop, unless
+you've chosen another).
+
 Every feature can be turned off, and each has previews in the menu bar item, so you can see
 what it looks like without waiting for the real thing.
 

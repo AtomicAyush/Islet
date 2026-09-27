@@ -59,6 +59,22 @@ final class DropZoneFeature: Feature {
         return true
     }
 
+    // MARK: Shelf for the rest of Islet
+
+    /// Whether the shelf takes files from elsewhere in Islet (the screenshot card's Add
+    /// to Shelf): while Drop Zone is on, and its shelf is on the home page.
+    var takesFiles: Bool { isRunning }
+
+    /// Puts files on the shelf as a drop there would. Returns whether they are on it
+    /// afterwards; ones already there count.
+    @discardableResult
+    func shelve(_ urls: [URL]) -> Bool {
+        guard isRunning, !urls.isEmpty, urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) })
+        else { return false }
+        model.shelf.add(urls)
+        return true
+    }
+
     // MARK: Island
 
     private var isAttached: Bool { isRunning || previewTeardown != nil }

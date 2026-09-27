@@ -63,6 +63,8 @@ final class FeatureRegistry {
         ShortcutsFeature(),
         BannerFeature(),
         DropZoneFeature(),
+        DownloadsFeature(),
+        ScreenshotsFeature(),
     ]
 
     private var running: Set<String> = []
