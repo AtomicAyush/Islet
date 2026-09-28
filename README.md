@@ -571,6 +571,7 @@ open "islet://timer/start?minutes=25"
 | `style` | `compact`, beside the notch, or `card` |
 | `sound` | One of the Mac's alert sounds (`Glass`, `Ping`, `Basso` and the rest of /System/Library/Sounds); silent without |
 | `interruption` | `passive` lets a Focus that asks for quiet hold it back, as it does a song change |
+| `activity` | `claudeCode`: the banner is news of the Claude Code activity, so while that holds the island, one beside the notch takes its place rather than going in a row under it; anything else is ignored |
 
 Spaces go in as `%20` (a `+` stays a plus), and a `#` as `%23`, since a bare one ends the
 query. Titles are cut at 60 characters and subtitles at 120, and a colour that would not show
@@ -579,7 +580,8 @@ stand out. Nothing in a banner can be clicked, whatever the URL says. Banners th
 than one a second, or more than five in ten seconds, wait their turn, and only the newest of
 those waiting is shown, so a script stuck in a loop cannot keep the island flickering. While
 something is already in the island — music, a video, a timer — a banner beside the notch goes
-in a slim row under it instead, as the volume does, so what was there stays in sight. With the
+in a slim row under it instead, as the volume does, so what was there stays in sight, unless
+the banner is news of what is there (`activity`), as a song change is of the music. With the
 island open, a banner shows in its header, and a card comes as a compact one instead. While
 Presentation Mode is on they are held back, sounds and all, and counted. Settings → Activities
 → Show in Islet turns them all off.
@@ -654,10 +656,13 @@ script keeps no command line: a command Claude Code describes by the command alo
 the name of the program it runs. If you copied the script before background agents and
 commands showed, copy it again to see them; workflows' progress needs no new copy. Claude Code
 waits for UserPromptSubmit's hooks before it sends the prompt, so the script is quick, prints
-nothing and always succeeds. It needs `jq`, part of
-macOS from 15 on (`brew install jq` before that). It keeps the last 200 events other than
-agents stopping in `~/.claude/hooks/islet-hook-log.jsonl`, to show what each carries (a
-prompt by its length alone), and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing
+nothing and always succeeds. Its banners are news of the Claude Code activity
+(`activity=claudeCode`), so while that holds the island, "Needs permission" takes its place
+for a moment rather than going in a row under its own raised hand; if yours go in the row,
+copy the script again. It needs `jq`, part of macOS from 15 on (`brew install jq` before
+that). It keeps the last 200 events other than agents stopping in
+`~/.claude/hooks/islet-hook-log.jsonl`, to show what each carries (a prompt by its length
+alone), and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing
 them. Its header lists what each session's file holds. The workflows the earlier script kept in
 `~/.claude/hooks/islet-workflows` are moved over at each session's next event, and the folder
 goes once they have all been, or are a day old.

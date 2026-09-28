@@ -20,7 +20,8 @@
 #   subagent      SubagentStop
 #   task          TaskCompleted
 #   end           SessionEnd
-# ISLET_NOTIFY_DRY=1 prints the banners instead of showing them.
+# ISLET_NOTIFY_DRY=1 prints the banners instead of showing them, the activity they are
+# news of last.
 #
 # A session's file, times in seconds since 1970:
 #   version         1
@@ -118,9 +119,14 @@ case "$cwd" in
 esac
 # "Title · Islet", or the title alone where there is no project.
 titled() { printf '%s' "$1${project:+ · $project}"; }
+# Every banner here is news of the Claude Code activity, which shows each session: while
+# it holds the island, a banner beside the notch takes its place rather than going in a
+# row under it, where "Needs permission" would sit under its own raised hand. A card
+# takes the island anyway, but one that comes while the island is open goes up as a
+# compact one, and may still be up beside the notch once it closes.
 show() { # title subtitle symbol tint [style]
-  if [ -n "$ISLET_NOTIFY_DRY" ]; then echo "banner: $1 | $2 | $3 | $4 | ${5:-compact}"; return; fi
-  open -g "islet://banner?title=$(enc "$1")&subtitle=$(enc "$2")&symbol=$3&tint=$4&style=${5:-compact}" 2>/dev/null
+  if [ -n "$ISLET_NOTIFY_DRY" ]; then echo "banner: $1 | $2 | $3 | $4 | ${5:-compact} | claudeCode"; return; fi
+  open -g "islet://banner?title=$(enc "$1")&subtitle=$(enc "$2")&symbol=$3&tint=$4&style=${5:-compact}&activity=claudeCode" 2>/dev/null
 }
 
 case "$kind" in

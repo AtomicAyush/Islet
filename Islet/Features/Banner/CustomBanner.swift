@@ -26,6 +26,10 @@ struct CustomBanner: Equatable {
     /// Active unless asked otherwise: a script's banner is something its person set up
     /// to hear about. Only a passive one gives way to a Focus that asks for quiet.
     var interruption: BannerInterruption
+    /// The activity this banner is news of (`IslandBanner.activityID`): one of
+    /// `newsActivities`, or `nil`. While that activity holds the compact island, a
+    /// compact banner takes its place rather than riding in a row under it.
+    var activityID: String? = nil
 
     static let defaultSymbol = "bell.fill"
     /// Longer than either style shows whole; the limits only stop a script from handing
@@ -41,6 +45,13 @@ struct CustomBanner: Equatable {
         "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass", "Hero",
         "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
     ]
+
+    /// The activities a banner from outside Islet may be news of: Claude Code's, whose
+    /// sessions a script tells Islet about (`Scripts/claude-code-hook.sh`), and whose
+    /// news under it would say twice what it already shows. Islet's own activities give
+    /// their own news, and a banner from anywhere else rides under them, so whatever it
+    /// says, the music or the timer stays in sight.
+    static let newsActivities = ["claudeCode"]
 
     /// Long enough to read a title at a glance; a card, with more to read, stays longer.
     static func defaultDuration(for style: BannerStyle) -> TimeInterval {
@@ -63,7 +74,8 @@ extension CustomBanner {
         duration: TimeInterval? = nil,
         style: BannerStyle = .compact,
         sound: String? = nil,
-        interruption: BannerInterruption = .active
+        interruption: BannerInterruption = .active,
+        activity: String? = nil
     ) {
         guard let title = Self.clean(title, limit: Self.titleLimit) else { return nil }
         self.init(
@@ -74,7 +86,8 @@ extension CustomBanner {
             duration: Self.clampedDuration(duration, style: style),
             style: style,
             sound: Self.systemSound(named: sound),
-            interruption: interruption
+            interruption: interruption,
+            activityID: Self.newsActivity(activity)
         )
     }
 
@@ -199,6 +212,13 @@ extension CustomBanner {
         guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return nil }
         return systemSounds.first { $0.caseInsensitiveCompare(name) == .orderedSame }
     }
+
+    /// The activity by that id, whatever its case, if a banner may be news of it;
+    /// otherwise `nil`, and the banner is news of none.
+    static func newsActivity(_ id: String?) -> String? {
+        guard let id = id?.trimmingCharacters(in: .whitespaces), !id.isEmpty else { return nil }
+        return newsActivities.first { $0.caseInsensitiveCompare(id) == .orderedSame }
+    }
 }
 
 /// How a custom banner takes the island over.
@@ -218,9 +238,11 @@ enum BannerStyle: String, CaseIterable, Sendable {
 ///
 /// The show URL takes `title` (required), `subtitle`, `symbol`, `tint` (a colour's name,
 /// or hex as `ff9500` or `%23ff9500`; `color` and `colour` are read too), `duration` in
-/// seconds, `style` (`compact` or `card`), `sound` (a system sound's name) and
-/// `interruption` (`passive` lets a Focus hold it back). Names are read in any case, the
-/// last of a repeated one wins, and anything unknown is ignored.
+/// seconds, `style` (`compact` or `card`), `sound` (a system sound's name),
+/// `interruption` (`passive` lets a Focus hold it back) and `activity`, the activity it
+/// is news of (`claudeCode`), whose place it takes rather than riding under it. Names
+/// are read in any case, the last of a repeated one wins, and anything unknown is
+/// ignored.
 enum BannerRequest: Equatable {
     case show(CustomBanner)
     case dismiss
@@ -253,7 +275,8 @@ enum BannerRequest: Equatable {
             duration: query["duration"].flatMap { Double($0.trimmingCharacters(in: .whitespaces)) },
             style: style,
             sound: query["sound"],
-            interruption: query["interruption"]?.lowercased() == "passive" ? .passive : .active
+            interruption: query["interruption"]?.lowercased() == "passive" ? .passive : .active,
+            activity: query["activity"]
         ) else { return nil }
         self = .show(banner)
     }

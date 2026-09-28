@@ -15,6 +15,7 @@ extension CustomBanner {
                 duration: duration,
                 interruption: interruption,
                 personal: .messages,
+                activityID: activityID,
                 leading: AnyView(CustomBannerLeading(banner: self)),
                 trailing: AnyView(CustomBannerTrailing(banner: self))
             )
@@ -25,6 +26,7 @@ extension CustomBanner {
                 duration: duration,
                 interruption: interruption,
                 personal: .messages,
+                activityID: activityID,
                 content: AnyView(CustomBannerCard(banner: self))
             )
         }
