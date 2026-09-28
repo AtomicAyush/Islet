@@ -176,7 +176,7 @@ struct TimerDoneCard: View {
 /// Quick starts on the home page, or the countdown when one is running.
 struct TimerHomeTile: View {
     let model: TimerModel
-    static let presets: [TimeInterval] = [60, 5 * 60, 10 * 60, 25 * 60]
+    @AppStorage(TimerPresets.key) private var presets = TimerPresets.stored(TimerPresets.standard)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -189,11 +189,12 @@ struct TimerHomeTile: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
-                    ForEach(Self.presets, id: \.self) { seconds in
+                    // By place, since two quick starts may be set to the same length.
+                    ForEach(Array(TimerPresets.minutes(in: presets).enumerated()), id: \.offset) { _, minutes in
                         Button {
-                            model.start(seconds)
+                            model.start(TimeInterval(minutes * 60))
                         } label: {
-                            Text("\(Int(seconds / 60))m")
+                            Text(TimerPresets.label(minutes))
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
@@ -206,5 +207,32 @@ struct TimerHomeTile: View {
                 }
             }
         }
+    }
+}
+
+/// The tile's four quick starts, in whole minutes, as Settings keeps them: one string,
+/// "1,5,10,25", so the tile can follow it through `@AppStorage`. Anything unreadable
+/// or the wrong length reads as the standard four.
+enum TimerPresets {
+    static let key = "timer.presets"
+    static let standard = [1, 5, 10, 25]
+    /// A minute to twelve hours, the longest a timer runs.
+    static let range = 1...720
+
+    static func minutes(in stored: String) -> [Int] {
+        let values = stored.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard values.count == standard.count else { return standard }
+        return values.map { min(max($0, range.lowerBound), range.upperBound) }
+    }
+
+    static func stored(_ minutes: [Int]) -> String {
+        minutes.map(String.init).joined(separator: ",")
+    }
+
+    /// How a quick start reads on the tile: "5m", "1h", "1h30".
+    static func label(_ minutes: Int) -> String {
+        guard minutes >= 60 else { return "\(minutes)m" }
+        let hours = minutes / 60, rest = minutes % 60
+        return rest == 0 ? "\(hours)h" : "\(hours)h\(String(format: "%02d", rest))"
     }
 }

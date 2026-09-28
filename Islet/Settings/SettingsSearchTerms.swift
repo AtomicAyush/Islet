@@ -75,8 +75,10 @@ extension MixerFeature {
 extension TimerFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
-            labels: ["Sound when done"],
-            keywords: ["countdown", "stopwatch", "alarm", "pomodoro", "minutes"]
+            labels: ["Sound when done", "First quick start", "Second quick start", "Third quick start",
+                     "Fourth quick start", "Reset Quick Starts to 1, 5, 10 and 25 Minutes"],
+            keywords: ["countdown", "stopwatch", "alarm", "pomodoro", "minutes", "presets", "quick start",
+                       "preset"]
         )
     }
 }

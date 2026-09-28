@@ -134,6 +134,7 @@ final class TimerActivity: IslandActivity {
 
 private struct TimerSettings: View {
     @AppStorage("timer.sound") private var sound = "Glass"
+    @AppStorage(TimerPresets.key) private var presets = TimerPresets.stored(TimerPresets.standard)
 
     var body: some View {
         Picker("Sound when done", selection: $sound) {
@@ -141,6 +142,36 @@ private struct TimerSettings: View {
         }
         .onChange(of: sound) { _, name in
             if name != "None" { NSSound(named: NSSound.Name(name))?.play() }
+        }
+        quickStart("First quick start", 0)
+        quickStart("Second quick start", 1)
+        quickStart("Third quick start", 2)
+        quickStart("Fourth quick start", 3)
+        if TimerPresets.minutes(in: presets) != TimerPresets.standard {
+            Button("Reset Quick Starts to 1, 5, 10 and 25 Minutes") {
+                presets = TimerPresets.stored(TimerPresets.standard)
+            }
+        }
+    }
+
+    /// One of the home tile's quick starts: typed, or nudged a minute at a time.
+    private func quickStart(_ title: String, _ index: Int) -> some View {
+        let value = Binding<Int>(
+            get: { TimerPresets.minutes(in: presets)[index] },
+            set: { minutes in
+                var all = TimerPresets.minutes(in: presets)
+                all[index] = minutes
+                presets = TimerPresets.stored(all)
+            }
+        )
+        return LabeledContent(title) {
+            HStack(spacing: 6) {
+                SettingsNumberField(value: value, range: TimerPresets.range, label: title)
+                Text(value.wrappedValue == 1 ? "minute" : "minutes")
+                    .foregroundStyle(.secondary)
+                Stepper(title, value: value, in: TimerPresets.range)
+                    .labelsHidden()
+            }
         }
     }
 }
