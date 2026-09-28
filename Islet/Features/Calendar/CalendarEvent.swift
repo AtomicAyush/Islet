@@ -18,8 +18,11 @@ struct CalendarEvent: Identifiable, Equatable, Sendable {
     let end: Date
     let isAllDay: Bool
     let location: String?
-    /// The calendar's colour, lifted if it is too dark to read on black.
-    let color: Color
+    /// The calendar's colour, as chosen. It is the person's colour, so the island only
+    /// fits it for contrast and never swaps it for the accent; on the black island it is
+    /// lifted first if it is too dark to make out on black (`shown(_:in:)`). `nil` for a
+    /// calendar without one, which is drawn in the accent (`ink(minimum:on:)`).
+    let color: RGB?
     let meeting: MeetingLink?
 
     /// When the island lets go of the event: five minutes in, or its end if sooner. A
@@ -55,19 +58,45 @@ extension CalendarEvent {
             end: end,
             isAllDay: event.isAllDay,
             location: location?.isEmpty == false ? location : nil,
-            color: Self.readableColor(event.calendar?.cgColor),
+            color: Self.ownColor(event.calendar?.cgColor),
             meeting: MeetingLink.find(url: event.url, in: [event.location, event.notes], detector: detector)
         )
     }
 
-    /// The same hue, brightened just enough to stand out on the island's black.
-    private static func readableColor(_ cgColor: CGColor?) -> Color {
-        guard let cgColor, let color = NSColor(cgColor: cgColor)?.usingColorSpace(.sRGB) else {
-            return CalendarPalette.blue
-        }
+    /// The calendar's colour in sRGB; `nil` for none.
+    private static func ownColor(_ cgColor: CGColor?) -> RGB? {
+        guard let cgColor, let color = NSColor(cgColor: cgColor) else { return nil }
+        return RGB(color)
+    }
+
+    /// The calendar's colour as `theme`'s island starts from it. On the black island,
+    /// the same hue brightened just enough to stand out on black, as the island always
+    /// drew it; on any other island the colour as chosen, which a light island keeps
+    /// darker and so clearer. Either way it is then only fitted for contrast.
+    static func shown(_ colour: RGB, in theme: IslandTheme) -> RGB {
+        guard theme.isBlack else { return colour }
         var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
-        color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
-        return Color(hue: hue, saturation: saturation, brightness: max(brightness, 0.7))
+        colour.nsColor.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        guard brightness < 0.7 else { return colour }
+        return rgb(hue: Double(hue), saturation: Double(saturation), brightness: 0.7)
+    }
+
+    /// A colour from hue (0..<1), saturation and brightness, as `Color(hue:saturation:brightness:)`
+    /// gives it.
+    private static func rgb(hue: Double, saturation: Double, brightness: Double) -> RGB {
+        let sector = (hue - hue.rounded(.down)) * 6
+        let f = sector - sector.rounded(.down)
+        let p = brightness * (1 - saturation)
+        let q = brightness * (1 - saturation * f)
+        let t = brightness * (1 - saturation * (1 - f))
+        switch Int(sector) % 6 {
+        case 0: return RGB(brightness, t, p)
+        case 1: return RGB(q, brightness, p)
+        case 2: return RGB(p, brightness, t)
+        case 3: return RGB(p, q, brightness)
+        case 4: return RGB(t, p, brightness)
+        default: return RGB(brightness, p, q)
+        }
     }
 }
 
@@ -150,11 +179,47 @@ enum CalendarApp {
     }()
 }
 
-/// The iPhone's dark-mode system colours, which the island's content uses throughout.
+/// Calendar colours: the iPhone's dark-mode system colours, for the samples. They are
+/// drawn as the person's colours are.
 enum CalendarPalette {
-    static let red = Color(red: 1, green: 0.271, blue: 0.227)
-    static let orange = Color(red: 1, green: 0.624, blue: 0.039)
-    static let green = Color(red: 0.188, green: 0.820, blue: 0.345)
-    static let blue = Color(red: 0.039, green: 0.518, blue: 1)
-    static let purple = Color(red: 0.749, green: 0.353, blue: 0.949)
+    static let orange = RGB(1, 0.624, 0.039)
+    static let green = RGB(0.188, 0.820, 0.345)
+    static let blue = RGB(0.039, 0.518, 1)
+    static let purple = RGB(0.749, 0.353, 0.949)
+}
+
+extension FeatureTint {
+    /// "Up next" over the home tile's list: the Calendar app's red.
+    static let calendarHeader = FeatureTint.colour(RGB(1, 0.271, 0.227))
+    /// The Join button: the green of a call's answer button.
+    static let calendarJoin = FeatureTint.colour(RGB(0.188, 0.820, 0.345))
+    /// An event whose calendar has no colour: nobody chose one, so it is a highlight
+    /// like any other, Calendar's own blue under Feature colours and otherwise the
+    /// accent.
+    static let calendarEvent = FeatureTint.colour(CalendarPalette.blue)
+}
+
+extension CalendarEvent {
+    /// The event's colour on the island: its calendar's, only fitted for contrast, or,
+    /// for a calendar without one, the accent. `Contrast.text` for words.
+    func ink(minimum: Double = Contrast.graphic, on backdrop: IslandBackdrop = .island) -> CalendarEventInk {
+        CalendarEventInk(colour: color, minimum: minimum, backdrop: backdrop)
+    }
+}
+
+/// An event's colour as a shape style, worked out for the island's colour in the
+/// environment (`CalendarEvent.shown(_:in:)`).
+struct CalendarEventInk: ShapeStyle, Hashable, Sendable {
+    let colour: RGB?
+    let minimum: Double
+    let backdrop: IslandBackdrop
+
+    func ink(in theme: IslandTheme) -> IslandInk {
+        guard let colour else { return .accent(.calendarEvent, minimum: minimum, on: backdrop) }
+        return .fitted(CalendarEvent.shown(colour, in: theme), minimum: minimum, on: backdrop)
+    }
+
+    func resolve(in environment: EnvironmentValues) -> Color {
+        IslandStyle(ink: ink(in: environment.islandTheme)).resolve(in: environment)
+    }
 }

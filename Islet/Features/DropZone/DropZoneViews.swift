@@ -1,11 +1,19 @@
 import SwiftUI
 
-/// iOS system blue, AirDrop's colour.
-let dropZoneBlue = Color(red: 0.04, green: 0.52, blue: 1.0)
-/// iOS system yellow, the shelf's colour.
-let dropZoneYellow = Color(red: 1.0, green: 0.84, blue: 0.04)
-/// iOS system red, for a drop that could not be handled.
-let dropZoneRed = Color(red: 1.0, green: 0.27, blue: 0.23)
+extension FeatureTint {
+    /// The AirDrop tile: iOS system blue, AirDrop's colour.
+    static let dropZoneAirDrop = FeatureTint.colour(RGB(0.04, 0.52, 1.0))
+    /// The shelf's tile, its label on the home page and the screenshot's Add to Shelf:
+    /// iOS system yellow.
+    static let dropZoneShelf = FeatureTint.colour(RGB(1.0, 0.84, 0.04))
+}
+
+enum DropZonePalette {
+    /// A drop that could not be handled: the failure red as this page has always drawn
+    /// it, a shade off the system's. It means something, so it never takes the accent
+    /// and is only fitted.
+    static let failed = RGB(1.0, 0.27, 0.23)
+}
 
 /// The page the island opens onto while a file or a picture is dragged to the notch:
 /// AirDrop on the left, the shelf on the right. The island takes the drops and says
@@ -30,8 +38,22 @@ struct DropZonePage: View {
 private struct DropTile: View {
     let place: DropZoneModel.Place
     let model: DropZoneModel
+    @Environment(\.islandTheme) private var theme
 
-    private var accent: Color { place == .airDrop ? dropZoneBlue : dropZoneYellow }
+    private var tint: FeatureTint { place == .airDrop ? .dropZoneAirDrop : .dropZoneShelf }
+
+    /// The tile's colour at full strength, fitted to the island: on the black island
+    /// with Feature colours, exactly the feature's own.
+    private var accent: RGB { theme.fitted(theme.accentSource(tint)) }
+
+    /// Lit, the tile is a wash of its colour, as strong as leaves its words readable.
+    private var litWash: Double { theme.readableWash(0.2, of: accent, over: theme.island) }
+
+    /// What the tile's words and badge lie on: a wash of its colour while lit, or of the
+    /// ink.
+    private func backdrop(isLit: Bool) -> IslandBackdrop {
+        isLit ? .fill(accent.composited(litWash, over: theme.island)) : .surface(0.06)
+    }
 
     var body: some View {
         let isLit = model.hovered == place || model.demoTarget == place
@@ -45,10 +67,12 @@ private struct DropTile: View {
             VStack(spacing: 1) {
                 Text(place == .airDrop ? "AirDrop" : "Shelf")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandText(1, on: backdrop(isLit: isLit)))
                 Text(note?.text ?? subtitle(isLit: isLit))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(note?.isError == true ? dropZoneRed : .white.opacity(0.55))
+                    .foregroundStyle(note?.isError == true
+                        ? .islandFitted(DropZonePalette.failed, minimum: Contrast.text, on: backdrop(isLit: isLit))
+                        : .islandText(0.55, on: backdrop(isLit: isLit)))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .contentTransition(.opacity)
@@ -62,10 +86,10 @@ private struct DropTile: View {
                     .padding(12)
             }
         }
-        .background(shape.fill(isLit ? accent.opacity(0.2) : Color.white.opacity(0.06)))
+        .background(shape.fill(isLit ? .island(.fitted(accent)).opacity(litWash) : .islandSurface(0.06)))
         .overlay(
             shape.strokeBorder(
-                isLit ? accent : Color.white.opacity(0.16),
+                isLit ? .islandAccent(tint) : .islandDecorative(0.16),
                 style: StrokeStyle(lineWidth: isLit ? 2 : 1.5, dash: isLit ? [] : [5, 4])
             )
         )
@@ -76,11 +100,9 @@ private struct DropTile: View {
     }
 
     private func badge(isLit: Bool, note: DropZoneModel.Note?) -> some View {
-        let tint = note?.isError == true ? dropZoneRed : accent
         let symbol = note.map { $0.isError ? "exclamationmark" : "checkmark" }
             ?? (place == .airDrop ? "dot.radiowaves.left.and.right" : "tray.and.arrow.down.fill")
-        // Yellow is too light to carry a white glyph.
-        let glyphOnFill: Color = place == .shelf ? .black : .white
+        let colours = badgeColours(isLit: isLit, isError: note?.isError == true)
 
         return Group {
             if note?.isWorking == true {
@@ -90,12 +112,29 @@ private struct DropTile: View {
             } else {
                 Image(systemName: symbol)
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(isLit ? glyphOnFill : tint)
+                    .foregroundStyle(colours.glyph)
                     .contentTransition(.symbolEffect(.replace))
             }
         }
         .frame(width: 40, height: 40)
-        .background(Circle().fill(tint.opacity(isLit ? 1 : 0.2)))
+        .background(Circle().fill(colours.disc))
+    }
+
+    /// Lit, the badge is a disc of the tile's colour with the glyph in black or white on
+    /// it; otherwise the glyph is in the colour (red for a failed drop) on a wash of it
+    /// over the tile, as a round button's is (`IslandTheme.onWash`).
+    private func badgeColours(isLit: Bool, isError: Bool) -> (glyph: AnyShapeStyle, disc: AnyShapeStyle) {
+        if isLit {
+            guard !theme.isDefault else {
+                // Yellow is too light to carry a white glyph.
+                let glyph: Color = place == .shelf ? .black : .white
+                return (AnyShapeStyle(glyph), AnyShapeStyle(accent.color))
+            }
+            return (AnyShapeStyle(.islandOnFill(accent)), AnyShapeStyle(.islandFill(accent)))
+        }
+        let ink: IslandInk = isError ? .fitted(DropZonePalette.failed) : .accent(tint)
+        let colours = theme.onWash(ink, wash: 0.2, on: backdrop(isLit: false))
+        return (AnyShapeStyle(colours.mark), AnyShapeStyle(colours.wash))
     }
 
     private func subtitle(isLit: Bool) -> String {
@@ -118,12 +157,13 @@ private struct DropTile: View {
 /// corner, so a drop is seen to land.
 private struct ShelfFan: View {
     let items: [ShelfItem]
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         HStack(spacing: -12) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 FileIcon(url: item.url, size: 24)
-                    .shadow(color: .black.opacity(0.45), radius: 3, y: 1)
+                    .shadow(color: theme.shadow(0.45), radius: 3, y: 1)
                     .rotationEffect(.degrees((Double(index) - Double(items.count - 1) / 2) * 9))
                     .zIndex(Double(items.count - index))
             }

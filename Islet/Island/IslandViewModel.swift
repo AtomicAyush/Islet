@@ -935,6 +935,15 @@ struct IslandLayout: Equatable {
     /// than the compact island's, for an island nearly twice as tall, and still clear
     /// of the row's content.
     static let attachedRadius: CGFloat = 16
+    /// The resting island under a notch: its ears, and its bottom corners. At rest it
+    /// stands in for the camera housing, and a coloured island keeps a black shape of
+    /// exactly this size at its top (`IslandRootView`'s notch plate).
+    static let restingEar: CGFloat = 6
+    static let restingRadius: CGFloat = 11
+    /// How long a coloured island keeps its colour once it has nothing to show: long
+    /// enough for it to shrink back to the notch's size, where the plate covers it,
+    /// before it turns black again.
+    static let colourHold: Duration = .milliseconds(600)
 
     var size: CGSize
     /// Gap above the island: zero when it hangs from a notch, a few points when it
@@ -1008,6 +1017,11 @@ struct IslandLayout: Equatable {
     /// Whether the island is drawn. When it is not, it is fully transparent, and the
     /// window passes clicks where it would be straight through.
     var isDrawn = true
+    /// Whether the island is painted in the chosen colour. Under a notch the resting
+    /// island (hidden, idle, with indicators or under the pointer) is the notch, and
+    /// stays black; whenever it shows something it takes the colour. Without a notch it
+    /// always does, the resting pill included.
+    var wearsColour = true
 
     /// Default width either side of the notch for compact content.
     static func defaultSide(for notch: CGSize) -> CGFloat { notch.height + 12 }
@@ -1227,7 +1241,7 @@ struct IslandLayout: Equatable {
         let floating = !metrics.hasNotch
         var notch = metrics.notchSize
         if !floating { notch.width += 2 }
-        let ear: CGFloat = floating ? 0 : 6
+        let ear: CGFloat = floating ? 0 : restingEar
         let side = defaultSide(for: notch)
         let hover: CGFloat = model.isHovering ? 1 : 0
         let center = model.center
@@ -1239,7 +1253,7 @@ struct IslandLayout: Equatable {
             size: CGSize(width: notch.width + 2 * ear, height: notch.height),
             topInset: metrics.topInset,
             earRadius: ear,
-            bottomRadius: floating ? notch.height / 2 : 11,
+            bottomRadius: floating ? notch.height / 2 : restingRadius,
             topRadius: floating ? notch.height / 2 : 0,
             notch: notch,
             bubbleDiameter: notch.height - 4
@@ -1321,7 +1335,7 @@ struct IslandLayout: Equatable {
                 // A little growth under the pointer says "this opens".
                 layout.size.width += 14 * hover
                 layout.size.height += 3 * hover
-                corners(11 + 2 * hover)
+                corners(restingRadius + 2 * hover)
             }
 
         case .compact(let id):
@@ -1433,6 +1447,11 @@ struct IslandLayout: Equatable {
             ))
             corners(30, top: 24)
             layout.showsShadow = true
+        }
+
+        switch model.mode {
+        case .hidden, .idle: layout.wearsColour = floating
+        case .compact, .banner, .expanded: break
         }
 
         // Never ask for more than the window can hold.

@@ -2,12 +2,12 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The iPhone's cyan in its dark appearance: of a family with the downloads' blue, and
-/// told apart from it at a glance when both are up.
-let copiesCyan = Color(red: 100 / 255, green: 210 / 255, blue: 255 / 255)
-private let copiesCyanNS = NSColor(srgbRed: 100 / 255, green: 210 / 255, blue: 255 / 255, alpha: 1)
-/// The iPhone's green in its dark appearance, for a copy's tick.
-private let copiedGreen = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
+extension FeatureTint {
+    /// The ring, the spinner and the pages: the iPhone's cyan in its dark appearance,
+    /// of a family with the downloads' blue, and told apart from it at a glance when
+    /// both are up.
+    static let fileCopies = FeatureTint.colour(RGB(bytes: 100, 210, 255))
+}
 
 // MARK: - Pieces
 
@@ -24,6 +24,7 @@ struct FileCopyIcon: View {
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
+            .fileIconBacking(size: size)
             .accessibilityHidden(true)
     }
 }
@@ -56,13 +57,14 @@ struct FileCopyMark: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .fontWeight(.semibold)
-                    .foregroundStyle(copiedGreen)
+                    // Done: the success green, never the accent.
+                    .foregroundStyle(.islandHue(.success))
                     .transition(.scale(scale: 0.4).combined(with: .opacity))
             } else if let fraction = item?.fraction {
-                ProgressRing(fraction: fraction, lineWidth: lineWidth, tint: copiesCyan)
+                ProgressRing(fraction: fraction, lineWidth: lineWidth, tint: .accent(.fileCopies))
                     .transition(.opacity)
             } else {
-                ShortcutSpinner(lineWidth: lineWidth, color: copiesCyanNS)
+                ShortcutSpinner(lineWidth: lineWidth, tint: .accent(.fileCopies))
                     .transition(.opacity)
             }
         }
@@ -108,7 +110,7 @@ struct FileCopiesMinimal: View {
                 if !model.isDisplayedFinished {
                     Image(systemName: "doc.on.doc.fill")
                         .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(copiesCyan)
+                        .foregroundStyle(.islandAccent(.fileCopies))
                 }
             }
             .padding(5)
@@ -132,20 +134,20 @@ struct FileCopiesExpanded: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.name)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(Self.status(item, isFinished: isFinished))
                         .font(.system(size: 12, weight: .medium))
                         .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if !isFinished, let caption = Self.caption(item, others: model.count - 1) {
                         Text(caption)
                             .font(.system(size: 11, weight: .medium))
                             .monospacedDigit()
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(.islandText(0.4))
                             .lineLimit(1)
                     }
                 }
@@ -162,7 +164,7 @@ struct FileCopiesExpanded: View {
                     } else if item.canStop, !item.isStopping {
                         // The ring goes round the button, so it still says how far along
                         // the copy is: the stop button of an App Store download.
-                        RoundButton(symbol: "stop.fill", tint: .white, diameter: 32) { stop(item.id) }
+                        RoundButton(symbol: "stop.fill", diameter: 32) { stop(item.id) }
                             .help("Stop copying")
                             .accessibilityLabel("Stop copying")
                     } else if let fraction = item.fraction {
@@ -170,7 +172,7 @@ struct FileCopiesExpanded: View {
                         Text("\(Int((fraction * 100).rounded(.down)))%")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .monospacedDigit()
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.islandPrimary)
                     }
                 }
                 .frame(width: 46, height: 46)

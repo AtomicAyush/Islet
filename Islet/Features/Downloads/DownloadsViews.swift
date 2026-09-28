@@ -2,9 +2,11 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The iPhone's blue in its dark appearance, Safari's colour for downloads.
-let downloadsBlue = Color(red: 10 / 255, green: 132 / 255, blue: 255 / 255)
-private let downloadsBlueNS = NSColor(srgbRed: 10 / 255, green: 132 / 255, blue: 255 / 255, alpha: 1)
+extension FeatureTint {
+    /// The ring, the spinner and Open: the iPhone's blue in its dark appearance,
+    /// Safari's colour for downloads.
+    static let downloads = FeatureTint.colour(RGB(bytes: 10, 132, 255))
+}
 
 // MARK: - Pieces
 
@@ -20,6 +22,7 @@ struct DownloadTypeIcon: View {
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
+            .fileIconBacking(size: size)
             .accessibilityHidden(true)
     }
 }
@@ -47,9 +50,9 @@ struct DownloadMark: View {
 
     var body: some View {
         if let fraction = item?.fraction {
-            ProgressRing(fraction: fraction, lineWidth: lineWidth, tint: downloadsBlue)
+            ProgressRing(fraction: fraction, lineWidth: lineWidth, tint: .accent(.downloads))
         } else {
-            ShortcutSpinner(lineWidth: lineWidth, color: downloadsBlueNS)
+            ShortcutSpinner(lineWidth: lineWidth, tint: .accent(.downloads))
         }
     }
 }
@@ -91,7 +94,7 @@ struct DownloadsMinimal: View {
             .overlay(
                 Image(systemName: "arrow.down")
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(downloadsBlue)
+                    .foregroundStyle(.islandAccent(.downloads))
             )
             .padding(5)
     }
@@ -112,19 +115,19 @@ struct DownloadsExpanded: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.name)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(DownloadNames.progress(received: item.received, total: item.total))
                         .font(.system(size: 12, weight: .medium))
                         .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55))
                         .lineLimit(1)
                     if let caption = caption(item) {
                         Text(caption)
                             .font(.system(size: 11, weight: .medium))
                             .monospacedDigit()
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(.islandText(0.4))
                             .lineLimit(1)
                     }
                 }
@@ -138,11 +141,11 @@ struct DownloadsExpanded: View {
                         Text("\(Int((fraction * 100).rounded(.down)))%")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .monospacedDigit()
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.islandPrimary)
                     } else {
                         Image(systemName: "arrow.down")
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(downloadsBlue)
+                            .foregroundStyle(.islandAccent(.downloads))
                     }
                 }
                 .frame(width: 46, height: 46)
@@ -200,12 +203,12 @@ struct DownloadedCard: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(file.name)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(subtitle)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
                     .lineLimit(1)
             }
 
@@ -214,18 +217,17 @@ struct DownloadedCard: View {
             Button(action: open) {
                 Text("Open")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(downloadsBlue)
                     .padding(.horizontal, 14)
                     .frame(height: 30)
-                    .background(Capsule().fill(downloadsBlue.opacity(0.2)))
+                    .islandWashed(.accent(.downloads, minimum: Contrast.text), wash: 0.2, in: Capsule())
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
 
-            RoundButton(symbol: "magnifyingglass", tint: .white, diameter: 30, action: reveal)
+            RoundButton(symbol: "magnifyingglass", diameter: 30, action: reveal)
                 .help("Show in Finder")
                 .accessibilityLabel("Show in Finder")
-            RoundButton(symbol: "xmark", tint: .white, diameter: 30, action: dismiss)
+            RoundButton(symbol: "xmark", diameter: 30, action: dismiss)
                 .accessibilityLabel("Close")
         }
         .frame(maxHeight: .infinity)

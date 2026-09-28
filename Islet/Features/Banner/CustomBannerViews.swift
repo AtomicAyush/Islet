@@ -30,11 +30,18 @@ extension CustomBanner {
         }
     }
 
-    var symbolColor: Color { tint?.color ?? .white }
+    /// The symbol: in the banner's colour (white is the island's ink), or with none, as
+    /// a feature's symbols are, in the island's ink under Feature colours and otherwise
+    /// in the accent.
+    func symbolInk(on backdrop: IslandBackdrop = .island, in theme: IslandTheme) -> IslandInk {
+        tint?.ink(minimum: Contrast.graphic, on: backdrop, in: theme) ?? .accent(.banner, on: backdrop)
+    }
 
     /// The subtitle beside the notch: in the banner's colour, like a Focus's "On", or
     /// in the grey of the island's other quieter words when it has none.
-    var subtitleColor: Color { tint?.color ?? .white.opacity(0.6) }
+    func subtitleInk(in theme: IslandTheme) -> IslandInk {
+        tint?.ink(minimum: Contrast.text, in: theme) ?? .text(0.6)
+    }
 }
 
 /// A banner's symbol, fitted into a box so wide symbols (a hammer, a car) take no more
@@ -42,13 +49,16 @@ extension CustomBanner {
 struct CustomBannerSymbol: View {
     let banner: CustomBanner
     var size: CGSize
+    /// The card's symbol, measured against its disc.
+    var onDisc: Color?
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         Image(systemName: banner.symbol)
             .resizable()
             .aspectRatio(contentMode: .fit)
             .fontWeight(.semibold)
-            .foregroundStyle(banner.symbolColor)
+            .foregroundStyle(onDisc.map(AnyShapeStyle.init) ?? AnyShapeStyle(.island(banner.symbolInk(in: theme))))
             .frame(width: size.width, height: size.height)
             .accessibilityHidden(true)
     }
@@ -69,7 +79,7 @@ struct CustomBannerLeading: View {
                     symbol
                     Text(verbatim: title)
                         .font(Font(CustomBannerLayout.font))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: CustomBannerLayout.maximumTextWidth, alignment: .leading)
@@ -102,34 +112,35 @@ struct CustomBannerLeading: View {
 struct CustomBannerTrailing: View {
     let banner: CustomBanner
     @Environment(\.isInIslandHeader) private var isInHeader
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         if isInHeader {
             ViewThatFits(in: .horizontal) {
                 if let subtitle = banner.subtitle {
                     HStack(spacing: CustomBannerLayout.headerSeparatorSpacing) {
-                        words(banner.title, color: .white)
-                        words("·", color: .white.opacity(0.4))
-                        words(subtitle, color: banner.subtitleColor)
+                        words(banner.title, .text(1))
+                        words("·", .graphic(0.4))
+                        words(subtitle, banner.subtitleInk(in: theme))
                     }
                     .fixedSize()
                     .modifier(Insets())
                 }
-                words(banner.title, color: .white)
+                words(banner.title, .text(1))
                     .modifier(Insets())
             }
         } else {
             let text = CustomBannerLayout.trailingText(for: banner)
-            words(text, color: banner.subtitle == nil ? .white : banner.subtitleColor)
+            words(text, banner.subtitle == nil ? .text(1) : banner.subtitleInk(in: theme))
                 .frame(width: CustomBannerLayout.shownTextWidth(text), alignment: .trailing)
                 .modifier(Insets())
         }
     }
 
-    private func words(_ text: String, color: Color) -> some View {
+    private func words(_ text: String, _ ink: IslandInk) -> some View {
         Text(verbatim: text)
             .font(Font(CustomBannerLayout.font))
-            .foregroundStyle(color)
+            .foregroundStyle(.island(ink))
             .lineLimit(1)
             .truncationMode(.tail)
     }
@@ -157,22 +168,25 @@ extension EnvironmentValues {
 /// and no text in it is a link.
 struct CustomBannerCard: View {
     let banner: CustomBanner
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
+        // The symbol is measured against its disc as drawn, a wash of its colour.
+        let disc = theme.onWash(banner.symbolInk(in: theme), wash: 0.18)
         HStack(spacing: CustomBannerLayout.cardSpacing) {
-            CustomBannerSymbol(banner: banner, size: CustomBannerLayout.cardSymbolSize)
+            CustomBannerSymbol(banner: banner, size: CustomBannerLayout.cardSymbolSize, onDisc: disc.mark)
                 .frame(width: CustomBannerLayout.cardDiscDiameter, height: CustomBannerLayout.cardDiscDiameter)
-                .background(Circle().fill(banner.symbolColor.opacity(0.18)))
+                .background(Circle().fill(disc.wash))
 
             VStack(alignment: .leading, spacing: CustomBannerLayout.cardLineGap) {
                 Text(verbatim: banner.title)
                     .font(Font(CustomBannerLayout.cardTitleFont))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(CustomBannerLayout.cardTitleLines)
                 if let subtitle = banner.subtitle {
                     Text(verbatim: subtitle)
                         .font(Font(CustomBannerLayout.cardSubtitleFont))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55))
                         .lineLimit(CustomBannerLayout.cardSubtitleLines)
                 }
             }

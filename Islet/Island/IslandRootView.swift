@@ -2,21 +2,46 @@ import SwiftUI
 
 /// The whole canvas: the island hanging from the top centre, and a detached bubble
 /// beside it for each further activity running, as many as the menu bar has room for.
+///
+/// The island is painted in the chosen colour (`IslandTheme`) whenever it shows
+/// something. Under a notch it is black at rest, where it stands in for the camera
+/// housing: it takes the colour at once as it starts to open, and keeps it until it
+/// has shrunk back to the notch's size, then turns black again, so no frame shows the
+/// fill somewhere between the two. Everything inside reads the paint of the moment
+/// from the environment.
 struct IslandRootView: View {
     let model: IslandViewModel
     /// Told whenever the island's footprint changes, so the controller can update
     /// where clicks are caught.
     var onLayoutChange: (IslandLayout) -> Void = { _ in }
     @AppStorage(Prefs.Key.expandOnHover) private var expandOnHover = true
+    @AppStorage(Prefs.Key.islandColour) private var islandColour = IslandTheme.standardIslandPref
+    @AppStorage(Prefs.Key.accentColour) private var accentColour = IslandTheme.standardAccentPref
+    /// The island has had nothing to show for `IslandLayout.colourHold`: back at the
+    /// notch's size, it is black again.
+    @State private var isSettled = true
+    /// Counts down the hold once the island has nothing to show.
+    @State private var hold: Task<Void, Never>?
 
     var body: some View {
         let layout = model.layout
+        // Worked out here, once per change of preference; everything inside reads it
+        // from the environment rather than from UserDefaults.
+        let theme = IslandTheme.cached(islandPref: islandColour, accentPref: accentColour)
+        let isColoured = layout.wearsColour || !isSettled
+        let paint = isColoured ? theme : theme.resting
 
         ZStack(alignment: .top) {
             BubbleLayer(model: model, layout: layout)
 
-            IslandSurface(model: model, layout: layout)
-                .offset(y: layout.topInset)
+            IslandSurface(
+                model: model,
+                layout: layout,
+                isBlack: theme.island == .black,
+                // Into the colour at once; back to black, once settled, gently.
+                paintAnimation: isColoured ? nil : .easeOut(duration: 0.2)
+            )
+            .offset(y: layout.topInset)
 
             if model.standsInOnEdge, !expandOnHover {
                 EdgeStrip(model: model)
@@ -24,8 +49,24 @@ struct IslandRootView: View {
         }
         .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
         .ignoresSafeArea()
-        .preferredColorScheme(.dark)
+        .environment(\.islandTheme, paint)
         .environment(\.island, model)
+        // Controls the system draws (a spinner, a text selection) follow the ink of
+        // what they are drawn on; the window's own, such as a menu, the chosen colour's.
+        .environment(\.colorScheme, paint.colorScheme)
+        .preferredColorScheme(theme.colorScheme)
+        .onChange(of: layout.wearsColour, initial: true) { _, wears in
+            hold?.cancel()
+            guard !wears else {
+                isSettled = false
+                return
+            }
+            hold = Task {
+                try? await Task.sleep(for: IslandLayout.colourHold)
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.2)) { isSettled = true }
+            }
+        }
         .onChange(of: layout, initial: true) { _, new in onLayoutChange(new) }
     }
 }
@@ -56,10 +97,17 @@ private struct EdgeStrip: View {
     }
 }
 
-/// The black island itself, with whatever the current mode puts inside it.
+/// The island itself, with whatever the current mode puts inside it.
 private struct IslandSurface: View {
     let model: IslandViewModel
     let layout: IslandLayout
+    /// The island's chosen colour is black. Any other has the black notch plate at its
+    /// top, under a notch, and casts its shadow as a whole.
+    let isBlack: Bool
+    /// How the fill moves to a new colour: at once, or not at all with the island's
+    /// springs, which would take it through every shade between black and the colour.
+    let paintAnimation: Animation?
+    @Environment(\.islandTheme) private var paint
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -70,7 +118,15 @@ private struct IslandSurface: View {
         )
 
         ZStack(alignment: .top) {
-            shape.fill(Color.black)
+            if isBlack {
+                shape.fill(paint.background)
+            } else {
+                // A plain rectangle under the island's clip, so the colour can take
+                // `paintAnimation` while the corners keep the island's springs.
+                Rectangle()
+                    .fill(paint.background)
+                    .animation(paintAnimation, value: paint.background)
+            }
 
             content
                 .id(model.contentKey)
@@ -81,6 +137,15 @@ private struct IslandSurface: View {
             // touches the content above: the island grows down to it, and it comes out
             // of a blur the way content does.
             AttachmentLayer(attachment: model.attachment, layout: layout, isOpen: model.isExpanded)
+
+            // A light island has no edge of its own over a light menu bar or wallpaper:
+            // a hairline of the ink gives it one. Stroked on the island's outline and
+            // clipped by it, so only its inner half shows.
+            if paint.isLight {
+                shape.stroke(.islandDecorative(0.16), lineWidth: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
         // Width and height spring separately — width a little livelier — so the
         // island stretches sideways a beat before it drops, rather than scaling
@@ -90,6 +155,17 @@ private struct IslandSurface: View {
         .clipShape(shape)
         .contentShape(shape)
         .onDrop(of: IslandDropDelegate.offeredTypes, delegate: IslandDropDelegate(model: model, layout: layout))
+        // A coloured island's shadow, cast by a black shape of its outline behind it, so
+        // it is one shadow for the whole island rather than one per layer. Always there
+        // and only faded in and out, so choosing a colour never rebuilds what the island
+        // shows. Before the squash, so it bounces with the island.
+        .background {
+            shape.fill(Color.black)
+                .shadow(color: .black.opacity(layout.showsShadow ? 0.5 : 0), radius: 18, y: 8)
+                .opacity(isBlack ? 0 : 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .keyframeAnimator(initialValue: Squash(), trigger: model.contentKey) { [reduceMotion] view, squash in
             view.scaleEffect(x: reduceMotion ? 1 : squash.x, y: reduceMotion ? 1 : squash.y, anchor: .top)
         } keyframes: { _ in
@@ -106,7 +182,21 @@ private struct IslandSurface: View {
                 SpringKeyframe(1, duration: 0.2, spring: .smooth)
             }
         }
-        .shadow(color: .black.opacity(layout.showsShadow ? 0.5 : 0), radius: 18, y: 8)
+        // Over the squash, so it stays put over the camera housing while the island
+        // bounces around it, and clipped to the island, so it never shows beyond it
+        // (tucked into the housing in full screen, the island is smaller than it). It
+        // hangs from a clear view the island's size, since a frame round the plate
+        // itself would grow to the plate and clip nothing.
+        .overlay(alignment: .top) {
+            if !isBlack, model.metrics.hasNotch {
+                Color.clear
+                    .overlay(alignment: .top) { NotchPlate(notch: layout.notch) }
+                    .clipShape(shape)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .modifier(IslandShadow(isShown: layout.showsShadow, isWhole: !isBlack))
         .onTapGesture { location in
             // The count riding on the folded icon opens the home page, where every
             // activity has its tab. The folded activity's end of the island opens that
@@ -193,6 +283,39 @@ private struct IslandSurface: View {
 private struct Squash {
     var x: CGFloat = 1
     var y: CGFloat = 1
+}
+
+/// The shadow the opened island and a card cast on what is under them, on a black
+/// island.
+///
+/// Every layer in the island casts its own, so each word and tile shades the fill under
+/// it. On a black island that shows only outside it, where it always has. A coloured
+/// island would show it, so it casts none here and one as a whole from the shape behind
+/// it instead (`IslandSurface`). Only the shadow's opacity changes with the colour, never
+/// the views, so what the island shows keeps its state.
+private struct IslandShadow: ViewModifier {
+    let isShown: Bool
+    let isWhole: Bool
+
+    func body(content: Content) -> some View {
+        content.shadow(color: .black.opacity(isShown && !isWhole ? 0.5 : 0), radius: 18, y: 8)
+    }
+}
+
+/// The camera housing, over a coloured island: a black shape exactly the size of the
+/// resting island, ears and all, at the top centre. The resting island stays as it
+/// was, and the colour grows out around it. Always drawn over a coloured island under
+/// a notch; while the island is black it is black on black.
+private struct NotchPlate: View {
+    /// The island's notch gap (`IslandLayout.notch`).
+    let notch: CGSize
+
+    var body: some View {
+        IslandShape(earRadius: IslandLayout.restingEar, bottomRadius: IslandLayout.restingRadius)
+            // The housing is black whatever the island's colour.
+            .fill(Color.black)
+            .frame(width: notch.width + 2 * IslandLayout.restingEar, height: notch.height)
+    }
 }
 
 /// The row an attachment rides in, under the notch row: across the island's body and
@@ -323,23 +446,37 @@ private struct CompactRow: View {
 /// The count of activities with no room beside the island, where it rides on the
 /// folded icon or the last bubble: small and dim, a note rather than a label. It
 /// opens the home page, where each has its tab, and brightens with the pointer on it.
+///
+/// Its pill is a wash of the ink laid opaque over the island, since it lies over the
+/// icon it rides on, and a ring of the island's colour parts it from that icon.
 private struct OverflowBadge: View {
     let count: Int
     /// The names of those it counts, for VoiceOver.
     let counted: [String]
     var isHovered = false
+    /// It rides on a bubble and reaches past it over the menu bar, so on a light island
+    /// it takes the island's hairline, as the bubble does.
+    var isOutside = false
     let open: () -> Void
+    @Environment(\.islandTheme) private var paint
 
     var body: some View {
+        let pill = IslandBackdrop.surface(isHovered ? 0.27 : 0.16)
         Text("+\(count)")
             .font(.system(size: 7.5, weight: .bold, design: .rounded))
             .monospacedDigit()
-            .foregroundStyle(.white.opacity(isHovered ? 0.95 : 0.7))
+            .foregroundStyle(.islandText(isHovered ? 0.95 : 0.7, on: pill))
             .padding(.horizontal, 2.5)
             .frame(minWidth: IslandLayout.badgeSize.width)
             .frame(height: IslandLayout.badgeSize.height)
-            .background(Capsule().fill(Color(white: isHovered ? 0.27 : 0.16)))
-            .background(Capsule().stroke(Color.black, lineWidth: 1.5))
+            .background(Capsule().fill(paint.colour(of: pill).color))
+            .background(Capsule().stroke(paint.background, lineWidth: 1.5))
+            // The hairline on the ring's outer edge: see `IslandSurface`.
+            .overlay {
+                if isOutside, paint.isLight {
+                    Capsule().inset(by: -0.75).strokeBorder(.islandDecorative(0.16), lineWidth: 0.5)
+                }
+            }
             .fixedSize()
             .animation(.islandHover, value: isHovered)
             .accessibilityElement(children: .ignore)
@@ -372,7 +509,7 @@ extension View {
     /// A further activity's circle, in its bubble or folded into the island, with the
     /// pointer on it: it swells a little and gains a faint ring, to say a click opens it.
     fileprivate func secondaryHover(_ isHovered: Bool, scale: CGFloat = 1) -> some View {
-        overlay(Circle().strokeBorder(Color.white.opacity(isHovered ? 0.22 : 0), lineWidth: 1))
+        overlay(Circle().strokeBorder(.islandDecorative(isHovered ? 0.22 : 0), lineWidth: 1))
             .scaleEffect(scale * (isHovered ? 1.14 : 1))
             .animation(.islandHover, value: isHovered)
     }
@@ -700,13 +837,15 @@ private struct BubbleGeometry {
 }
 
 /// The "liquid" joining a bubble to what it buds from while it moves. Both are drawn
-/// as black circles through a blur and an alpha threshold, so while they are close a
-/// neck joins them, stretches, and snaps, the way the iPhone's island splits in two.
+/// as circles of the island's colour through a blur and an alpha threshold, so while
+/// they are close a neck joins them, stretches, and snaps, the way the iPhone's island
+/// splits in two.
 private struct BubbleNeck: View, Animatable {
     var progress: CGFloat
     var slot: CGFloat
     let layout: IslandLayout
     let bubble: ShownBubble
+    @Environment(\.islandTheme) private var paint
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -722,18 +861,19 @@ private struct BubbleNeck: View, Animatable {
             let r = g.d / 2 * g.scale
             let lo = (min(g.anchorX - g.anchorRadius, g.x - r) - 12).rounded(.down)
             let hi = (max(g.anchorX + g.anchorRadius, g.x + r) + 12).rounded(.up)
+            let fill = paint.background
             Canvas { context, _ in
-                context.addFilter(.alphaThreshold(min: 0.5, color: .black))
+                context.addFilter(.alphaThreshold(min: 0.5, color: fill))
                 context.addFilter(.blur(radius: 4))
                 context.drawLayer { layer in
                     let cap = g.anchorRadius
                     layer.fill(
                         Path(ellipseIn: CGRect(x: g.anchorX - lo - cap, y: g.target.height - cap, width: 2 * cap, height: 2 * cap)),
-                        with: .color(.black)
+                        with: .color(fill)
                     )
                     layer.fill(
                         Path(ellipseIn: CGRect(x: g.x - lo - r, y: g.target.height - r, width: 2 * r, height: 2 * r)),
-                        with: .color(.black)
+                        with: .color(fill)
                     )
                 }
             }
@@ -745,7 +885,8 @@ private struct BubbleNeck: View, Animatable {
 }
 
 /// A bubble budding off the island, or off the bubble before it, like a droplet, over
-/// its neck (`BubbleNeck`). Once it has settled it is drawn plainly.
+/// its neck (`BubbleNeck`). Once it has settled it is drawn plainly, in the island's
+/// colour, with the island's hairline on a light island.
 private struct BubbleDroplet: View, Animatable {
     var progress: CGFloat
     var slot: CGFloat
@@ -756,6 +897,7 @@ private struct BubbleDroplet: View, Animatable {
     /// The pointer is on the count, wherever it is.
     let isCountHovered: Bool
     let onTap: (IslandViewModel.SecondaryTarget) -> Void
+    @Environment(\.islandTheme) private var paint
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -767,13 +909,18 @@ private struct BubbleDroplet: View, Animatable {
         let g = BubbleGeometry(progress: progress, slot: slot, layout: layout, bubble: bubble, reduceMotion: reduceMotion)
         let d = g.d
         let fade = Double(min(1, max(0, (progress - 0.35) / 0.5)))
+        let fill = paint.background
         if progress > 0.001 {
             content
                 .frame(width: d, height: d)
-                .background(Circle().fill(Color.black))
+                .background(Circle().fill(fill))
                 .clipShape(Circle())
                 .opacity(fade)
-                .background(Circle().fill(Color.black))
+                .background(Circle().fill(fill))
+                // The island's hairline, on a light island: see `IslandSurface`.
+                .overlay {
+                    if paint.isLight { Circle().strokeBorder(.islandDecorative(0.16), lineWidth: 0.5) }
+                }
                 .opacity(g.presence)
                 .secondaryHover(isHovered, scale: g.scale)
                 .contentShape(Circle())
@@ -786,7 +933,9 @@ private struct BubbleDroplet: View, Animatable {
                     // its bottom corner away from the island.
                     ZStack {
                         if !bubble.isOverflow, bubble.count > 0 {
-                            OverflowBadge(count: bubble.count, counted: bubble.counted, isHovered: isCountHovered) {
+                            OverflowBadge(
+                                count: bubble.count, counted: bubble.counted, isHovered: isCountHovered, isOutside: true
+                            ) {
                                 onTap(.overflow)
                             }
                             .offset(
@@ -815,7 +964,7 @@ private struct BubbleDroplet: View, Animatable {
             Text("+\(bubble.count)")
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(.islandText(0.7))
         }
     }
 }
@@ -1019,23 +1168,30 @@ private struct ExpandedHeader: View {
     }
 }
 
+/// A tab in the opened island's header. The picked one is a highlight, in the accent
+/// on a wash of it (the ink, under Feature colours); the rest are in the ink, and lit
+/// faintly under the pointer. The glyphs are small, so off the black island they are
+/// held to the words' 4.5:1 rather than a symbol's 3:1, against the pill they sit on.
 private struct TabButton: View {
     let symbol: String
     let isSelected: Bool
     let action: () -> Void
+    @Environment(\.islandTheme) private var theme
     @State private var isHovering = false
     @Environment(\.headerTabWidth) private var width
 
     var body: some View {
+        let picked = theme.onWash(.accent(.shell, minimum: Contrast.text), wash: 0.16)
+        let lit: IslandBackdrop = isHovering ? .surface(0.08) : .island
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isSelected ? .white : .white.opacity(isHovering ? 0.75 : 0.45))
+                .foregroundStyle(isSelected ? picked.mark : theme.text(isHovering ? 0.75 : 0.45, on: lit))
                 .frame(width: 24, height: 20)
                 // Narrower where the row is short of room (`HeaderTabFit`).
                 .frame(width: width)
                 .background(
-                    Capsule().fill(.white.opacity(isSelected ? 0.16 : (isHovering ? 0.08 : 0)))
+                    Capsule().fill(isSelected ? picked.wash : theme.surface(isHovering ? 0.08 : 0))
                 )
                 .contentShape(Capsule())
         }
@@ -1054,6 +1210,7 @@ struct MoreActivitiesMenu: View {
     @State private var isHovering = false
     @State private var showsMenu = false
     @Environment(\.headerTabWidth) private var width
+    @Environment(\.islandTheme) private var theme
 
     init(model: IslandViewModel, fit: HeaderTabFit) {
         self.model = model
@@ -1085,14 +1242,15 @@ struct MoreActivitiesMenu: View {
 
     var body: some View {
         let lit = isHovering || showsMenu
+        let pill: IslandBackdrop = lit ? .surface(0.08) : .island
         Menu {
             entries
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(lit ? 0.75 : 0.45))
+                .foregroundStyle(theme.text(lit ? 0.75 : 0.45, on: pill))
                 .frame(width: width, height: 20)
-                .background(Capsule().fill(.white.opacity(lit ? 0.08 : 0)))
+                .background(Capsule().fill(theme.surface(lit ? 0.08 : 0)))
                 .contentShape(Capsule())
         }
         .menuStyle(.button)

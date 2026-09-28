@@ -7,6 +7,7 @@ import SwiftUI
 /// the tab is found only once it is a row here.
 enum GeneralRow: String, CaseIterable, Identifiable, View {
     case openAtLogin, menuBarIcon, quit
+    case appearance
     case hover, haptics, homeLayout, bubblePlacement
     case islandOrder
     case displays, idlePill, fullScreen
@@ -20,6 +21,7 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .openAtLogin: "Open at login"
         case .menuBarIcon: "Show menu bar icon"
         case .quit: "Quit Islet"
+        case .appearance: "Island colour and accent"
         case .hover: "Open when the pointer rests on it"
         case .haptics: "Trackpad feedback"
         case .homeLayout: "Home tiles that don't fit"
@@ -35,6 +37,7 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
     var section: String? {
         switch self {
         case .openAtLogin, .menuBarIcon, .quit: nil
+        case .appearance: "Appearance"
         case .hover, .haptics, .homeLayout, .bubblePlacement: "Island"
         case .islandOrder: "Island Order"
         case .displays, .idlePill, .fullScreen: "Displays"
@@ -46,6 +49,7 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .openAtLogin: OpenAtLoginRow(id: id)
         case .menuBarIcon: MenuBarIconRow(id: id)
         case .quit: QuitRow(id: id)
+        case .appearance: AppearanceRows(id: id)
         case .hover: HoverRows(id: id)
         case .haptics: HapticsRow(id: id)
         case .homeLayout: HomeLayoutRow(id: id)

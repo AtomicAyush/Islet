@@ -7,6 +7,7 @@ struct NowPlayingArtworkView: View {
     let artwork: NowPlayingArtwork?
     let size: CGFloat
     let radius: CGFloat
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -19,10 +20,10 @@ struct NowPlayingArtworkView: View {
                     .id(artwork.id)
                     .transition(.opacity)
             } else {
-                shape.fill(Color(white: 0.17))
+                shape.fill(theme.artworkPlaceholder)
                 Image(systemName: "music.note")
                     .font(.system(size: size * 0.42, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandGraphic(0.55, on: .artworkPlaceholder))
             }
         }
         .frame(width: size, height: size)
@@ -44,11 +45,12 @@ struct NowPlayingWaveform: View {
     var spacing: CGFloat = 2
     var height: CGFloat = 14
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         WaveformBars(
             playing: model.isPlaying,
-            colour: NSColor(model.tint(tinted)),
+            tint: model.tint(tinted, in: theme),
             bars: bars,
             barWidth: barWidth,
             spacing: spacing,
@@ -66,22 +68,30 @@ struct NowPlayingWaveform: View {
 /// `follows` marks bars drawn for the app on show, which follow its live levels when
 /// there are any: then a display link sets their heights, and only while they are on
 /// screen and the music plays.
+///
+/// The bars take `tint` in the island's colours from the environment, which the
+/// layers do not see by themselves: from their first frame, and again whenever the
+/// island's colours change.
 struct WaveformBars: NSViewRepresentable {
     let playing: Bool
-    let colour: NSColor
+    let tint: IslandInk
     let bars: Int
     let barWidth: CGFloat
     let spacing: CGFloat
     var follows = false
 
     func makeNSView(context: Context) -> WaveformBarsView {
-        WaveformBarsView(bars: bars, barWidth: barWidth, spacing: spacing)
+        WaveformBarsView(bars: bars, barWidth: barWidth, spacing: spacing, colour: colour(in: context))
     }
 
     func updateNSView(_ view: WaveformBarsView, context: Context) {
-        view.setColour(colour)
+        view.setColour(colour(in: context))
         view.setPlaying(playing)
         view.setFollows(follows)
+    }
+
+    private func colour(in context: Context) -> NSColor {
+        tint.nsColor(in: context.environment.islandTheme)
     }
 }
 
@@ -121,13 +131,13 @@ final class WaveformBarsView: NSView {
     private var displayLink: CADisplayLink?
     private var occlusionObserver: NSObjectProtocol?
 
-    init(bars: Int, barWidth: CGFloat, spacing: CGFloat) {
+    init(bars: Int, barWidth: CGFloat, spacing: CGFloat, colour: NSColor) {
         self.barWidth = barWidth
         self.spacing = spacing
         barLayers = (0..<bars).map { _ in
             let bar = CALayer()
             bar.cornerRadius = barWidth / 2
-            bar.backgroundColor = NSColor.white.cgColor
+            bar.backgroundColor = colour.cgColor
             return bar
         }
         levelLayout = AudioLevelAnalyser.layouts.firstIndex(of: bars) ?? 0
@@ -475,7 +485,7 @@ struct NowPlayingProgress: View {
             }
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .monospacedDigit()
-            .foregroundStyle(.white.opacity(0.55))
+            .foregroundStyle(.islandText(0.55))
         }
     }
 
@@ -484,8 +494,8 @@ struct NowPlayingProgress: View {
         return GeometryReader { geo in
             let width = max(1, geo.size.width)
             ZStack(alignment: .leading) {
-                Rectangle().fill(.white.opacity(0.2))
-                Rectangle().fill(.white).frame(width: width * min(1, max(0, fraction)))
+                Rectangle().fill(.islandSurface(0.2))
+                Rectangle().fill(.islandAccent(.nowPlaying, on: .track(0.2))).frame(width: width * min(1, max(0, fraction)))
             }
             .frame(height: thickness)
             .clipShape(Capsule())
@@ -529,11 +539,6 @@ extension NowPlayingModel {
         guard let track else { return "" }
         return track.artist.isEmpty ? track.album : track.artist
     }
-
-    /// The artwork's colour where the settings ask for it, else white.
-    func tint(_ tinted: Bool) -> Color {
-        tinted ? (artwork?.tint ?? .white) : .white
-    }
 }
 
 /// The artist, or a video's channel, and at the end of the line the switcher when
@@ -548,7 +553,7 @@ struct NowPlayingSubtitleRow: View {
         HStack(spacing: 12) {
             Text(model.subtitle)
                 .font(.system(size: fontSize, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             NowPlayingSwitcher(model: model, iconSize: iconSize)
@@ -561,13 +566,14 @@ struct NowPlayingSubtitleRow: View {
 struct NowPlayingAppBadge: View {
     let model: NowPlayingModel
     let size: CGFloat
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         if let icon = model.appIcon {
             Image(nsImage: icon)
                 .resizable()
                 .frame(width: size, height: size)
-                .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
+                .shadow(color: theme.shadow(0.5), radius: 2, y: 1)
                 .offset(x: size * 0.27, y: size * 0.27)
         }
     }
@@ -578,7 +584,7 @@ struct NowPlayingPlayButton: View {
     var diameter: CGFloat = 38
 
     var body: some View {
-        RoundButton(symbol: model.isPlaying ? "pause.fill" : "play.fill", tint: .white, diameter: diameter) {
+        RoundButton(symbol: model.isPlaying ? "pause.fill" : "play.fill", diameter: diameter) {
             model.togglePlayPause()
         }
         .nowPlayingControl(enabled: model.canControl)
@@ -612,7 +618,7 @@ struct NowPlayingTransport: View {
             if model.isVideo {
                 jump(forward: false)
             } else {
-                RoundButton(symbol: "backward.fill", tint: .white, diameter: small) { model.previous() }
+                RoundButton(symbol: "backward.fill", diameter: small) { model.previous() }
                     .nowPlayingControl(enabled: model.canControl)
                     .accessibilityLabel("Previous")
             }
@@ -620,7 +626,7 @@ struct NowPlayingTransport: View {
             if model.isVideo {
                 jump(forward: true)
             } else {
-                RoundButton(symbol: "forward.fill", tint: .white, diameter: small) { model.next() }
+                RoundButton(symbol: "forward.fill", diameter: small) { model.next() }
                     .nowPlayingControl(enabled: model.canControl)
                     .accessibilityLabel("Next")
             }
@@ -628,7 +634,7 @@ struct NowPlayingTransport: View {
     }
 
     private func jump(forward: Bool) -> some View {
-        RoundButton(symbol: forward ? "goforward.15" : "gobackward.15", tint: .white, diameter: small) {
+        RoundButton(symbol: forward ? "goforward.15" : "gobackward.15", diameter: small) {
             model.jump(forward: forward)
         }
         .nowPlayingControl(enabled: model.canControl && model.canJump(forward: forward))
@@ -640,12 +646,12 @@ struct NowPlayingTransport: View {
 private struct ModeToggle: View {
     let symbol: String
     let isOn: Bool
-    let tint: Color
+    let tint: IslandInk
     let label: String
     let action: () -> Void
 
     var body: some View {
-        RoundButton(symbol: symbol, tint: isOn ? tint : .white.opacity(0.45), diameter: 26, action: action)
+        RoundButton(symbol: symbol, tint: isOn ? tint : .graphic(0.45), diameter: 26, action: action)
             .accessibilityLabel(label)
             .accessibilityValue(isOn ? "On" : "Off")
             .animation(.easeOut(duration: 0.2), value: isOn)
@@ -674,7 +680,7 @@ struct NowPlayingControlsHint: View {
     var body: some View {
         Text(Self.text(for: model))
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.white.opacity(0.45))
+            .foregroundStyle(.islandText(0.45))
             .lineLimit(1)
             .minimumScaleFactor(0.8)
             .frame(maxWidth: .infinity)
@@ -757,7 +763,7 @@ private struct CompactCover: View {
         } else {
             Image(systemName: "play.rectangle.fill")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandGraphic())
         }
     }
 }
@@ -895,6 +901,7 @@ struct NowPlayingExpanded: View {
 private struct NowPlayingMusicPlayer: View {
     let model: NowPlayingModel
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -904,7 +911,7 @@ private struct NowPlayingMusicPlayer: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 12) {
                         NowPlayingMarquee(text: model.title, font: .system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.islandPrimary)
                         NowPlayingWaveform(model: model, bars: 5, barWidth: 2.5, spacing: 2, height: 16)
                     }
                     NowPlayingSubtitleRow(model: model, fontSize: 13, iconSize: 18)
@@ -931,7 +938,7 @@ private struct NowPlayingMusicPlayer: View {
             if showsModes {
                 if let shuffle = model.shuffle {
                     ModeToggle(
-                        symbol: "shuffle", isOn: shuffle != .off, tint: model.tint(tinted), label: "Shuffle"
+                        symbol: "shuffle", isOn: shuffle != .off, tint: model.tint(tinted, in: theme), label: "Shuffle"
                     ) { model.toggleShuffle() }
                 } else {
                     Color.clear.frame(width: 26, height: 26)
@@ -942,7 +949,7 @@ private struct NowPlayingMusicPlayer: View {
                 if let repeatMode = model.repeatMode {
                     ModeToggle(
                         symbol: repeatMode == .one ? "repeat.1" : "repeat", isOn: repeatMode != .off,
-                        tint: model.tint(tinted), label: "Repeat"
+                        tint: model.tint(tinted, in: theme), label: "Repeat"
                     ) { model.cycleRepeat() }
                 } else {
                     Color.clear.frame(width: 26, height: 26)
@@ -983,7 +990,7 @@ private struct NowPlayingMiniPlayer: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 NowPlayingMarquee(text: model.title, font: .system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                 NowPlayingSubtitleRow(model: model, fontSize: 12, iconSize: 16)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1001,6 +1008,12 @@ private struct NowPlayingMiniPlayer: View {
 /// the cover go first, then tightens the controls, then keeps only play.
 struct NowPlayingHomeTile: View {
     let model: NowPlayingModel
+    @Environment(\.islandTheme) private var theme
+
+    /// The last session, kept after its player went away, reads as past: dimmed on
+    /// the black island, as it always was; elsewhere the cover is dimmed and the words
+    /// only as far as they still read on the tile.
+    private var past: Double { model.isLive ? 1 : 0.6 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1011,8 +1024,7 @@ struct NowPlayingHomeTile: View {
                 }
                 labels
             }
-            // The last session, kept after its player went away, reads as past.
-            .opacity(model.isLive ? 1 : 0.6)
+            .opacity(theme.isDefault ? past : 1)
 
             Spacer(minLength: 6)
 
@@ -1037,16 +1049,18 @@ struct NowPlayingHomeTile: View {
             }
         }
         .buttonStyle(.plain)
+        .opacity(theme.isDefault ? 1 : past)
     }
 
     private var labels: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let words = theme.isDefault ? 1 : past
+        return VStack(alignment: .leading, spacing: 2) {
             Text(model.title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandText(words, on: .homeTile))
             Text(model.subtitle)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55 * words, on: .homeTile))
         }
         .lineLimit(1)
     }
@@ -1067,7 +1081,7 @@ struct NowPlayingSongBannerLeading: View {
                 if !model.subtitle.isEmpty {
                     Text(model.subtitle)
                         .font(Font(NowPlayingSongBannerLayout.artistFont))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(.islandText(0.6))
                         .lineLimit(1)
                         // Asks for no width of its own, so the row fits whenever the
                         // cover does and the artist takes what the wing has left: a
@@ -1105,7 +1119,7 @@ struct NowPlayingSongBannerTrailing: View {
         HStack(spacing: NowPlayingSongBannerLayout.spacing) {
             Text(model.title)
                 .font(Font(NowPlayingSongBannerLayout.titleFont))
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandPrimary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             NowPlayingCompactTrailing(model: model)
@@ -1161,6 +1175,7 @@ struct NowPlayingSettings: View {
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
     @AppStorage(NowPlayingPrefs.showSongChanges) private var songChanges = NowPlayingPrefs.showSongChangesDefault
     @AppStorage(NowPlayingPrefs.followMusic) private var followsMusic = NowPlayingPrefs.followMusicDefault
+    @AppStorage(Prefs.Key.accentColour) private var accentColour = IslandTheme.standardAccentPref
 
     var body: some View {
         Picker("Hide after pausing", selection: $hideAfterPause) {
@@ -1170,7 +1185,15 @@ struct NowPlayingSettings: View {
             Text("Never").tag(NowPlayingPrefs.neverHide)
         }
         .onChange(of: hideAfterPause) { onHideAfterPauseChange() }
-        Toggle("Tint the waveform with the artwork's colour", isOn: $tinted)
+        // A single accent is one colour for everything, so the cover's gives way to it.
+        let takesArtwork = AccentChoice(pref: accentColour) == .featureColours
+        Toggle(isOn: $tinted) {
+            Text("Colour with the artwork")
+            Text(takesArtwork
+                 ? "The waveform, a video's ring, the heart and what's lit take the cover's colour."
+                 : "Using the accent colour (General › Appearance).")
+        }
+        .disabled(!takesArtwork)
         Toggle(isOn: $followsMusic) {
             Text("Waveform follows the music")
             Text("Uses the system audio recording permission; macOS shows its purple indicator while it listens.")

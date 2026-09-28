@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// The Clock app's timer orange.
-let timerOrange = Color(red: 1.0, green: 0.62, blue: 0.04)
+extension FeatureTint {
+    /// The timer's ring, countdown and controls: the Clock app's timer orange.
+    static let timer = FeatureTint.colour(RGB(1.0, 0.62, 0.04))
+}
 
 /// Remaining time that ticks without anyone driving it: `Text(timerInterval:)`
 /// counts down on its own while running.
@@ -9,6 +11,8 @@ struct TimerCountdownText: View {
     let model: TimerModel
     var size: CGFloat
     var weight: Font.Weight = .semibold
+    /// The island, or the home tile.
+    var backdrop: IslandBackdrop = .island
 
     var body: some View {
         Group {
@@ -20,7 +24,7 @@ struct TimerCountdownText: View {
         }
         .font(.system(size: size, weight: weight, design: .rounded))
         .monospacedDigit()
-        .foregroundStyle(timerOrange)
+        .foregroundStyle(.islandAccentText(.timer, on: backdrop))
         .lineLimit(1)
         .minimumScaleFactor(0.6)
     }
@@ -34,10 +38,10 @@ struct TimerRing: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.25, paused: !isRunning)) { context in
             ZStack {
-                Circle().stroke(timerOrange.opacity(0.25), lineWidth: lineWidth)
+                Circle().stroke(IslandStyle.islandAccent(.timer).opacity(0.25), lineWidth: lineWidth)
                 Circle()
                     .trim(from: 0, to: model.progress(at: context.date))
-                    .stroke(timerOrange, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .stroke(.islandAccent(.timer), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
         }
@@ -57,7 +61,7 @@ struct TimerCompactLeading: View {
             .overlay(
                 Image(systemName: "timer")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(timerOrange)
+                    .foregroundStyle(.islandAccent(.timer))
             )
             .frame(width: 18, height: 18)
     }
@@ -81,7 +85,7 @@ struct TimerMinimal: View {
             .overlay(
                 Image(systemName: "timer")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(timerOrange)
+                    .foregroundStyle(.islandAccent(.timer))
             )
             .padding(5)
     }
@@ -96,23 +100,23 @@ struct TimerExpanded: View {
                 .overlay(
                     Image(systemName: "timer")
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(timerOrange)
+                        .foregroundStyle(.islandAccent(.timer))
                 )
                 .frame(width: 58, height: 58)
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(isPaused ? "Paused" : "Timer")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
                 TimerCountdownText(model: model, size: 40, weight: .medium)
             }
 
             Spacer()
 
-            RoundButton(symbol: isPaused ? "play.fill" : "pause.fill", tint: timerOrange) {
+            RoundButton(symbol: isPaused ? "play.fill" : "pause.fill", tint: .accent(.timer)) {
                 model.togglePause()
             }
-            RoundButton(symbol: "xmark", tint: .white) {
+            RoundButton(symbol: "xmark") {
                 model.cancel()
             }
         }
@@ -136,19 +140,18 @@ struct TimerDoneCard: View {
         HStack(spacing: 14) {
             Image(systemName: "bell.fill")
                 .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(timerOrange)
                 .rotationEffect(.degrees(ring ? 14 : -14), anchor: .top)
                 .animation(.easeInOut(duration: 0.12).repeatCount(9, autoreverses: true), value: ring)
                 .frame(width: 44, height: 44)
-                .background(Circle().fill(timerOrange.opacity(0.18)))
+                .islandWashed(.accent(.timer), wash: 0.18, in: Circle())
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("Timer")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                 Text("Done")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
             }
 
             Spacer()
@@ -159,14 +162,13 @@ struct TimerDoneCard: View {
             } label: {
                 Label(model.lastDuration.countdownText, systemImage: "arrow.clockwise")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(timerOrange)
                     .padding(.horizontal, 12)
                     .frame(height: 30)
-                    .background(Capsule().fill(timerOrange.opacity(0.2)))
+                    .islandWashed(.accent(.timer, minimum: Contrast.text), wash: 0.2, in: Capsule())
             }
             .buttonStyle(.plain)
 
-            RoundButton(symbol: "xmark", tint: .white, diameter: 30, action: dismiss)
+            RoundButton(symbol: "xmark", diameter: 30, action: dismiss)
         }
         .frame(maxHeight: .infinity)
         .onAppear { ring = true }
@@ -182,10 +184,10 @@ struct TimerHomeTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Timer", systemImage: "timer")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(timerOrange)
+                .foregroundStyle(.islandAccentText(.timer, on: .homeTile))
 
             if model.isActive {
-                TimerCountdownText(model: model, size: 28, weight: .medium)
+                TimerCountdownText(model: model, size: 28, weight: .medium, backdrop: .homeTile)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
@@ -196,10 +198,10 @@ struct TimerHomeTile: View {
                         } label: {
                             Text(TimerPresets.label(minutes))
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.islandText(1, on: IslandBackdrop.homeTile.stacked(0.12)))
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 24)
-                                .background(Capsule().fill(Color.white.opacity(0.12)))
+                                .background(Capsule().fill(.islandSurface(0.12, on: .homeTile)))
                                 .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)

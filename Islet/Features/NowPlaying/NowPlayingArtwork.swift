@@ -10,8 +10,9 @@ import SwiftUI
 struct NowPlayingArtwork: Equatable, @unchecked Sendable {
     let id = UUID()
     let image: NSImage
-    /// The cover's most characteristic colour, brightened to read on black.
-    let tint: Color
+    /// The cover's most characteristic colour, as the black island draws it and as
+    /// the cover has it; `nil` when there is nothing to take one from.
+    let tint: ArtworkTint?
     /// Width over height: square for a cover, landscape for a video's thumbnail.
     let aspectRatio: CGFloat
 
@@ -50,19 +51,19 @@ struct NowPlayingArtwork: Equatable, @unchecked Sendable {
     // MARK: Tint
 
     /// The most prominent vivid hue in a tiny rendering of the cover, or its plain
-    /// average when nothing in it is really colourful, lifted to a brightness that
-    /// stays visible on the island's black.
-    private static func tint(of image: CGImage) -> Color {
+    /// average when nothing in it is really colourful: lifted to a brightness that
+    /// stays visible on the island's black, and as it is, for a light island.
+    private static func tint(of image: CGImage) -> ArtworkTint? {
         let side = 24
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
                   data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
                   space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
               )
-        else { return .white }
+        else { return nil }
         context.interpolationQuality = .medium
         context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
-        guard let data = context.data else { return .white }
+        guard let data = context.data else { return nil }
         let pixels = data.bindMemory(to: UInt8.self, capacity: side * side * 4)
 
         var hues = [ColourSum](repeating: ColourSum(), count: 12)
@@ -70,7 +71,7 @@ struct NowPlayingArtwork: Equatable, @unchecked Sendable {
         for i in 0..<(side * side) {
             let alpha = Double(pixels[i * 4 + 3]) / 255
             guard alpha > 0.1 else { continue }
-            let rgb = RGB(
+            let rgb = Pixel(
                 r: min(1, Double(pixels[i * 4]) / 255 / alpha),
                 g: min(1, Double(pixels[i * 4 + 1]) / 255 / alpha),
                 b: min(1, Double(pixels[i * 4 + 2]) / 255 / alpha)
@@ -82,12 +83,15 @@ struct NowPlayingArtwork: Equatable, @unchecked Sendable {
             hues[min(11, Int(hsb.h * 12))].add(rgb, weight: hsb.s * hsb.b * alpha)
         }
 
+        // Nothing opaque enough to read a colour from.
+        guard overall.weight > 0 else { return nil }
         let strongest = hues.max { $0.weight < $1.weight } ?? ColourSum()
         var hsb = HSB(strongest.weight > overall.weight * 0.05 ? strongest.mean : overall.mean)
-        hsb.b = max(hsb.b, 0.82)
         hsb.s = min(hsb.s, 0.85)
-        let rgb = hsb.rgb
-        return Color(.sRGB, red: rgb.r, green: rgb.g, blue: rgb.b)
+        let raw = hsb.rgb
+        hsb.b = max(hsb.b, 0.82)
+        let dark = hsb.rgb
+        return ArtworkTint(dark: RGB(dark.r, dark.g, dark.b), raw: RGB(raw.r, raw.g, raw.b))
     }
 
     // MARK: Samples
@@ -248,7 +252,7 @@ struct NowPlayingArtwork: Equatable, @unchecked Sendable {
 
 // MARK: - Colour maths
 
-private struct RGB {
+private struct Pixel {
     var r: Double, g: Double, b: Double
 }
 
@@ -256,7 +260,7 @@ private struct HSB {
     /// Hue in 0..<1.
     var h: Double, s: Double, b: Double
 
-    init(_ c: RGB) {
+    init(_ c: Pixel) {
         let high = max(c.r, c.g, c.b), low = min(c.r, c.g, c.b), range = high - low
         b = high
         s = high > 0 ? range / high : 0
@@ -273,18 +277,18 @@ private struct HSB {
         if h < 0 { h += 1 }
     }
 
-    var rgb: RGB {
+    var rgb: Pixel {
         let sector = h * 6
         let i = Int(sector) % 6
         let f = sector - Double(Int(sector))
         let p = b * (1 - s), q = b * (1 - s * f), t = b * (1 - s * (1 - f))
         switch i {
-        case 0: return RGB(r: b, g: t, b: p)
-        case 1: return RGB(r: q, g: b, b: p)
-        case 2: return RGB(r: p, g: b, b: t)
-        case 3: return RGB(r: p, g: q, b: b)
-        case 4: return RGB(r: t, g: p, b: b)
-        default: return RGB(r: b, g: p, b: q)
+        case 0: return Pixel(r: b, g: t, b: p)
+        case 1: return Pixel(r: q, g: b, b: p)
+        case 2: return Pixel(r: p, g: b, b: t)
+        case 3: return Pixel(r: p, g: q, b: b)
+        case 4: return Pixel(r: t, g: p, b: b)
+        default: return Pixel(r: b, g: p, b: q)
         }
     }
 }
@@ -294,15 +298,15 @@ private struct ColourSum {
     var weight = 0.0
     var r = 0.0, g = 0.0, b = 0.0
 
-    mutating func add(_ c: RGB, weight w: Double) {
+    mutating func add(_ c: Pixel, weight w: Double) {
         weight += w
         r += c.r * w
         g += c.g * w
         b += c.b * w
     }
 
-    var mean: RGB {
-        guard weight > 0 else { return RGB(r: 1, g: 1, b: 1) }
-        return RGB(r: r / weight, g: g / weight, b: b / weight)
+    var mean: Pixel {
+        guard weight > 0 else { return Pixel(r: 1, g: 1, b: 1) }
+        return Pixel(r: r / weight, g: g / weight, b: b / weight)
     }
 }

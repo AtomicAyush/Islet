@@ -19,6 +19,16 @@ extension GeneralRow {
             )
         case .quit:
             SettingsSearchTerms(labels: ["Quit"], keywords: ["exit", "close Islet", "stop Islet"])
+        case .appearance:
+            SettingsSearchTerms(
+                labels: ["Island colour", "Accent", "Feature colours", "Mono", "Custom island colour", "Custom accent",
+                         "Back to black and feature colours", "Reset"]
+                    + IslandColourPreset.allCases.map(\.name) + AccentChoice.presets.map(\.name),
+                keywords: ["appearance", "colour", "color", "colours", "colors", "theme", "tint", "accent colour",
+                           "accent color", "highlight", "light", "dark", "dark mode", "light mode", "background",
+                           "notch", "notch colour", "notch color", "colour scheme", "color scheme", "customise",
+                           "customize"]
+            )
         case .hover:
             SettingsSearchTerms(
                 labels: ["Delay", "Click the island to open it"],
@@ -65,7 +75,7 @@ extension NowPlayingFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
             labels: ["Show song changes", "Hide after pausing", "Waveform follows the music",
-                     "Tint the waveform with the artwork's colour", "Lyrics", "Look up lyrics for every song",
+                     "Colour with the artwork", "Using the accent colour", "Lyrics", "Look up lyrics for every song",
                      "Show the line being sung in the island", "Hinglish", "Hindi lyrics", "Original script",
                      "Look up music videos too", "Music playlists", "Music", "Spotify", "Client ID"],
             keywords: ["music", "song", "media", "player", "spotify", "apple music", "youtube", "podcast",

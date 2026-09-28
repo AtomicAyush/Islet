@@ -1,9 +1,8 @@
 import SwiftUI
 
-/// iOS system colours for battery levels.
-enum HeadsetPalette {
-    static let green = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-    static let red = Color(red: 1, green: 69 / 255, blue: 58 / 255)
+extension FeatureTint {
+    /// A headset's battery ring at a level that is fine: the iPhone's green.
+    static let headsetLevel = FeatureTint.colour(RGB(bytes: 48, 209, 88))
 }
 
 /// A headset's picture, fitted to a box so that wide AirPods Pro and tall AirPods Max
@@ -28,28 +27,30 @@ struct HeadsetGlyph: View {
 struct HeadsetBatteryRing: View {
     let reading: HeadsetBattery.Reading
     let diameter: CGFloat
+    var backdrop: IslandBackdrop = .island
+    @Environment(\.islandTheme) private var theme
     @State private var fill: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 3) {
             ZStack {
                 Circle()
-                    .stroke(color.opacity(0.25), lineWidth: lineWidth)
+                    .stroke(IslandStyle(ink: ink).opacity(0.25), lineWidth: lineWidth)
                 Circle()
                     .trim(from: 0, to: fill)
-                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .stroke(IslandStyle(ink: ink), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 Text("\(reading.level)")
                     .font(.system(size: diameter * 0.34, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandText(1, on: backdrop))
             }
             .frame(width: diameter, height: diameter)
 
             if let label = reading.label {
                 Text(label)
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55, on: backdrop))
             }
         }
         .onAppear {
@@ -62,7 +63,10 @@ struct HeadsetBatteryRing: View {
 
     private var target: CGFloat { CGFloat(reading.level) / 100 }
     private var lineWidth: CGFloat { diameter >= 26 ? 3 : 2.5 }
-    private var color: Color { reading.level <= 20 ? HeadsetPalette.red : HeadsetPalette.green }
+    /// Red when low, which never takes the accent; otherwise the headset's own colour.
+    private var ink: IslandInk {
+        reading.level <= 20 ? .hue(.lowBattery, on: backdrop) : theme.restingLevel(.headsetLevel, on: backdrop)
+    }
 }
 
 /// A ring for each level the headset reports.
@@ -70,11 +74,12 @@ struct HeadsetBatteryRings: View {
     let battery: HeadsetBattery
     let diameter: CGFloat
     var spacing: CGFloat = 8
+    var backdrop: IslandBackdrop = .island
 
     var body: some View {
         HStack(alignment: .top, spacing: spacing) {
             ForEach(battery.readings) { reading in
-                HeadsetBatteryRing(reading: reading, diameter: diameter)
+                HeadsetBatteryRing(reading: reading, diameter: diameter, backdrop: backdrop)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
@@ -93,7 +98,7 @@ struct HeadsetConnectedCard: View {
     var body: some View {
         HStack(spacing: 12) {
             HeadsetGlyph(symbol: headset.symbol, width: 46, height: 36)
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandGraphic())
                 .frame(width: 46)
                 .scaleEffect(hasAppeared ? 1 : 0.7)
                 .opacity(hasAppeared ? 1 : 0)
@@ -101,12 +106,12 @@ struct HeadsetConnectedCard: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(headset.name)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 Text("Connected")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -132,7 +137,7 @@ struct HeadsetDisconnectedLeading: View {
                 glyph
                 Text(headset.shortName)
                     .font(Font(HeadsetDisconnectedLayout.font))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: HeadsetDisconnectedLayout.maximumNameWidth, alignment: .leading)
@@ -147,7 +152,7 @@ struct HeadsetDisconnectedLeading: View {
 
     private var glyph: some View {
         HeadsetGlyph(symbol: headset.symbol, width: HeadsetDisconnectedLayout.glyphWidth, height: 18, weight: .medium)
-            .foregroundStyle(.white)
+            .foregroundStyle(.islandGraphic())
             .frame(width: HeadsetDisconnectedLayout.glyphWidth, height: 20)
     }
 }
@@ -158,7 +163,7 @@ struct HeadsetDisconnectedTrailing: View {
     var body: some View {
         Text(HeadsetDisconnectedLayout.status)
             .font(Font(HeadsetDisconnectedLayout.font))
-            .foregroundStyle(.white.opacity(0.6))
+            .foregroundStyle(.islandText(0.6))
             .lineLimit(1)
             .fixedSize()
             .padding(.leading, HeadsetDisconnectedLayout.innerInset)
@@ -227,7 +232,7 @@ struct HeadsetHomeTile: View {
                             name(headset)
                             Text(status)
                                 .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.55))
+                                .foregroundStyle(.islandText(0.55, on: .homeTile))
                                 .lineLimit(1)
                         }
                     }
@@ -241,8 +246,8 @@ struct HeadsetHomeTile: View {
 
                 if !headset.battery.isEmpty {
                     ViewThatFits(in: .horizontal) {
-                        HeadsetBatteryRings(battery: headset.battery, diameter: 26)
-                        HeadsetBatteryRings(battery: headset.battery, diameter: 22, spacing: 5)
+                        HeadsetBatteryRings(battery: headset.battery, diameter: 26, backdrop: .homeTile)
+                        HeadsetBatteryRings(battery: headset.battery, diameter: 22, spacing: 5, backdrop: .homeTile)
                         HeadsetBatteryList(battery: headset.battery)
                     }
                 } else if BluetoothLevels.shared.authorization == .notDetermined {
@@ -253,10 +258,10 @@ struct HeadsetHomeTile: View {
                     } label: {
                         Label("Show battery…", systemImage: "battery.75percent")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.islandText(1, on: IslandBackdrop.homeTile.stacked(0.14)))
                             .padding(.horizontal, 9)
                             .frame(height: 24)
-                            .background(Capsule().fill(Color.white.opacity(0.14)))
+                            .background(Capsule().fill(.islandSurface(0.14, on: .homeTile)))
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -271,14 +276,14 @@ struct HeadsetHomeTile: View {
 
     private func glyph(_ headset: Headset) -> some View {
         HeadsetGlyph(symbol: headset.symbol, width: 24, height: 20, weight: .medium)
-            .foregroundStyle(.white)
+            .foregroundStyle(.islandGraphic(1, on: .homeTile))
             .frame(width: 24, alignment: .leading)
     }
 
     private func name(_ headset: Headset) -> some View {
         Text(headset.shortName)
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(.islandText(1, on: .homeTile))
             .lineLimit(1)
             .minimumScaleFactor(0.8)
     }
@@ -297,10 +302,10 @@ private struct HeadsetBatteryList: View {
             ForEach(battery.readings) { reading in
                 HStack(spacing: 4) {
                     if let label = reading.label {
-                        Text(label).foregroundStyle(.white.opacity(0.55))
+                        Text(label).foregroundStyle(.islandText(0.55, on: .homeTile))
                     }
                     Text("\(reading.level)%")
-                        .foregroundStyle(reading.level <= 20 ? HeadsetPalette.red : .white)
+                        .foregroundStyle(.island(reading.level <= 20 ? .hue(.lowBattery, minimum: Contrast.text, on: .homeTile) : .text(1, on: .homeTile)))
                 }
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)

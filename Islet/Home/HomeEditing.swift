@@ -118,21 +118,25 @@ private struct ArrangingOverlay: View {
     let shown: [String]
     let editing: HomeEditing
     @Binding var dragging: String?
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         GeometryReader { geo in
             let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
             let title = editing.title(widget.id)
-            shape.strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+            shape.strokeBorder(.islandDecorative(0.22), lineWidth: 1)
                 .contentShape(shape)
                 .onDrag {
                     dragging = widget.id
                     return HomeTileDrop.provider(for: widget.id)
                 } preview: {
+                    // Drawn apart from the island, so on the island's colour and with its
+                    // theme, as the tile is on the page.
                     HomeTile { widget.view }
                         .frame(width: geo.size.width, height: geo.size.height)
-                        .background(shape.fill(Color.black))
-                        .environment(\.colorScheme, .dark)
+                        .background(shape.fill(theme.background))
+                        .environment(\.islandTheme, theme)
+                        .environment(\.colorScheme, theme.colorScheme)
                 }
                 .onDrop(of: [.homeTile], delegate: TileDropDelegate(
                     target: widget.id, size: geo.size, shown: shown, dragging: $dragging, move: editing.move
@@ -218,19 +222,26 @@ private struct TileDropDelegate: DropDelegate {
     }
 }
 
-/// The small round badge at a tile's corner that hides it.
+/// The small round badge at a tile's corner that hides it: a minus on a grey disc, solid
+/// so it reads over the tile's corner on any island, with a rim of shadow that parts it
+/// from the tile.
 private struct HideBadge: View {
     let title: String
     let action: () -> Void
+    @Environment(\.islandTheme) private var theme
+    static let disc = RGB(0.36, 0.36, 0.36)
 
     var body: some View {
+        // Held to 3:1 against the tile it overhangs, so it never fades into a grey or
+        // mid-tone island; as it is wherever it already stands out, black included.
+        let disc = theme.fitted(Self.disc, minimum: Contrast.graphic, on: .homeTile)
         Button(action: action) {
             Image(systemName: "minus")
                 .font(.system(size: 8, weight: .black))
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandOnFill(disc))
                 .frame(width: 16, height: 16)
-                .background(Circle().fill(Color(white: 0.36)))
-                .overlay(Circle().strokeBorder(Color.black.opacity(0.55), lineWidth: 1))
+                .background(Circle().fill(.islandFill(disc)))
+                .overlay(Circle().strokeBorder(theme.shadow(0.55), lineWidth: 1))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -299,7 +310,7 @@ struct HiddenTilesMenu: View {
         if hidden.isEmpty {
             Text("Drag tiles to move them")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(.islandText(0.45))
                 .lineLimit(1)
         } else {
             Menu {
@@ -325,10 +336,10 @@ struct HiddenTilesMenu: View {
                     Text("\(hidden.count) Hidden")
                         .font(.system(size: 11, weight: .semibold))
                 }
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(.islandText(0.75, on: .surface(0.1)))
                 .padding(.horizontal, 9)
                 .frame(height: 20)
-                .background(Capsule().fill(.white.opacity(0.1)))
+                .background(Capsule().fill(.islandSurface(0.1)))
                 .contentShape(Capsule())
             }
             .menuStyle(.button)
@@ -351,13 +362,14 @@ struct HomeDoneButton: View {
     @MainActor static let width: CGFloat = ceil(NSHostingView(rootView: HomeDoneButton {}.fixedSize()).fittingSize.width)
 
     var body: some View {
+        let wash = isHovering ? 0.28 : 0.2
         Button(action: action) {
             Text("Done")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandText(1, on: .surface(wash)))
                 .padding(.horizontal, 11)
                 .frame(height: 20)
-                .background(Capsule().fill(.white.opacity(isHovering ? 0.28 : 0.2)))
+                .background(Capsule().fill(.islandSurface(wash)))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)

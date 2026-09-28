@@ -15,7 +15,6 @@ final class SystemHUDSampleSong: IslandActivity {
     var expandedHeight: CGFloat { 64 }
 
     private let artwork = NowPlayingArtwork.sampleSunset
-    @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
 
     func compactLeading() -> AnyView {
         AnyView(NowPlayingArtworkView(artwork: artwork, size: 20, radius: 5))
@@ -24,14 +23,7 @@ final class SystemHUDSampleSong: IslandActivity {
     func compactTrailing() -> AnyView {
         // Looping on the render server, as Now Playing's own does before it hears
         // the music, so the preview costs nothing per frame either.
-        AnyView(
-            WaveformBars(
-                playing: true,
-                colour: NSColor(tinted ? (artwork?.tint ?? .white) : .white),
-                bars: 5, barWidth: 2, spacing: 2
-            )
-            .frame(width: 18, height: 14)
-        )
+        AnyView(SampleSongBars(artwork: artwork).frame(width: 18, height: 14))
     }
 
     func minimal() -> AnyView {
@@ -45,15 +37,30 @@ final class SystemHUDSampleSong: IslandActivity {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Midnight Drive")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandPrimary)
                     Text("Neon Harbour")
                         .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(.islandText(0.6))
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 6)
             .frame(maxHeight: .infinity)
+        )
+    }
+}
+
+/// The sample song's waveform, in Now Playing's colours for its cover.
+private struct SampleSongBars: View {
+    let artwork: NowPlayingArtwork?
+    @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
+    @Environment(\.islandTheme) private var theme
+
+    var body: some View {
+        WaveformBars(
+            playing: true,
+            tint: NowPlayingTint.ink(artwork?.tint, tinted: tinted, in: theme),
+            bars: 5, barWidth: 2, spacing: 2
         )
     }
 }

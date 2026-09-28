@@ -217,6 +217,7 @@ struct NowPlayingSaveButton: View {
     let model: NowPlayingModel
     let library: NowPlayingLibraryModel
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
+    @Environment(\.islandTheme) private var theme
     @State private var isHovering = false
 
     static let diameter: CGFloat = 26
@@ -228,7 +229,7 @@ struct NowPlayingSaveButton: View {
             case .hidden:
                 EmptyView()
             case .loading:
-                glyph(style.symbol, colour: .white.opacity(0.35), background: 0.06)
+                glyph(style.symbol, ink: .graphic(0.35), background: 0.06)
                     .accessibilityLabel(style.save)
                     .accessibilityValue("Loading")
             case .ready(let item):
@@ -237,7 +238,7 @@ struct NowPlayingSaveButton: View {
                 } label: {
                     glyph(
                         item.isSaved ? style.savedSymbol : style.symbol,
-                        colour: item.isSaved ? model.tint(tinted) : .white.opacity(isHovering ? 1 : 0.85),
+                        ink: item.isSaved ? model.tint(tinted, in: theme) : .graphic(isHovering ? 1 : 0.85),
                         background: isHovering ? 0.18 : 0.11
                     )
                     .symbolEffect(.bounce, value: item.isSaved)
@@ -249,7 +250,7 @@ struct NowPlayingSaveButton: View {
                 button(help: prompt) {
                     library.showReconnect(prompt)
                 } label: {
-                    glyph(style.symbol, colour: .white.opacity(isHovering ? 0.8 : 0.45), background: isHovering ? 0.14 : 0.08)
+                    glyph(style.symbol, ink: .graphic(isHovering ? 0.8 : 0.45), background: isHovering ? 0.14 : 0.08)
                 }
                 .accessibilityLabel(style.save)
                 .accessibilityHint(prompt)
@@ -257,7 +258,7 @@ struct NowPlayingSaveButton: View {
                 button(help: message) {
                     saving.toggle()
                 } label: {
-                    glyph(style.symbol, colour: .white.opacity(isHovering ? 0.8 : 0.45), background: isHovering ? 0.14 : 0.08)
+                    glyph(style.symbol, ink: .graphic(isHovering ? 0.8 : 0.45), background: isHovering ? 0.14 : 0.08)
                 }
                 .accessibilityLabel(style.save)
                 .accessibilityHint(message)
@@ -265,13 +266,14 @@ struct NowPlayingSaveButton: View {
         }
     }
 
-    private func glyph(_ symbol: String, colour: Color, background: Double) -> some View {
+    /// The heart on its disc, measured against the disc.
+    private func glyph(_ symbol: String, ink: IslandInk, background: Double) -> some View {
         Image(systemName: symbol)
             .font(.system(size: 11.5, weight: .bold))
-            .foregroundStyle(colour)
+            .foregroundStyle(.island(ink.on(.surface(background))))
             .contentTransition(.symbolEffect(.replace))
             .frame(width: Self.diameter, height: Self.diameter)
-            .background(Circle().fill(.white.opacity(background)))
+            .background(Circle().fill(.islandSurface(background)))
             .contentShape(Circle())
             .animation(.smooth(duration: 0.2), value: symbol)
     }

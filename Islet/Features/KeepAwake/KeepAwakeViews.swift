@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// A coffee's crema: warm, like the timer's orange, but paler, so the two are told apart
-/// when both are beside the notch.
-let keepAwakeTint = Color(red: 0.96, green: 0.77, blue: 0.55)
+extension FeatureTint {
+    /// A coffee's crema: warm, like the timer's orange, but paler, so the two are told
+    /// apart when both are beside the notch.
+    static let keepAwake = FeatureTint.colour(RGB(0.96, 0.77, 0.55))
+}
 
 /// The symbol Keep Awake goes by everywhere it shows.
 enum KeepAwakeSymbol {
@@ -45,6 +47,8 @@ struct KeepAwakeTimeText: View {
     let session: KeepAwakeModel.Session
     var size: CGFloat
     var weight: Font.Weight = .semibold
+    /// The island, or the home tile.
+    var backdrop: IslandBackdrop = .island
 
     var body: some View {
         Group {
@@ -63,7 +67,7 @@ struct KeepAwakeTimeText: View {
         }
         .font(.system(size: size, weight: weight, design: .rounded))
         .monospacedDigit()
-        .foregroundStyle(keepAwakeTint)
+        .foregroundStyle(.islandAccentText(.keepAwake, on: backdrop))
         .lineLimit(1)
         .minimumScaleFactor(0.6)
     }
@@ -78,10 +82,10 @@ struct KeepAwakeRing: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1, paused: session.end == nil)) { context in
             ZStack {
-                Circle().stroke(keepAwakeTint.opacity(0.25), lineWidth: lineWidth)
+                Circle().stroke(IslandStyle.islandAccent(.keepAwake).opacity(0.25), lineWidth: lineWidth)
                 Circle()
                     .trim(from: 0, to: session.progress(at: context.date))
-                    .stroke(keepAwakeTint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .stroke(.islandAccent(.keepAwake), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
         }
@@ -99,7 +103,7 @@ private struct KeepAwakeBadge: View {
             .overlay(
                 Image(systemName: KeepAwakeSymbol.on)
                     .font(.system(size: symbolSize, weight: .bold))
-                    .foregroundStyle(keepAwakeTint)
+                    .foregroundStyle(.islandAccent(.keepAwake))
             )
             .accessibilityHidden(true)
     }
@@ -109,7 +113,7 @@ struct KeepAwakeCompactLeading: View {
     var body: some View {
         Image(systemName: KeepAwakeSymbol.on)
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(keepAwakeTint)
+            .foregroundStyle(.islandAccent(.keepAwake))
             .accessibilityLabel("Keeping the Mac awake")
     }
 }
@@ -138,7 +142,7 @@ struct KeepAwakeMinimal: View {
                 if proxy.size.width < 24 {
                     Image(systemName: KeepAwakeSymbol.on)
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(keepAwakeTint)
+                        .foregroundStyle(.islandAccent(.keepAwake))
                         .frame(width: proxy.size.width, height: proxy.size.height)
                         .accessibilityLabel("Keeping the Mac awake")
                 } else {
@@ -163,7 +167,7 @@ struct KeepAwakeExpanded: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(KeepAwakeWords.until(session.end, now: Date()))
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55))
                         .lineLimit(1)
                     KeepAwakeTimeText(session: session, size: 40, weight: .medium)
                 }
@@ -176,16 +180,15 @@ struct KeepAwakeExpanded: View {
                     } label: {
                         Label("15 min", systemImage: "plus")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(keepAwakeTint)
                             .padding(.horizontal, 12)
                             .frame(height: 30)
-                            .background(Capsule().fill(keepAwakeTint.opacity(0.2)))
+                            .islandWashed(.accent(.keepAwake, minimum: Contrast.text), wash: 0.2, in: Capsule())
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("15 more minutes")
                 }
-                RoundButton(symbol: "xmark", tint: .white) {
+                RoundButton(symbol: "xmark") {
                     model.stop()
                 }
                 .accessibilityLabel("Stop keeping the Mac awake")
@@ -207,11 +210,11 @@ struct KeepAwakeHomeTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Keep Awake", systemImage: KeepAwakeSymbol.on)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(keepAwakeTint)
+                .foregroundStyle(.islandAccentText(.keepAwake, on: .homeTile))
                 .lineLimit(1)
 
             if let session = model.shown {
-                KeepAwakeTimeText(session: session, size: 26, weight: .medium)
+                KeepAwakeTimeText(session: session, size: 26, weight: .medium, backdrop: .homeTile)
                     .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
                 HStack(spacing: 6) {
                     if session.end != nil {
@@ -249,10 +252,10 @@ struct KeepAwakeHomeTile: View {
         Button(action: action) {
             label()
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandText(1, on: IslandBackdrop.homeTile.stacked(0.12)))
                 .frame(maxWidth: .infinity)
                 .frame(height: 24)
-                .background(Capsule().fill(Color.white.opacity(0.12)))
+                .background(Capsule().fill(.islandSurface(0.12, on: .homeTile)))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -270,7 +273,7 @@ struct KeepAwakeEndedLeading: View {
                 symbol
                 Text(KeepAwakeBannerLayout.name)
                     .font(Font(KeepAwakeBannerLayout.font))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -289,7 +292,7 @@ struct KeepAwakeEndedLeading: View {
             .resizable()
             .aspectRatio(contentMode: .fit)
             .fontWeight(.semibold)
-            .foregroundStyle(keepAwakeTint)
+            .foregroundStyle(.islandAccent(.keepAwake))
             .frame(width: KeepAwakeBannerLayout.symbolSize.width, height: KeepAwakeBannerLayout.symbolSize.height)
             .accessibilityHidden(true)
     }
@@ -301,7 +304,7 @@ struct KeepAwakeEndedTrailing: View {
     var body: some View {
         Text(KeepAwakeBannerLayout.status)
             .font(Font(KeepAwakeBannerLayout.font))
-            .foregroundStyle(.white.opacity(0.5))
+            .foregroundStyle(.islandText(0.5))
             .lineLimit(1)
             .fixedSize()
             .padding(.leading, KeepAwakeBannerLayout.innerInset)

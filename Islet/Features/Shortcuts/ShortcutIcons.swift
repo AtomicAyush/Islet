@@ -78,8 +78,19 @@ enum ShortcutPalette {
         return distances.indices.min { distances[$0] < distances[$1] } ?? grayBlue
     }
 
-    static func color(_ index: Int) -> Color {
-        entries.indices.contains(index) ? entries[index].color : entries[grayBlue].color
+    /// A tile's colour on `theme`'s island, lying on `backdrop`. The colour is the
+    /// person's, so it never takes the accent: it is drawn exactly as Shortcuts draws it
+    /// wherever it stands out from what it lies on (always, on the black island with
+    /// Feature colours), and otherwise fitted, darkened or lightened just enough,
+    /// keeping its hue.
+    static func color(_ index: Int, on backdrop: IslandBackdrop, in theme: IslandTheme) -> Color {
+        let entry = entries.indices.contains(index) ? entries[index] : entries[grayBlue]
+        if theme.isDefault { return entry.color }
+        // Display P3 as near as sRGB comes, which is what the fitting is worked out in.
+        let colour = RGB(NSColor(displayP3Red: entry.red, green: entry.green, blue: entry.blue, alpha: 1))
+            ?? RGB(entry.red, entry.green, entry.blue)
+        let fitted = theme.fitted(colour, minimum: Contrast.graphic, on: backdrop)
+        return fitted == colour ? entry.color : fitted.color
     }
 }
 

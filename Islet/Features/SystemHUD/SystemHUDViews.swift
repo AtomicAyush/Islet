@@ -1,14 +1,26 @@
 import SwiftUI
 
+extension FeatureTint {
+    /// The speaker or sun and the level's bar: white on the black island, as the
+    /// macOS overlay draws them.
+    static let systemHUD = FeatureTint.neutral
+}
+
 /// Left of the notch: a speaker or a sun, drawn to match the level.
 struct SystemHUDIcon: View {
     let state: SystemHUDState
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let symbol = Self.symbol(for: state)
-        Image(systemName: symbol, variableValue: symbol == Self.speaker ? state.level : nil)
+        // The speaker lights its waves with the level only on the black island with
+        // Feature colours. SF Symbols draws the unlit waves at a fraction of the colour,
+        // which on any other island falls well under 3:1; the bar beside it gives the
+        // level there.
+        let lightsWaves = symbol == Self.speaker && theme.isDefault
+        Image(systemName: symbol, variableValue: lightsWaves ? state.level : nil)
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(.islandAccent(.systemHUD))
             .contentTransition(.symbolEffect(.replace))
             // Level changes arrive unanimated, and the transition only plays inside
             // an animation.
@@ -17,7 +29,7 @@ struct SystemHUDIcon: View {
             .accessibilityHidden(true)
     }
 
-    /// Lights its waves one by one as the volume rises.
+    /// Lights its waves one by one as the volume rises (on the default island).
     static let speaker = "speaker.wave.3.fill"
     static let mutedSpeaker = "speaker.slash.fill"
     static let dimSun = "sun.min.fill"
@@ -46,7 +58,7 @@ struct SystemHUDLeading: View {
                     SystemHUDIcon(state: state)
                     Text(name)
                         .font(Font(SystemHUDLayout.nameFont))
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(.islandText(0.75))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: SystemHUDLayout.maximumNameWidth, alignment: .leading)
@@ -76,7 +88,7 @@ struct SystemHUDLevel: View {
                 Text(percentage)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(state.isMuted ? 0.55 : 1))
+                    .foregroundStyle(.islandText(state.isMuted ? 0.55 : 1))
                     .contentTransition(.numericText(value: state.level))
                     .frame(width: SystemHUDLayout.percentageWidth, alignment: .trailing)
             }
@@ -239,8 +251,9 @@ enum SystemHUDLayout {
     }
 }
 
-/// A capsule track with a white fill from the left. The fill is clipped by the
-/// track rather than rounded itself, so a low level reads as a sliver, not a dot.
+/// A capsule track with a fill from the left, white on the black island. The fill is
+/// clipped by the track rather than rounded itself, so a low level reads as a sliver,
+/// not a dot. Muted, it dims to little more than the track.
 private struct LevelBar: View {
     let level: Double
     let isDimmed: Bool
@@ -248,10 +261,10 @@ private struct LevelBar: View {
     var body: some View {
         GeometryReader { geo in
             Rectangle()
-                .fill(Color.white.opacity(isDimmed ? 0.35 : 1))
+                .fill(IslandStyle.islandAccent(.systemHUD, on: .track(0.2)).dimmedLevel(isDimmed ? 0.35 : 1, on: .track(0.2)))
                 .frame(width: geo.size.width * min(max(level, 0), 1))
         }
-        .background(Color.white.opacity(0.2))
+        .background(.islandSurface(0.2))
         .clipShape(Capsule())
     }
 }

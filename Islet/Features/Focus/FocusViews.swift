@@ -2,32 +2,33 @@ import AppKit
 import SwiftUI
 
 extension FocusTint {
-    /// The iPhone's system colours in their dark appearance, which is what the black
-    /// island shows them against.
-    var color: Color {
+    /// The Focus's colour as one of the island's hues: the iPhone's system colour in its
+    /// dark appearance on the black island, fitted to whatever colour the island is.
+    var hue: SystemHue {
         switch self {
-        case .red: Color(red: 255 / 255, green: 69 / 255, blue: 58 / 255)
-        case .orange: Color(red: 255 / 255, green: 159 / 255, blue: 10 / 255)
-        case .yellow: Color(red: 255 / 255, green: 214 / 255, blue: 10 / 255)
-        case .green: Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-        case .mint: Color(red: 99 / 255, green: 230 / 255, blue: 226 / 255)
-        case .teal: Color(red: 64 / 255, green: 200 / 255, blue: 224 / 255)
-        case .cyan: Color(red: 100 / 255, green: 210 / 255, blue: 255 / 255)
-        case .blue: Color(red: 10 / 255, green: 132 / 255, blue: 255 / 255)
-        case .indigo: Color(red: 94 / 255, green: 92 / 255, blue: 230 / 255)
-        case .purple: Color(red: 191 / 255, green: 90 / 255, blue: 242 / 255)
-        case .pink: Color(red: 255 / 255, green: 55 / 255, blue: 95 / 255)
-        case .brown: Color(red: 172 / 255, green: 142 / 255, blue: 104 / 255)
-        case .gray: Color(red: 152 / 255, green: 152 / 255, blue: 157 / 255)
+        case .red: .red
+        case .orange: .orange
+        case .yellow: .yellow
+        case .green: .green
+        case .mint: .mint
+        case .teal: .teal
+        case .cyan: .cyan
+        case .blue: .blue
+        case .indigo: .indigo
+        case .purple: .purple
+        case .pink: .pink
+        case .brown: .brown
+        case .gray: .gray
         }
     }
 }
 
 enum FocusPalette {
-    /// A Focus that is off: its symbol, its name and the word "Off".
-    static let off = Color.white.opacity(0.5)
+    /// A Focus that is off: its name and the word "Off", and, as a symbol, its symbol.
+    static let off = IslandInk.text(0.5)
+    static let offSymbol = IslandInk.graphic(0.5)
     /// Something went wrong running the shortcut.
-    static let problem = FocusTint.orange.color
+    static let problem = SystemHue.warning
 }
 
 /// A Focus's symbol, fitted into a box so wide symbols (a bed, a games controller)
@@ -54,21 +55,21 @@ struct FocusSymbol: View {
 /// failing.
 struct FocusAnnouncement: Equatable {
     var symbol: String
-    var symbolColor: Color
+    var symbolColor: IslandInk
     var name: String
-    var nameColor: Color
+    var nameColor: IslandInk
     var status: String
-    var statusColor: Color
+    var statusColor: IslandInk
 
     /// "Do Not Disturb · On" in the Focus's colour; "… · Off" in grey.
     static func focus(_ mode: FocusMode, isOn: Bool) -> FocusAnnouncement {
         FocusAnnouncement(
             symbol: mode.symbol,
-            symbolColor: isOn ? mode.tint.color : FocusPalette.off,
+            symbolColor: isOn ? .hue(mode.tint.hue) : FocusPalette.offSymbol,
             name: mode.name,
-            nameColor: isOn ? .white : FocusPalette.off,
+            nameColor: isOn ? .text(1) : FocusPalette.off,
             status: isOn ? "On" : "Off",
-            statusColor: isOn ? mode.tint.color : FocusPalette.off
+            statusColor: isOn ? .hue(mode.tint.hue, minimum: Contrast.text) : FocusPalette.off
         )
     }
 
@@ -78,11 +79,11 @@ struct FocusAnnouncement: Equatable {
     static func problem(_ failure: FocusShortcut.Failure) -> FocusAnnouncement {
         FocusAnnouncement(
             symbol: "exclamationmark.triangle.fill",
-            symbolColor: FocusPalette.problem,
+            symbolColor: .hue(FocusPalette.problem),
             name: "Shortcut",
-            nameColor: .white,
+            nameColor: .text(1),
             status: failure == .notFound ? "Not Found" : "Failed",
-            statusColor: FocusPalette.problem
+            statusColor: .hue(FocusPalette.problem, minimum: Contrast.text)
         )
     }
 }
@@ -98,7 +99,7 @@ struct FocusBannerLeading: View {
                 symbol
                 Text(announcement.name)
                     .font(Font(FocusBannerLayout.font))
-                    .foregroundStyle(announcement.nameColor)
+                    .foregroundStyle(.island(announcement.nameColor))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: FocusBannerLayout.maximumNameWidth, alignment: .leading)
@@ -119,7 +120,7 @@ struct FocusBannerLeading: View {
             width: FocusBannerLayout.symbolSize.width,
             height: FocusBannerLayout.symbolSize.height
         )
-        .foregroundStyle(announcement.symbolColor)
+        .foregroundStyle(.island(announcement.symbolColor))
     }
 }
 
@@ -132,7 +133,7 @@ struct FocusBannerTrailing: View {
     var body: some View {
         Text(announcement.status)
             .font(Font(FocusBannerLayout.font))
-            .foregroundStyle(announcement.statusColor)
+            .foregroundStyle(.island(announcement.statusColor))
             .lineLimit(1)
             .fixedSize()
             .padding(.leading, FocusBannerLayout.innerInset)
@@ -198,17 +199,17 @@ struct FocusHomeTile: View {
             failure: model.preview == nil ? toggle.failure : nil
         )
         return VStack(alignment: .leading, spacing: 0) {
-            FocusBadge(symbol: display.symbol, tint: display.tint)
+            FocusBadge(symbol: display.symbol, hue: display.hue, backdrop: .homeTile)
             Spacer(minLength: 6)
             Text(display.title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(display.isOn ? .white : .white.opacity(0.8))
+                .foregroundStyle(.islandText(display.isOn ? 1 : 0.8, on: .homeTile))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
             TimelineView(.everyMinute) { context in
                 Text(display.status(at: context.date))
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(display.statusColor)
+                    .foregroundStyle(.island(display.statusColor(on: .homeTile)))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -233,7 +234,8 @@ struct FocusTileDisplay: Equatable {
     var isOn: Bool { !needsAccess && state?.mode != nil }
     var symbol: String { (needsAccess ? nil : state?.mode?.symbol) ?? "moon.fill" }
     var title: String { (needsAccess ? nil : state?.mode?.name) ?? "Focus" }
-    var tint: Color? { isOn ? state?.mode?.tint.color : nil }
+    /// The Focus's colour while one is on.
+    var hue: SystemHue? { isOn ? state?.mode?.tint.hue : nil }
 
     func status(at now: Date) -> String {
         if let failure { return failure == .notFound ? "Shortcut not found" : "Shortcut failed" }
@@ -247,9 +249,10 @@ struct FocusTileDisplay: Equatable {
         return "Until \(until.formatted(.dateTime.weekday(.abbreviated))) \(time)"
     }
 
-    var statusColor: Color {
-        if failure != nil { return FocusPalette.problem }
-        return tint ?? .white.opacity(0.55)
+    /// The status's words, on `backdrop`: a warning, the Focus's colour, or grey.
+    func statusColor(on backdrop: IslandBackdrop) -> IslandInk {
+        if failure != nil { return .hue(FocusPalette.problem, minimum: Contrast.text, on: backdrop) }
+        return hue.map { .hue($0, minimum: Contrast.text, on: backdrop) } ?? .text(0.55, on: backdrop)
     }
 }
 
@@ -284,23 +287,23 @@ struct FocusIndicatorCard: View {
         )
         let offersTurnOff = display.isOn && model.shown?.mode?.isDoNotDisturb == true && !shortcut.isEmpty
         HStack(spacing: 10) {
-            FocusBadge(symbol: display.symbol, tint: display.tint)
+            FocusBadge(symbol: display.symbol, hue: display.hue, backdrop: .indicatorCard)
             VStack(alignment: .leading, spacing: 1) {
                 Text(display.title)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(display.isOn ? .white : .white.opacity(0.8))
+                    .foregroundStyle(.islandText(display.isOn ? 1 : 0.8, on: .indicatorCard))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 TimelineView(.everyMinute) { context in
                     Text(display.status(at: context.date))
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(display.statusColor)
+                        .foregroundStyle(.island(display.statusColor(on: .indicatorCard)))
                         .lineLimit(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if offersTurnOff {
-                FocusTurnOffButton(tint: display.tint ?? FocusPalette.off, isRunning: toggle.isRunning, action: turnOff)
+                FocusTurnOffButton(hue: display.hue ?? FocusPalette.problem, isRunning: toggle.isRunning, action: turnOff)
                     .padding(.leading, 4)
             }
         }
@@ -316,7 +319,7 @@ extension FocusMode {
 /// "Turn Off", in the Focus's colour on a capsule of it, matching `RoundButton`. Dimmed
 /// while the shortcut runs, as the tile is.
 private struct FocusTurnOffButton: View {
-    let tint: Color
+    let hue: SystemHue
     let isRunning: Bool
     let action: () -> Void
     @State private var isHovering = false
@@ -325,10 +328,11 @@ private struct FocusTurnOffButton: View {
         Button(action: action) {
             Text("Turn Off")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(tint)
                 .padding(.horizontal, 10)
                 .frame(height: 24)
-                .background(Capsule().fill(tint.opacity(isHovering ? 0.3 : 0.2)))
+                .islandWashed(
+                    .hue(hue, minimum: Contrast.text), wash: isHovering ? 0.3 : 0.2, in: Capsule(), on: .indicatorCard
+                )
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -339,16 +343,21 @@ private struct FocusTurnOffButton: View {
 }
 
 /// The Focus's symbol on a disc of its colour, matching `RoundButton`; grey when off.
+/// The disc lies on `backdrop`, a home tile or an indicator card.
 struct FocusBadge: View {
     let symbol: String
-    let tint: Color?
+    let hue: SystemHue?
+    var backdrop: IslandBackdrop = .island
     var diameter: CGFloat = 30
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
+        let colours = hue.map { theme.onWash(.hue($0), wash: 0.2, on: backdrop) }
+            ?? (mark: FocusPalette.offSymbol.on(backdrop.stacked(0.1)).color(in: theme), wash: theme.surface(0.1, on: backdrop))
         FocusSymbol(symbol: symbol, width: diameter * 0.5, height: diameter * 0.44)
-            .foregroundStyle(tint ?? FocusPalette.off)
+            .foregroundStyle(colours.mark)
             .frame(width: diameter, height: diameter)
-            .background(Circle().fill((tint ?? .white).opacity(tint == nil ? 0.1 : 0.2)))
+            .background(Circle().fill(colours.wash))
     }
 }
 

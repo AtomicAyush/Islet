@@ -466,8 +466,11 @@ private struct LibraryChip: View {
     let isSelected: Bool
     let action: () -> Void
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
+        let wash = isHovering ? 0.18 : 0.11
+        let fill = theme.nowPlayingFill
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: symbol)
@@ -475,10 +478,10 @@ private struct LibraryChip: View {
                 Text(title)
                     .font(.system(size: 11.5, weight: .semibold))
             }
-            .foregroundStyle(isSelected ? Color.black : .white.opacity(isHovering ? 1 : 0.85))
+            .foregroundStyle(isSelected ? .islandOnFill(fill) : .islandText(isHovering ? 1 : 0.85, on: .surface(wash)))
             .padding(.horizontal, 11)
             .frame(height: 24)
-            .background(Capsule().fill(isSelected ? Color.white : .white.opacity(isHovering ? 0.18 : 0.11)))
+            .background(Capsule().fill(isSelected ? .islandFill(fill) : .islandSurface(wash)))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -637,7 +640,7 @@ struct NowPlayingLibraryPanel: View {
                 Text(NowPlayingClock.text(duration))
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55, on: .panelRow))
             }
         }
     }
@@ -699,7 +702,7 @@ struct PanelHeader: View {
     var body: some View {
         Text(title)
             .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.55))
+            .foregroundStyle(.islandText(0.55))
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
@@ -781,11 +784,11 @@ private struct LibraryRow<Accessory: View>: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandText(1, on: .panelRow))
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(.islandText(0.55, on: .panelRow))
                     }
                 }
                 .lineLimit(1)
@@ -807,7 +810,7 @@ private struct LibraryRow<Accessory: View>: View {
             .frame(height: 38)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.white.opacity(isHovering && action != nil ? 0.08 : 0))
+                    .fill(.islandSurface(isHovering && action != nil ? 0.08 : 0))
             )
             .contentShape(Rectangle())
         }
@@ -854,12 +857,13 @@ private struct RowButton: View {
     static let diameter: CGFloat = 26
 
     var body: some View {
+        let disc = isHovering ? 0.22 : 0.12
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(isHovering ? 1 : 0.85))
+                .foregroundStyle(.islandGraphic(isHovering ? 1 : 0.85, on: .surface(disc)))
                 .frame(width: Self.diameter, height: Self.diameter)
-                .background(Circle().fill(.white.opacity(isHovering ? 0.22 : 0.12)))
+                .background(Circle().fill(.islandSurface(disc)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -877,6 +881,10 @@ private struct PanelNotice: View {
     /// Told when the pointer comes and goes, so a question stays while it is there.
     let hold: (Bool) -> Void
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
+
+    /// A card raised over the list, opaque so the rows under it do not show through.
+    static let card = IslandBackdrop.surface(0.2)
 
     var body: some View {
         HStack(spacing: 6) {
@@ -889,10 +897,10 @@ private struct PanelNotice: View {
                 Button(action: addAnyway) {
                     Text("Add Anyway")
                         .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(.islandOnFill(theme.nowPlayingFill))
                         .padding(.horizontal, 10)
                         .frame(height: 20)
-                        .background(Capsule().fill(.white.opacity(isHovering ? 1 : 0.9)))
+                        .background(Capsule().fill(.islandFill(theme.nowPlayingFill).opacity(isHovering ? 1 : 0.9)))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -901,13 +909,13 @@ private struct PanelNotice: View {
                 .onHover { isHovering = $0 }
             }
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(.islandText(1, on: Self.card))
         .padding(.leading, 12)
         .padding(.trailing, notice.addAnyway == nil ? 12 : 4)
         .frame(height: 28)
-        .background(Capsule().fill(Color(white: 0.2)))
-        .overlay(Capsule().strokeBorder(.white.opacity(0.1)))
-        .shadow(color: .black.opacity(0.5), radius: 8, y: 2)
+        .background(Capsule().fill(theme.colour(of: Self.card).color))
+        .overlay(Capsule().strokeBorder(.islandDecorative(0.1)))
+        .shadow(color: theme.shadow(0.5), radius: 8, y: 2)
         .onHover(perform: hold)
         .padding(.horizontal, 24)
         .accessibilityElement(children: notice.addAnyway == nil ? .combine : .contain)
@@ -928,12 +936,13 @@ private struct PlayNextButton: View {
     }
 
     var body: some View {
+        let disc = isHovering ? 0.22 : 0.12
         Button(action: action) {
             Image(systemName: Self.symbol(joinsQueue))
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(isHovering ? 1 : 0.85))
+                .foregroundStyle(.islandGraphic(isHovering ? 1 : 0.85, on: .surface(disc)))
                 .frame(width: 26, height: 26)
-                .background(Circle().fill(.white.opacity(isHovering ? 0.22 : 0.12)))
+                .background(Circle().fill(.islandSurface(disc)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -946,6 +955,7 @@ private struct PlayNextButton: View {
 private struct LibraryArtwork: View {
     let url: URL?
     let placeholder: String
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
@@ -956,10 +966,10 @@ private struct LibraryArtwork: View {
                     .aspectRatio(contentMode: .fill)
             } else {
                 ZStack {
-                    Color(white: 0.17)
+                    theme.artworkPlaceholder
                     Image(systemName: placeholder)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandGraphic(0.55, on: .artworkPlaceholder))
                 }
             }
         }
@@ -972,11 +982,12 @@ private struct LibraryArtwork: View {
 private struct CurrentMark: View {
     let model: NowPlayingModel
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         Image(systemName: "speaker.wave.2.fill")
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(model.tint(tinted))
+            .foregroundStyle(.island(model.tint(tinted, in: theme).on(.panelRow)))
             .accessibilityLabel("Playing")
     }
 }
@@ -987,13 +998,14 @@ struct PanelMessage: View {
     var button: String?
     var action: () -> Void = {}
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         VStack(spacing: 10) {
             if let text {
                 Text(text)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
             }
@@ -1001,10 +1013,10 @@ struct PanelMessage: View {
                 Button(action: action) {
                     Text(button)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(.islandOnFill(theme.nowPlayingFill))
                         .padding(.horizontal, 14)
                         .frame(height: 26)
-                        .background(Capsule().fill(.white.opacity(isHovering ? 1 : 0.9)))
+                        .background(Capsule().fill(.islandFill(theme.nowPlayingFill).opacity(isHovering ? 1 : 0.9)))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)

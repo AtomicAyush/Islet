@@ -6,7 +6,8 @@ import SwiftUI
 ///
 /// Whatever asked, everything in it has been checked by the time it exists: the text is
 /// plain, on one line, trimmed and cut to length; the symbol is one macOS draws; the
-/// colour is one the island's black can show. It carries text and nothing else. Any app
+/// colour is kept as given and fitted to the island as it is drawn. It carries text and
+/// nothing else. Any app
 /// on the Mac can open a URL, so a banner from one must not offer a link or a button,
 /// which could pass for one of Islet's own and send a click somewhere it should not go.
 struct CustomBanner: Equatable {
@@ -14,7 +15,8 @@ struct CustomBanner: Equatable {
     var subtitle: String?
     /// An SF Symbol's name, known to exist.
     var symbol: String
-    /// `nil` draws the symbol in white and the subtitle in grey.
+    /// `nil` draws the symbol in the island's ink (white on the black island), or the
+    /// accent, and the subtitle in grey.
     var tint: BannerTint?
     var duration: TimeInterval
     var style: BannerStyle
@@ -278,37 +280,43 @@ enum BannerRequest: Equatable {
 enum BannerColour: String, CaseIterable, Sendable {
     case white, red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink, brown, gray
 
-    /// White is the banner's own colour, so asking for it is asking for no tint.
+    /// The colour asked for. White is the island's own ink (white on the black island,
+    /// black on a light one) whatever the accent.
     var tint: BannerTint? {
-        self == .white ? nil : .named(self)
+        .named(self)
     }
 
-    var color: Color {
-        FocusTint(rawValue: rawValue)?.color ?? .white
+    /// The same colour as one of the island's hues; `nil` for white.
+    var hue: SystemHue? {
+        SystemHue(rawValue: rawValue)
     }
 }
 
-/// A banner's colour: its symbol's, and its subtitle's beside the notch.
+extension FeatureTint {
+    /// A banner with no colour of its own: the island's ink, white on the black island.
+    static let banner = FeatureTint.neutral
+}
+
+/// A banner's colour: its symbol's, and its subtitle's beside the notch. It is the
+/// person's, so it never takes the accent: it keeps its hue on every island and is
+/// only fitted, darkened or lightened as far as it must be to stand out.
 enum BannerTint: Equatable {
     case named(BannerColour)
-    /// sRGB components, from 0 to 1, already lifted to show against black.
-    case rgb(red: Double, green: Double, blue: Double)
+    /// sRGB components, from 0 to 1, as given.
+    case rgb(RGB)
 
-    /// A name (`green`, `grey` too) or hex. `nil` for anything else, and for white.
+    /// A name (`green`, `grey` too) or hex. `nil` for anything else.
     init?(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespaces).lowercased()
         if let colour = BannerColour(rawValue: text == "grey" ? "gray" : text) {
-            guard let tint = colour.tint else { return nil }
-            self = tint
+            self = .named(colour)
         } else {
             self.init(hex: text)
         }
     }
 
-    /// `#rgb` or `#rrggbb`, the `#` optional. A colour too dark to make out on the
-    /// island's black (black itself, a navy, even pure blue) is mixed with white, which
-    /// keeps its hue, until it stands out as well as the system's own indigo does: there
-    /// is no other background for it to be seen against.
+    /// `#rgb` or `#rrggbb`, the `#` optional, kept as given: it is fitted to the island
+    /// only as it is drawn.
     init?(hex text: String) {
         var hex = Substring(text.trimmingCharacters(in: .whitespaces))
         if hex.hasPrefix("#") { hex = hex.dropFirst() }
@@ -320,13 +328,26 @@ enum BannerTint: Equatable {
             let r = value >> 8 & 0xF, g = value >> 4 & 0xF, b = value & 0xF
             value = (r * 17) << 16 | (g * 17) << 8 | b * 17
         }
-        let colour = (
-            red: Double(value >> 16 & 0xFF) / 255,
-            green: Double(value >> 8 & 0xFF) / 255,
-            blue: Double(value & 0xFF) / 255
-        )
-        let lifted = Self.lifted(colour)
-        self = .rgb(red: lifted.red, green: lifted.green, blue: lifted.blue)
+        self = .rgb(RGB(hex: value))
+    }
+
+    /// What the banner's symbol (`minimum` 3:1) or subtitle (4.5:1) is drawn in on
+    /// `theme`'s island, against `backdrop`. A named colour is one of the island's hues;
+    /// white is the island's ink for the symbol, and the subtitle is the grey of a banner
+    /// with no colour, as it always was.
+    /// A hex colour is fitted against the island as it is drawn; on the black island it
+    /// starts from what it always was there, lifted just enough to stand out on black,
+    /// so the accent never changes it.
+    func ink(minimum: Double, on backdrop: IslandBackdrop = .island, in theme: IslandTheme) -> IslandInk {
+        switch self {
+        case .named(let colour):
+            guard let hue = colour.hue else {
+                return minimum >= Contrast.text ? .text(0.6, on: backdrop) : .graphic(1, on: backdrop)
+            }
+            return .hue(hue, minimum: minimum, on: backdrop)
+        case .rgb(let colour):
+            return .fitted(theme.island == RGB.black ? Self.lifted(colour) : colour, minimum: minimum, on: backdrop)
+        }
     }
 
     typealias Components = (red: Double, green: Double, blue: Double)
@@ -336,7 +357,14 @@ enum BannerTint: Equatable {
     static let minimumLuminance = 0.15
 
     /// `colour`, or where it is darker than the minimum, as little white mixed in as
-    /// brings it there.
+    /// brings it there: a colour too dark to make out on black (black itself, a navy,
+    /// even pure blue) mixed with white, which keeps its hue, until it stands out as
+    /// well as the system's own indigo does.
+    static func lifted(_ colour: RGB) -> RGB {
+        let lifted = lifted((colour.red, colour.green, colour.blue))
+        return RGB(lifted.red, lifted.green, lifted.blue)
+    }
+
     static func lifted(_ colour: Components) -> Components {
         func mixed(_ amount: Double) -> Components {
             (
@@ -362,12 +390,5 @@ enum BannerTint: Equatable {
             c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
         }
         return 0.2126 * linear(colour.red) + 0.7152 * linear(colour.green) + 0.0722 * linear(colour.blue)
-    }
-
-    var color: Color {
-        switch self {
-        case .named(let colour): colour.color
-        case .rgb(let red, let green, let blue): Color(.sRGB, red: red, green: green, blue: blue)
-        }
     }
 }

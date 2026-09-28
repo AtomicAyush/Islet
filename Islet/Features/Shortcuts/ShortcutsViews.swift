@@ -1,17 +1,17 @@
 import AppKit
 import SwiftUI
 
+extension FeatureTint {
+    /// A run's spinner: the island's own ink, white on the black island.
+    static let shortcutsRun = FeatureTint.neutral
+    /// The home tile's label under an accent: the pink its gradient starts from.
+    static let shortcuts = FeatureTint.colour(ShortcutsPalette.label[0])
+}
+
 enum ShortcutsPalette {
-    /// The iPhone's green and red in their dark appearance, for a run's tick and cross.
-    static let succeeded = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-    static let failed = Color(red: 255 / 255, green: 69 / 255, blue: 58 / 255)
-    /// Stopped from Islet: neither a success nor a failure.
-    static let stopped = Color.white.opacity(0.45)
-    /// The label on the home tile, after the Shortcuts app's own icon.
-    static let label = LinearGradient(
-        colors: [Color(red: 1.0, green: 0.42, blue: 0.56), Color(red: 0.49, green: 0.47, blue: 1.0)],
-        startPoint: .leading, endPoint: .trailing
-    )
+    /// The label on the home tile under Feature colours, a gradient after the Shortcuts
+    /// app's own icon, from pink to violet.
+    static let label = [RGB(1.0, 0.42, 0.56), RGB(0.49, 0.47, 1.0)]
 }
 
 enum ShortcutsLayout {
@@ -37,14 +37,21 @@ enum ShortcutsLayout {
 /// A shortcut's icon as Shortcuts draws it: a white symbol on a tile of its colour,
 /// lit a little from the top. Without Full Disk Access there is no icon to read, and
 /// the tile is slate with the name's first letter.
+///
+/// The tile's colour is the person's, so it never takes the accent; where it would not
+/// stand out from what it lies on, it is only fitted, keeping its hue. The symbol and
+/// the sheen are the icon's own, drawn on its colour.
 struct ShortcutTile: View {
     let shortcut: ShortcutInfo
     var size: CGFloat
+    /// What the tile lies on: the island, or a home tile.
+    var backdrop: IslandBackdrop = .island
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
         ZStack {
-            shape.fill(ShortcutPalette.color(shortcut.icon?.colour ?? ShortcutPalette.grayBlue))
+            shape.fill(ShortcutPalette.color(shortcut.icon?.colour ?? ShortcutPalette.grayBlue, on: backdrop, in: theme))
             shape.fill(LinearGradient(
                 colors: [.white.opacity(0.14), .white.opacity(0)], startPoint: .top, endPoint: .bottom
             ))
@@ -84,11 +91,12 @@ struct ShortcutRunMark: View {
                 ShortcutSpinner(lineWidth: lineWidth)
                     .transition(.opacity)
             case .succeeded?:
-                mark("checkmark.circle.fill", ShortcutsPalette.succeeded)
+                mark("checkmark.circle.fill", .islandHue(.success))
             case .failed?:
-                mark("xmark.circle.fill", ShortcutsPalette.failed)
+                mark("xmark.circle.fill", .islandHue(.failure))
             case .stopped?:
-                mark("xmark.circle.fill", ShortcutsPalette.stopped)
+                // Neither a success nor a failure.
+                mark("xmark.circle.fill", .islandGraphic(0.45))
             case .vanished?:
                 Color.clear
             }
@@ -97,12 +105,12 @@ struct ShortcutRunMark: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.6), value: phase)
     }
 
-    private func mark(_ symbol: String, _ color: Color) -> some View {
+    private func mark(_ symbol: String, _ style: IslandStyle) -> some View {
         Image(systemName: symbol)
             .resizable()
             .aspectRatio(contentMode: .fit)
             .fontWeight(.semibold)
-            .foregroundStyle(color)
+            .foregroundStyle(style)
             .transition(.scale(scale: 0.4).combined(with: .opacity))
     }
 }
@@ -110,15 +118,33 @@ struct ShortcutRunMark: View {
 /// A spinning arc, turned by Core Animation: the render server spins it on its own, so
 /// a shortcut running for minutes costs the app nothing per frame. It exists only
 /// while a run does.
+///
+/// Its layers do not see the island's theme, so the colour is worked out here, from the
+/// theme in the environment, and handed to them again whenever it changes.
 struct ShortcutSpinner: NSViewRepresentable {
     var lineWidth: CGFloat = 2
-    var color: NSColor = .white
+    /// One of the island's colours: a feature's accent, as a rule, and a shortcut run's
+    /// own (the island's ink) by default.
+    var tint: IslandInk = .accent(.shortcutsRun)
 
     func makeNSView(context: Context) -> ShortcutSpinnerView {
-        ShortcutSpinnerView(lineWidth: lineWidth, color: color)
+        let view = ShortcutSpinnerView(lineWidth: lineWidth)
+        apply(to: view, in: context.environment.islandTheme)
+        return view
     }
 
-    func updateNSView(_ view: ShortcutSpinnerView, context: Context) {}
+    func updateNSView(_ view: ShortcutSpinnerView, context: Context) {
+        apply(to: view, in: context.environment.islandTheme)
+    }
+
+    /// The arc is a shade softer than its colour on the black island, as it always
+    /// was; on any other island the colour is fitted to stand out, so it is drawn at
+    /// full strength. The island's ink is drawn as AppKit's own white or black, as a
+    /// run's spinner always was.
+    private func apply(to view: ShortcutSpinnerView, in theme: IslandTheme) {
+        let colour = tint.color(in: theme) == theme.inkColor ? theme.inkNSColor : tint.nsColor(in: theme)
+        view.setColour(colour, arc: theme.isDefault ? 0.9 : 1)
+    }
 }
 
 final class ShortcutSpinnerView: NSView {
@@ -128,8 +154,9 @@ final class ShortcutSpinnerView: NSView {
     private let track = CAShapeLayer()
     private let arc = CAShapeLayer()
     private let lineWidth: CGFloat
+    private var colour: (NSColor, CGFloat)?
 
-    init(lineWidth: CGFloat, color: NSColor) {
+    init(lineWidth: CGFloat) {
         self.lineWidth = lineWidth
         super.init(frame: .zero)
         wantsLayer = true
@@ -139,9 +166,19 @@ final class ShortcutSpinnerView: NSView {
             layer.lineCap = .round
             self.layer?.addSublayer(layer)
         }
-        track.strokeColor = color.withAlphaComponent(0.18).cgColor
-        arc.strokeColor = color.withAlphaComponent(0.9).cgColor
         arc.strokeEnd = 0.3
+    }
+
+    /// Draws the arc in `colour` at `arcAlpha`, over a faint track of it. A new colour
+    /// comes in at once rather than fading, as the island's own colours do.
+    func setColour(_ colour: NSColor, arc arcAlpha: CGFloat) {
+        if let current = self.colour, current.0 == colour, current.1 == arcAlpha { return }
+        self.colour = (colour, arcAlpha)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        track.strokeColor = colour.withAlphaComponent(0.18).cgColor
+        arc.strokeColor = colour.withAlphaComponent(arcAlpha).cgColor
+        CATransaction.commit()
     }
 
     @available(*, unavailable)
@@ -208,7 +245,7 @@ struct ShortcutsCompactTrailing: View {
                     Text("\(runs.count)")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(.islandText(0.6))
                         .fixedSize()
                         .transition(.opacity)
                 }
@@ -266,13 +303,13 @@ struct ShortcutsExpanded: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(run.shortcut.name)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandPrimary)
                         .lineLimit(1)
                     status(run)
                     if let caption = caption(run) {
                         Text(caption)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(.islandText(0.4))
                             .lineLimit(1)
                     }
                 }
@@ -284,7 +321,7 @@ struct ShortcutsExpanded: View {
                     ZStack {
                         ShortcutSpinner(lineWidth: 2.5)
                             .frame(width: 46, height: 46)
-                        RoundButton(symbol: "stop.fill", tint: .white) { stop(run.id) }
+                        RoundButton(symbol: "stop.fill") { stop(run.id) }
                     }
                     .help("Stop the shortcut")
                 } else {
@@ -305,9 +342,9 @@ struct ShortcutsExpanded: View {
                 // Counts up by itself: nothing drives it frame by frame.
                 Text("Running… ") + Text(run.startedAt, style: .timer)
             case .succeeded:
-                Text("Done").foregroundStyle(ShortcutsPalette.succeeded)
+                Text("Done").foregroundStyle(.islandHueText(.success))
             case .failed(let failure):
-                Text(Self.words(for: failure)).foregroundStyle(ShortcutsPalette.failed)
+                Text(Self.words(for: failure)).foregroundStyle(.islandHueText(.failure))
             case .stopped:
                 Text("Stopped")
             case .vanished:
@@ -316,7 +353,7 @@ struct ShortcutsExpanded: View {
         }
         .font(.system(size: 12, weight: .medium))
         .monospacedDigit()
-        .foregroundStyle(.white.opacity(0.55))
+        .foregroundStyle(.islandText(0.55))
         .lineLimit(1)
     }
 
@@ -416,31 +453,31 @@ struct ShortcutResultCard: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(shortcut.name)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandPrimary)
                         .lineLimit(1)
                     Text(output.isTruncated ? "Result (cut short)" : "Result")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(.islandText(0.5))
                 }
                 Spacer(minLength: 8)
                 Button(action: copy) {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandText(1, on: .surface(0.14)))
                         .padding(.horizontal, 10)
                         .frame(height: 24)
-                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                        .background(Capsule().fill(.islandSurface(0.14)))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                RoundButton(symbol: "xmark", tint: .white, diameter: 24, action: dismiss)
+                RoundButton(symbol: "xmark", diameter: 24, action: dismiss)
             }
             .frame(height: ShortcutResultLayout.header)
 
             ScrollView(.vertical) {
                 Text(ShortcutResultLayout.shown(output))
                     .font(Font(ShortcutResultLayout.font))
-                    .foregroundStyle(.white.opacity(0.88))
+                    .foregroundStyle(.islandText(0.88))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -470,6 +507,7 @@ struct ShortcutsHomeTile: View {
     let choose: () -> Void
     @AppStorage(ShortcutsPrefs.pinned) private var pinned = ""
     @State private var hovered: String?
+    @Environment(\.islandTheme) private var theme
 
     static let tile: CGFloat = 26
     static let spacing: CGFloat = 7
@@ -503,10 +541,10 @@ struct ShortcutsHomeTile: View {
         Group {
             if let name {
                 Text(name)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandText(1, on: .homeTile))
             } else {
                 Label("Shortcuts", systemImage: "square.2.layers.3d.fill")
-                    .foregroundStyle(ShortcutsPalette.label)
+                    .foregroundStyle(labelStyle)
             }
         }
         .font(.system(size: 11, weight: .semibold))
@@ -514,11 +552,21 @@ struct ShortcutsHomeTile: View {
         .truncationMode(.tail)
     }
 
+    /// The label's colour: under Feature colours the icon's gradient, each end fitted
+    /// to read on the tile; under an accent, the accent.
+    private var labelStyle: AnyShapeStyle {
+        guard theme.accent == .featureColours else {
+            return AnyShapeStyle(.islandAccentText(.shortcuts, on: .homeTile))
+        }
+        let colours = ShortcutsPalette.label.map { theme.fitted($0, minimum: Contrast.text, on: .homeTile).color }
+        return AnyShapeStyle(LinearGradient(colors: colours, startPoint: .leading, endPoint: .trailing))
+    }
+
     private var empty: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Run shortcuts from here.")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55, on: .homeTile))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             Button(action: choose) {
@@ -530,10 +578,10 @@ struct ShortcutsHomeTile: View {
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
                 .padding(.horizontal, 8)
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandText(1, on: IslandBackdrop.homeTile.stacked(0.12)))
                 .frame(maxWidth: .infinity)
                 .frame(height: 24)
-                .background(Capsule().fill(Color.white.opacity(0.12)))
+                .background(Capsule().fill(.islandSurface(0.12, on: .homeTile)))
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -547,12 +595,15 @@ struct ShortcutsHomeTile: View {
         return Button {
             run(shortcut)
         } label: {
-            ShortcutTile(shortcut: shortcut, size: Self.tile)
+            ShortcutTile(shortcut: shortcut, size: Self.tile, backdrop: .homeTile)
                 .overlay {
                     if let phase {
+                        // The icon, darkened, whatever the island's colour: the mark on
+                        // it is drawn as it is on the black island, in the chosen accent.
                         RoundedRectangle(cornerRadius: Self.tile * 0.24, style: .continuous)
                             .fill(Color.black.opacity(0.45))
                         ShortcutRunMark(phase: phase, size: 14)
+                            .environment(\.islandTheme, theme.resting)
                     }
                 }
                 .scaleEffect(isHovered ? 1.08 : 1)

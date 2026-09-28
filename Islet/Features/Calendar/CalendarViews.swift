@@ -57,18 +57,30 @@ struct CalendarCountdownSchedule: TimelineSchedule {
 /// A small square in the calendar's colour with a calendar on it, like the app icon
 /// in miniature.
 struct CalendarGlyph: View {
-    let color: Color
+    /// The calendar's colour, or `nil` for the accent.
+    let color: RGB?
     var size: CGFloat = 18
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
+        let paint = theme.calendarFill(color)
         RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-            .fill(color)
+            .fill(paint.fill)
             .frame(width: size, height: size)
             .overlay(
                 Image(systemName: "calendar")
                     .font(.system(size: size * 0.55, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(paint.label)
             )
+    }
+}
+
+extension IslandTheme {
+    /// An event's colour as a filled mark with a word or symbol on it
+    /// (`filledMark(_:)`). A calendar without a colour takes the accent
+    /// (`FeatureTint.calendarEvent`).
+    func calendarFill(_ calendarColour: RGB?) -> (fill: Color, label: Color) {
+        filledMark(calendarColour.map { CalendarEvent.shown($0, in: self) } ?? accentSource(.calendarEvent))
     }
 }
 
@@ -97,7 +109,7 @@ struct CalendarCompactTrailing: View {
                     Text(CalendarCountdown.short(event, at: context.date))
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(event.color)
+                        .foregroundStyle(event.ink(minimum: Contrast.text))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -129,6 +141,7 @@ struct CalendarCompactJoin: View {
     let meeting: MeetingLink
     let join: () -> Void
     @Environment(\.island) private var island
+    @Environment(\.islandTheme) private var theme
     @State private var isArmed = false
     @State private var arming: Task<Void, Never>?
 
@@ -150,11 +163,12 @@ struct CalendarCompactJoin: View {
                 island?.tap()
             }
         } label: {
+            let paint = theme.filledButton(.calendarJoin)
             Image(systemName: "video.fill")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(paint.label)
                 .frame(width: Self.size.width, height: Self.size.height)
-                .background(Capsule().fill(CalendarPalette.green))
+                .background(Capsule().fill(paint.fill))
                 .brightness(isArmed ? 0.1 : 0)
                 .padding(.horizontal, Self.inset)
                 .frame(maxHeight: .infinity)
@@ -185,18 +199,20 @@ struct CalendarCompactJoin: View {
 /// The detached bubble: a dot in the calendar's colour with the minutes left on it.
 struct CalendarMinimal: View {
     let model: CalendarModel
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         if let event = model.featured {
             TimelineView(CalendarCountdownSchedule(start: event.start)) { context in
                 let minutes = CalendarCountdown.minutes(until: event.start, at: context.date)
+                let paint = theme.calendarFill(event.color)
                 Circle()
-                    .fill(event.color)
+                    .fill(paint.fill)
                     .overlay(
                         Text(minutes > 0 ? "\(minutes)" : "now")
                             .font(.system(size: 11, weight: .bold, design: .rounded))
                             .monospacedDigit()
-                            .foregroundStyle(.white)
+                            .foregroundStyle(paint.label)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                             .padding(3)
@@ -216,7 +232,7 @@ struct CalendarExpanded: View {
         if let event = model.featured {
             HStack(spacing: 14) {
                 Capsule()
-                    .fill(event.color)
+                    .fill(event.ink())
                     .frame(width: 4, height: 56)
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -224,10 +240,10 @@ struct CalendarExpanded: View {
 
                     TimelineView(CalendarCountdownSchedule(start: event.start)) { context in
                         let span = Text(verbatim: CalendarCountdown.span(event))
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(.islandText(0.55))
                         let relative = Text(verbatim: CalendarCountdown.relative(event, at: context.date))
-                            .foregroundStyle(event.color)
-                        Text("\(span)\(Text(verbatim: "  ·  ").foregroundStyle(.white.opacity(0.35)))\(relative)")
+                            .foregroundStyle(event.ink(minimum: Contrast.text))
+                        Text("\(span)\(Text(verbatim: "  ·  ").foregroundStyle(.islandGraphic(0.35)))\(relative)")
                     }
                     .id(event.start)
                     .font(.system(size: 12, weight: .medium))
@@ -243,7 +259,7 @@ struct CalendarExpanded: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -269,7 +285,7 @@ private struct EventTitleButton: View {
         } label: {
             Text(event.title)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white.opacity(isHovering ? 0.8 : 1))
+                .foregroundStyle(.islandText(isHovering ? 0.8 : 1))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .contentShape(Rectangle())
@@ -287,18 +303,20 @@ private struct JoinButton: View {
     let join: () -> Void
     @Environment(\.island) private var island
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         Button {
             join()
             island?.collapse("joined a meeting")
         } label: {
+            let paint = theme.filledButton(.calendarJoin)
             Label("Join", systemImage: "video.fill")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(paint.label)
                 .padding(.horizontal, 14)
                 .frame(height: 32)
-                .background(Capsule().fill(CalendarPalette.green))
+                .background(Capsule().fill(paint.fill))
                 .brightness(isHovering ? 0.08 : 0)
                 .contentShape(Capsule())
         }
@@ -318,7 +336,7 @@ struct CalendarHomeTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Up next", systemImage: "calendar")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(CalendarPalette.red)
+                .foregroundStyle(.islandAccentText(.calendarHeader, on: .homeTile))
 
             switch model.visibleAccess {
             case .granted:
@@ -372,7 +390,7 @@ private struct UpNextList: View {
         if remaining.isEmpty {
             Text("No more events today")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55, on: .homeTile))
         } else {
             GeometryReader { geo in
                 if geo.size.width >= Self.listWidth {
@@ -391,18 +409,18 @@ private struct UpNextList: View {
             ForEach(rows) { event in
                 GridRow {
                     Circle()
-                        .fill(event.color)
+                        .fill(event.ink(on: .homeTile))
                         .frame(width: 6, height: 6)
                     Button { CalendarApp.show(event) } label: {
                         Text(time(of: event))
                             .font(.system(size: 11, weight: .semibold, design: .rounded))
                             .monospacedDigit()
-                            .foregroundStyle(isUnderway(event) ? event.color : .white.opacity(0.55))
+                            .foregroundStyle(isUnderway(event) ? AnyShapeStyle(event.ink(minimum: Contrast.text, on: .homeTile)) : AnyShapeStyle(.islandText(0.55, on: .homeTile)))
                     }
                     Button { CalendarApp.show(event) } label: {
                         Text(event.title)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.islandText(1, on: .homeTile))
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
@@ -419,16 +437,16 @@ private struct UpNextList: View {
                 Button { CalendarApp.show(event) } label: {
                     HStack(spacing: 7) {
                         Capsule()
-                            .fill(event.color)
+                            .fill(event.ink(on: .homeTile))
                             .frame(width: 3)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(event.title)
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.islandText(1, on: .homeTile))
                             detail(of: event)
                                 .font(.system(size: 11, weight: .medium))
                                 .monospacedDigit()
-                                .foregroundStyle(.white.opacity(0.55))
+                                .foregroundStyle(.islandText(0.55, on: .homeTile))
                         }
                         .lineLimit(1)
                     }
@@ -454,7 +472,8 @@ private struct UpNextList: View {
     private func detail(of event: CalendarEvent) -> Text {
         if event.isAllDay { return Text("All day") }
         guard isUnderway(event) else { return Text(verbatim: CalendarCountdown.span(event)) }
-        return Text("\(Text("Now").foregroundStyle(event.color)) · until \(Self.hourMinute.string(from: event.end))")
+        let now = Text("Now").foregroundStyle(event.ink(minimum: Contrast.text, on: .homeTile))
+        return Text("\(now) · until \(Self.hourMinute.string(from: event.end))")
     }
 }
 
@@ -467,15 +486,15 @@ private struct AccessPrompt: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(message)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(.islandText(0.8, on: .homeTile))
                 .fixedSize(horizontal: false, vertical: true)
             Button(action: perform) {
                 Text(action)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandText(1, on: IslandBackdrop.homeTile.stacked(0.12)))
                     .padding(.horizontal, 12)
                     .frame(height: 24)
-                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .background(Capsule().fill(.islandSurface(0.12, on: .homeTile)))
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)

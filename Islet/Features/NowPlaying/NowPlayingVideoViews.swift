@@ -5,6 +5,7 @@ struct NowPlayingThumbnail: View {
     let artwork: NowPlayingArtwork?
     let width: CGFloat
     let radius: CGFloat
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -18,10 +19,10 @@ struct NowPlayingThumbnail: View {
                     .id(artwork.id)
                     .transition(.opacity)
             } else {
-                shape.fill(Color(white: 0.17))
+                shape.fill(theme.artworkPlaceholder)
                 Image(systemName: "play.rectangle.fill")
                     .font(.system(size: height * 0.4, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandGraphic(0.55, on: .artworkPlaceholder))
             }
         }
         .frame(width: width, height: height)
@@ -35,24 +36,35 @@ struct NowPlayingProgressRing: View {
     let model: NowPlayingModel
     var lineWidth: CGFloat = 2.5
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
-        ProgressRingLayers(timing: model.timing, colour: NSColor(model.tint(tinted)), lineWidth: lineWidth)
+        ProgressRingLayers(timing: model.timing, tint: model.tint(tinted, in: theme), lineWidth: lineWidth)
     }
 }
 
+/// The layers take `tint` in the island's colours from the environment, which they
+/// do not see by themselves.
 private struct ProgressRingLayers: NSViewRepresentable {
     let timing: NowPlayingTiming
-    let colour: NSColor
+    let tint: IslandInk
     let lineWidth: CGFloat
 
     func makeNSView(context: Context) -> ProgressRingView {
-        ProgressRingView(lineWidth: lineWidth)
+        let view = ProgressRingView(lineWidth: lineWidth)
+        update(view, in: context)
+        return view
     }
 
     func updateNSView(_ view: ProgressRingView, context: Context) {
-        view.setColour(colour)
+        update(view, in: context)
         view.setTiming(timing)
+    }
+
+    private func update(_ view: ProgressRingView, in context: Context) {
+        let theme = context.environment.islandTheme
+        // A faint track reads on black; a light island needs it a little stronger.
+        view.setColour(tint.nsColor(in: theme), trackAlpha: theme.isLight ? 0.35 : 0.25)
     }
 }
 
@@ -105,13 +117,17 @@ final class ProgressRingView: NSView {
         restart()
     }
 
-    func setColour(_ colour: NSColor) {
+    func setColour(_ colour: NSColor, trackAlpha: CGFloat) {
         let cg = colour.cgColor
-        guard fill.strokeColor != cg else { return }
+        let trackColour = colour.withAlphaComponent(trackAlpha).cgColor
+        guard fill.strokeColor != cg || track.strokeColor != trackColour else { return }
+        // The first colour is there from the first frame; later ones ease in.
+        let first = fill.strokeColor == nil
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.4)
+        CATransaction.setDisableActions(first)
         fill.strokeColor = cg
-        track.strokeColor = colour.withAlphaComponent(0.25).cgColor
+        track.strokeColor = trackColour
         CATransaction.commit()
     }
 
@@ -173,7 +189,7 @@ struct NowPlayingVideoPlayer: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     NowPlayingMarquee(text: model.title, font: .system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandPrimary)
                     NowPlayingSubtitleRow(model: model, fontSize: 13, iconSize: 18)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

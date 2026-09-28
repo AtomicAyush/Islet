@@ -2,14 +2,22 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum ClipboardPalette {
-    /// The iPhone's cyan in its dark appearance: the feature's label and symbol.
-    static let accent = Color(red: 100 / 255, green: 210 / 255, blue: 255 / 255)
+extension FeatureTint {
+    /// The feature's label and symbols: the iPhone's cyan in its dark appearance.
+    static let clipboard = FeatureTint.colour(RGB(bytes: 100, 210, 255))
     /// A pinned item's pin, in the orange Notes pins with.
-    static let pin = Color(red: 255 / 255, green: 159 / 255, blue: 10 / 255)
+    static let clipboardPin = FeatureTint.colour(RGB(bytes: 255, 159, 10))
+}
+
+enum ClipboardPalette {
+    /// Wanting permission: a warning, so never the accent.
+    static let permission = SystemHue.warning
     /// "Copied".
-    static let copied = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-    static let secondary = Color.white.opacity(0.5)
+    static let copied = SystemHue.success
+    /// The time, a link's address, a picture's size and the tile's hint.
+    static let secondary = 0.5
+    /// The shade of the ink behind the header's chevron.
+    static let chip = 0.12
 }
 
 enum ClipboardLayout {
@@ -51,7 +59,7 @@ struct ClipboardHomeTile: View {
                         if recent.isEmpty {
                             Text(ClipboardAccessText.hint(model.access, model: model))
                                 .font(.system(size: 10.5, weight: .medium))
-                                .foregroundStyle(ClipboardPalette.secondary)
+                                .foregroundStyle(.islandText(ClipboardPalette.secondary, on: .homeTile))
                                 .lineLimit(3)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.leading, ClipboardLayout.tileRowInset + 20)
@@ -83,21 +91,21 @@ struct ClipboardHomeTile: View {
                     Image(systemName: "doc.on.clipboard.fill")
                 }
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ClipboardPalette.accent)
+                .foregroundStyle(.islandAccentText(.clipboard, on: .homeTile))
                 .lineLimit(1)
                 if count > 0 {
                     Text("\(count)")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55, on: .homeTile))
                         .contentTransition(.numericText())
                 }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandGraphic(0.55, on: IslandBackdrop.homeTile.stacked(ClipboardPalette.chip)))
                     .frame(width: 18, height: 16)
-                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .background(Capsule().fill(.islandSurface(ClipboardPalette.chip, on: .homeTile)))
             }
             .contentShape(Rectangle())
         }
@@ -127,19 +135,19 @@ private struct ClipboardTileRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // "Copied" takes the time's place, and the text gives way to it.
                 if isCopied {
-                    CopiedBadge()
+                    CopiedBadge(backdrop: .homeTile)
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                 } else {
                     if item.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(ClipboardPalette.pin)
+                            .foregroundStyle(.islandAccent(.clipboardPin, on: .homeTile))
                             .accessibilityHidden(true)
                     }
                     Text(ClipboardTime.short(item.copiedAt, now: now))
                         .font(.system(size: 10, weight: .medium))
                         .monospacedDigit()
-                        .foregroundStyle(ClipboardPalette.secondary)
+                        .foregroundStyle(.islandText(ClipboardPalette.secondary, on: .homeTile))
                         .fixedSize()
                         .transition(.opacity)
                 }
@@ -148,7 +156,7 @@ private struct ClipboardTileRow: View {
             .frame(height: ClipboardLayout.tileRowHeight)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.white.opacity(isHovering ? 0.1 : 0))
+                    .fill(.islandDecorative(isHovering ? 0.1 : 0))
             )
             .contentShape(Rectangle())
         }
@@ -175,7 +183,7 @@ private struct ClipboardTileAccessRow: View {
         HStack(spacing: 6) {
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(ClipboardPalette.pin)
+                .foregroundStyle(.islandHue(ClipboardPalette.permission, on: .homeTile))
                 .frame(width: 14, height: 14)
                 .accessibilityHidden(true)
             // Longest first; the narrowest tile has room for about ten letters.
@@ -183,10 +191,10 @@ private struct ClipboardTileAccessRow: View {
                 ForEach(ClipboardAccessText.tile(access, canAsk: model.canAsk), id: \.self) { Text($0) }
             }
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(.islandText(0.9, on: .homeTile))
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
-            ClipboardCapsuleButton(title: ClipboardAccessText.tileButton(access), help: detail) {
+            ClipboardCapsuleButton(title: ClipboardAccessText.tileButton(access), help: detail, backdrop: .homeTile) {
                 model.requestAccess()
             }
             .disabled(!ClipboardAccessText.canClick(model))
@@ -243,7 +251,7 @@ struct ClipboardPage: View {
                                 // A hairline where the pinned items end.
                                 if index > 0, !item.isPinned, items[index - 1].isPinned {
                                     Rectangle()
-                                        .fill(Color.white.opacity(0.1))
+                                        .fill(.islandDecorative(0.1))
                                         .frame(height: 1)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 3)
@@ -289,19 +297,19 @@ struct ClipboardPage: View {
         HStack(spacing: 6) {
             Label("Clipboard", systemImage: "doc.on.clipboard.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(ClipboardPalette.accent)
+                .foregroundStyle(.islandAccentText(.clipboard))
             if count > 0 {
                 Text("\(count)")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
                     .contentTransition(.numericText())
             }
             Spacer(minLength: 8)
             if count > 0 {
                 Text("Click to copy · Right-click for more")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(.islandText(0.35))
                     .lineLimit(1)
             }
             if canClear {
@@ -315,10 +323,10 @@ struct ClipboardPage: View {
         VStack(spacing: 4) {
             Text("Nothing copied yet")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(.islandText(0.6))
             Text("Text, links, pictures and files you copy show up here.")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.35))
+                .foregroundStyle(.islandText(0.35))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -352,7 +360,7 @@ private struct ClipboardPageRow: View {
         .frame(height: ClipboardLayout.pageRowHeight)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.white.opacity(isHovered ? 0.09 : 0))
+                .fill(.islandDecorative(isHovered ? 0.09 : 0))
         )
         .contentShape(Rectangle())
         .onTapGesture { model.copy(item) }
@@ -375,12 +383,12 @@ private struct ClipboardPageRow: View {
                 HStack(spacing: 2) {
                     RowButton(
                         symbol: item.isPinned ? "pin.slash" : "pin",
-                        tint: item.isPinned ? ClipboardPalette.pin : .white.opacity(0.75),
+                        tint: item.isPinned ? .islandAccent(.clipboardPin) : .islandGraphic(0.75),
                         help: item.isPinned ? "Unpin" : "Pin to the top"
                     ) {
                         model.setPinned(item, !item.isPinned)
                     }
-                    RowButton(symbol: "xmark", tint: .white.opacity(0.75), help: "Remove") {
+                    RowButton(symbol: "xmark", tint: .islandGraphic(0.75), help: "Remove") {
                         model.remove(item)
                     }
                 }
@@ -390,13 +398,13 @@ private struct ClipboardPageRow: View {
                     if item.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(ClipboardPalette.pin)
+                            .foregroundStyle(.islandAccent(.clipboardPin))
                             .accessibilityHidden(true)
                     }
                     Text(ClipboardTime.short(item.copiedAt, now: now))
                         .font(.system(size: 10.5, weight: .medium))
                         .monospacedDigit()
-                        .foregroundStyle(ClipboardPalette.secondary)
+                        .foregroundStyle(.islandText(ClipboardPalette.secondary))
                         .fixedSize()
                 }
                 .transition(.opacity)
@@ -411,7 +419,7 @@ private struct ClipboardPageRow: View {
 
 private struct RowButton: View {
     let symbol: String
-    let tint: Color
+    let tint: IslandStyle
     let help: String
     let action: () -> Void
     @State private var isHovering = false
@@ -422,7 +430,7 @@ private struct RowButton: View {
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: 20, height: 20)
-                .background(Circle().fill(Color.white.opacity(isHovering ? 0.14 : 0)))
+                .background(Circle().fill(.islandDecorative(isHovering ? 0.14 : 0)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -434,14 +442,25 @@ private struct RowButton: View {
 
 /// "Copied", in green with a tick, where the time was.
 private struct CopiedBadge: View {
+    /// What the badge lies on: the home tile, or the page, which is the island itself.
+    var backdrop: IslandBackdrop = .island
+    @Environment(\.islandTheme) private var theme
+
+    private static let wash = 0.16
+
     var body: some View {
+        // The capsule is a wash of the green as it is, the farthest it can be from the
+        // island's ink, which leaves the words on it the most room; they are fitted
+        // against the capsule as it lies on the tile or the island.
+        let green = ClipboardPalette.copied.dark
+        let capsule = IslandBackdrop.fill(green.composited(Self.wash, over: theme.colour(of: backdrop)))
         Label("Copied", systemImage: "checkmark")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(ClipboardPalette.copied)
+            .foregroundStyle(.islandHueText(ClipboardPalette.copied, on: capsule))
             .labelStyle(.titleAndIcon)
             .padding(.horizontal, 7)
             .frame(height: 16)
-            .background(Capsule().fill(ClipboardPalette.copied.opacity(0.16)))
+            .background(Capsule().fill(green.color.opacity(Self.wash)))
             .fixedSize()
             .accessibilityLabel("Copied")
     }
@@ -452,19 +471,24 @@ private struct CopiedBadge: View {
 private struct ClipboardCapsuleButton: View {
     let title: String
     let help: String
+    /// What the capsule lies on: the home tile, or the page, which is the island itself.
+    var backdrop: IslandBackdrop = .island
     let action: () -> Void
     @State private var isHovering = false
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         let isLit = isHovering && isEnabled
+        let wash = isLit ? 0.2 : (isEnabled ? 0.12 : 0.07)
+        let behind = backdrop.stacked(wash)
         Button(action: action) {
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
                 .padding(.horizontal, 7)
-                .foregroundStyle(.white.opacity(isEnabled ? (isLit ? 0.95 : 0.7) : 0.35))
+                // Turned off, it is a control still to be seen rather than words to read.
+                .foregroundStyle(isEnabled ? IslandStyle.islandText(isLit ? 0.95 : 0.7, on: behind) : .islandGraphic(0.35, on: behind))
                 .frame(height: 16)
-                .background(Capsule().fill(Color.white.opacity(isLit ? 0.2 : (isEnabled ? 0.12 : 0.07))))
+                .background(Capsule().fill(.islandSurface(wash, on: backdrop)))
                 .contentShape(Capsule())
                 .fixedSize()
         }
@@ -486,14 +510,14 @@ private struct ClipboardAccessNotice: View {
         VStack(spacing: 5) {
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(ClipboardPalette.pin)
+                .foregroundStyle(.islandHue(ClipboardPalette.permission))
                 .accessibilityHidden(true)
             Text(ClipboardAccessText.title(access))
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(.islandText(0.85))
             Text(ClipboardAccessText.detail(access, model: model))
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(.islandText(0.45))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
                 .fixedSize(horizontal: false, vertical: true)
@@ -511,17 +535,23 @@ private struct ClipboardAccessNotice: View {
 private struct ClipboardAccessBar: View {
     let model: ClipboardModel
     let access: ClipboardAccess
+    @Environment(\.islandTheme) private var theme
+
+    /// The bar: a wash of the warning's orange, which the hand and the words on it are
+    /// measured against.
+    private static let wash = 0.1
 
     var body: some View {
+        let bar = IslandBackdrop.fill(theme.fitted(ClipboardPalette.permission.dark).composited(Self.wash, over: theme.island))
         HStack(spacing: 8) {
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(ClipboardPalette.pin)
+                .foregroundStyle(.islandHue(ClipboardPalette.permission, on: bar))
                 .frame(width: 20)
                 .accessibilityHidden(true)
             Text(ClipboardAccessText.title(access))
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(.islandText(0.8, on: bar))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ClipboardCapsuleButton(title: ClipboardAccessText.button(access), help: ClipboardAccessText.detail(access, model: model)) {
@@ -533,7 +563,7 @@ private struct ClipboardAccessBar: View {
         .frame(height: 26)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(ClipboardPalette.pin.opacity(0.1))
+                .fill(.islandHue(ClipboardPalette.permission).opacity(Self.wash))
         )
         .help(ClipboardAccessText.detail(access, model: model))
     }
@@ -659,6 +689,10 @@ struct ClipboardSummary: View {
     let size: Size
 
     private var isPage: Bool { size == .page }
+    /// The tile's rows lie on the home tile; the page's on the island itself.
+    private var backdrop: IslandBackdrop { isPage ? .island : .homeTile }
+    private var primary: IslandStyle { .islandText(0.9, on: backdrop) }
+    private var secondary: IslandStyle { .islandText(ClipboardPalette.secondary, on: backdrop) }
     private var primaryFont: Font { .system(size: isPage ? 12 : 11, weight: .medium) }
     private var secondaryFont: Font { .system(size: 10.5, weight: .medium) }
 
@@ -667,7 +701,7 @@ struct ClipboardSummary: View {
         case .text(let text):
             Text(ClipboardText.preview(text))
                 .font(primaryFont)
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(primary)
                 .lineLimit(isPage ? 2 : 1)
                 .truncationMode(.tail)
 
@@ -675,24 +709,24 @@ struct ClipboardSummary: View {
             HStack(spacing: 6) {
                 Image(systemName: "link")
                     .font(.system(size: isPage ? 11 : 9, weight: .semibold))
-                    .foregroundStyle(ClipboardPalette.accent)
+                    .foregroundStyle(.islandAccent(.clipboard, on: backdrop))
                     .accessibilityHidden(true)
                 if isPage {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title ?? ClipboardText.host(of: url))
                             .font(primaryFont)
-                            .foregroundStyle(.white.opacity(0.9))
+                            .foregroundStyle(primary)
                         // An address says most at its two ends: the site, and the page.
                         Text(ClipboardText.address(of: url))
                             .font(secondaryFont)
-                            .foregroundStyle(ClipboardPalette.secondary)
+                            .foregroundStyle(secondary)
                             .truncationMode(.middle)
                     }
                     .lineLimit(1)
                 } else {
                     Text(title ?? ClipboardText.host(of: url))
                         .font(primaryFont)
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(primary)
                         .lineLimit(1)
                 }
             }
@@ -704,15 +738,15 @@ struct ClipboardSummary: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Image")
                             .font(primaryFont)
-                            .foregroundStyle(.white.opacity(0.9))
+                            .foregroundStyle(primary)
                         Text(ClipboardText.dimensions(of: image))
                             .font(secondaryFont)
-                            .foregroundStyle(ClipboardPalette.secondary)
+                            .foregroundStyle(secondary)
                     }
                 } else {
                     Text("Image")
                         .font(primaryFont)
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(primary)
                 }
             }
             .lineLimit(1)
@@ -726,16 +760,16 @@ struct ClipboardSummary: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(ClipboardText.fileNames(urls))
                             .font(primaryFont)
-                            .foregroundStyle(.white.opacity(0.9))
+                            .foregroundStyle(primary)
                             .truncationMode(.middle)
                         Text(ClipboardText.fileDetail(urls))
                             .font(secondaryFont)
-                            .foregroundStyle(ClipboardPalette.secondary)
+                            .foregroundStyle(secondary)
                     }
                 } else {
                     Text(ClipboardText.fileNames(urls))
                         .font(primaryFont)
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(primary)
                         .truncationMode(.middle)
                 }
             }
@@ -760,14 +794,14 @@ private struct ClipboardThumbnail: View {
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fill)
             } else {
-                Color.white.opacity(0.12)
+                Rectangle().fill(.islandDecorative(0.12))
             }
         }
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: height > 20 ? 5 : 3, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: height > 20 ? 5 : 3, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5)
+                .strokeBorder(.islandDecorative(0.14), lineWidth: 0.5)
         )
     }
 }
@@ -785,7 +819,7 @@ struct ClipboardAppIcon: View {
                     .interpolation(.high)
             } else {
                 RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                    .fill(Color.white.opacity(0.14))
+                    .fill(.islandDecorative(0.14))
                     .padding(size * 0.08)
             }
         }
@@ -804,6 +838,7 @@ private struct ClipboardFileIcon: View {
             .resizable()
             .interpolation(.high)
             .frame(width: size, height: size)
+            .fileIconBacking(size: size)
             .accessibilityHidden(true)
     }
 }

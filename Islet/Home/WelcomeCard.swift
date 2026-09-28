@@ -13,12 +13,12 @@ struct WelcomeCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Islet is running")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                 Text(hasNotch
                      ? "Rest the pointer on the notch to open it."
                      : "Open it from the capsule in the menu bar.")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
             }
             Spacer(minLength: 0)
         }

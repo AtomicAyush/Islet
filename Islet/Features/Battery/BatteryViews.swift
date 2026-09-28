@@ -1,20 +1,19 @@
 import SwiftUI
 
-/// The iPhone's system colours, as its battery indicator uses them.
-enum BatteryPalette {
-    static let green = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-    static let red = Color(red: 1, green: 69 / 255, blue: 58 / 255)
-    static let yellow = Color(red: 1, green: 214 / 255, blue: 10 / 255)
-}
-
 extension BatteryState {
-    /// The glyph's colour: green while charging, yellow in Low Power Mode, red when
-    /// low on battery, white otherwise, in that order of precedence.
-    var tint: Color {
-        if isCharging { return BatteryPalette.green }
-        if isLowPowerMode { return BatteryPalette.yellow }
-        if !isPluggedIn && level <= 20 { return BatteryPalette.red }
-        return .white
+    /// What the glyph's colour means: charging, Low Power Mode, or low on battery, in
+    /// that order of precedence; `nil` otherwise, when it is drawn in the island's ink.
+    /// The iPhone's green, yellow and red, which never take the accent.
+    var hue: SystemHue? {
+        if isCharging { return .charging }
+        if isLowPowerMode { return .lowPower }
+        if !isPluggedIn && level <= 20 { return .lowBattery }
+        return nil
+    }
+
+    /// The glyph's colour, for a glyph lying on `backdrop`.
+    func tint(on backdrop: IslandBackdrop = .island) -> IslandInk {
+        hue.map { .hue($0, on: backdrop) } ?? .graphic(1, on: backdrop)
     }
 
     /// What the battery is doing, then the estimate that goes with it, if any.
@@ -45,7 +44,9 @@ extension BatteryState {
 /// 26 x 12 beside the notch.
 struct BatteryGlyph: View {
     let level: Int
-    let tint: Color
+    /// The level's colour. The outline is the same colour, fainter, and the bolt is the
+    /// island's ink.
+    let tint: IslandInk
     var showsBolt = false
 
     var body: some View {
@@ -65,14 +66,14 @@ struct BatteryGlyph: View {
 
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .strokeBorder(tint.opacity(0.4), lineWidth: stroke)
+                    .strokeBorder(.islandFaint(tint, 0.4), lineWidth: stroke)
                     .frame(width: bodyWidth, height: height)
                 RoundedRectangle(cornerRadius: max(1, corner - inset), style: .continuous)
-                    .fill(tint)
+                    .fill(IslandStyle(ink: tint))
                     .frame(width: fill, height: max(0, height - 2 * inset))
                     .offset(x: inset)
                 UnevenRoundedRectangle(bottomTrailingRadius: nub * 0.7, topTrailingRadius: nub * 0.7)
-                    .fill(tint.opacity(0.4))
+                    .fill(.islandFaint(tint, 0.4))
                     .frame(width: nub, height: height * 0.36)
                     .offset(x: geo.size.width - nub)
                 if showsBolt {
@@ -90,7 +91,7 @@ struct BatteryGlyph: View {
             .overlay(alignment: .leading) {
                 if showsBolt {
                     BatteryBolt()
-                        .fill(Color.white)
+                        .fill(.islandPrimary)
                         .frame(width: bolt.width, height: bolt.height)
                         .offset(boltOffset)
                 }
@@ -153,13 +154,13 @@ struct BatteryAlert: Equatable {
 
     var id: String
     var label: String
-    var labelColor: Color = .white
+    var labelColor: IslandInk = .text(1)
     /// Stands in for the label where there is no room for words.
     var symbol: String
     var value: String
-    var valueColor: Color = .white
+    var valueColor: IslandInk = .text(1)
     var level: Int
-    var glyphTint: Color
+    var glyphTint: IslandInk
     var showsBolt = false
     var duration: TimeInterval = 2.8
 
@@ -198,8 +199,8 @@ struct BatteryAlert: Equatable {
         if state.isPluggedIn && state.isCharging {
             return BatteryAlert(
                 id: powerID, label: "Charging", symbol: "bolt.fill",
-                value: percent, valueColor: BatteryPalette.green,
-                level: state.level, glyphTint: state.tint, showsBolt: true
+                value: percent, valueColor: .hue(.charging, minimum: Contrast.text),
+                level: state.level, glyphTint: state.tint(), showsBolt: true
             )
         }
         if state.isPluggedIn {
@@ -207,30 +208,30 @@ struct BatteryAlert: Equatable {
             // battery is not taking it, so no green and no bolt.
             return BatteryAlert(
                 id: powerID, label: "Connected", symbol: "powerplug.fill",
-                value: percent, level: state.level, glyphTint: state.tint
+                value: percent, level: state.level, glyphTint: state.tint()
             )
         }
         return BatteryAlert(
             id: powerID, label: "On Battery", symbol: "bolt.slash.fill",
-            value: percent, level: state.level, glyphTint: state.tint
+            value: percent, level: state.level, glyphTint: state.tint()
         )
     }
 
     static func low(_ state: BatteryState) -> BatteryAlert {
         BatteryAlert(
-            id: lowID, label: "Low Battery", labelColor: BatteryPalette.red,
+            id: lowID, label: "Low Battery", labelColor: .hue(.lowBattery, minimum: Contrast.text),
             symbol: "exclamationmark.triangle.fill",
-            value: "\(state.level)%", valueColor: BatteryPalette.red,
-            level: state.level, glyphTint: BatteryPalette.red, duration: 4
+            value: "\(state.level)%", valueColor: .hue(.lowBattery, minimum: Contrast.text),
+            level: state.level, glyphTint: .hue(.lowBattery), duration: 4
         )
     }
 
     static func charged(_ state: BatteryState) -> BatteryAlert {
         BatteryAlert(
-            id: chargedID, label: "Charged", labelColor: BatteryPalette.green,
+            id: chargedID, label: "Charged", labelColor: .hue(.charging, minimum: Contrast.text),
             symbol: "checkmark.circle.fill",
-            value: "\(state.level)%", valueColor: BatteryPalette.green,
-            level: state.level, glyphTint: BatteryPalette.green
+            value: "\(state.level)%", valueColor: .hue(.charging, minimum: Contrast.text),
+            level: state.level, glyphTint: .hue(.charging)
         )
     }
 
@@ -238,8 +239,8 @@ struct BatteryAlert: Equatable {
         let on = state.isLowPowerMode
         return BatteryAlert(
             id: lowPowerID, label: "Low Power", symbol: "gauge.with.dots.needle.33percent",
-            value: on ? "On" : "Off", valueColor: on ? BatteryPalette.yellow : .white,
-            level: state.level, glyphTint: on ? BatteryPalette.yellow : state.tint,
+            value: on ? "On" : "Off", valueColor: on ? .hue(.lowPower, minimum: Contrast.text) : .text(1),
+            level: state.level, glyphTint: on ? .hue(.lowPower) : state.tint(),
             showsBolt: state.isCharging
         )
     }
@@ -255,7 +256,7 @@ struct BatteryBannerLeading: View {
             if geo.size.width >= 44 {
                 Text(alert.label)
                     .font(Font(BatteryAlert.labelFont))
-                    .foregroundStyle(alert.labelColor)
+                    .foregroundStyle(.island(alert.labelColor))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                     .padding(.leading, BatteryAlert.outerPadding)
@@ -264,7 +265,7 @@ struct BatteryBannerLeading: View {
             } else {
                 Image(systemName: alert.symbol)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(alert.valueColor)
+                    .foregroundStyle(.island(alert.valueColor))
                     .frame(width: geo.size.width, height: geo.size.height)
             }
         }
@@ -281,7 +282,7 @@ struct BatteryBannerTrailing: View {
             Text(alert.value)
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(alert.valueColor)
+                .foregroundStyle(.island(alert.valueColor))
                 .lineLimit(1)
                 .contentTransition(.numericText())
             BatteryGlyph(level: alert.level, tint: alert.glyphTint, showsBolt: alert.showsBolt)
@@ -301,12 +302,12 @@ struct BatteryHomeTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            BatteryGlyph(level: state.level, tint: state.tint, showsBolt: state.isCharging)
+            BatteryGlyph(level: state.level, tint: state.tint(on: .homeTile), showsBolt: state.isCharging)
                 .frame(width: 34, height: 16)
             Text("\(state.level)%")
                 .font(.system(size: 28, weight: .medium, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandText(1, on: .homeTile))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .contentTransition(.numericText(value: Double(state.level)))
@@ -342,7 +343,7 @@ private struct BatteryStatusText: View {
             .minimumScaleFactor(0.8)
         }
         .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(.white.opacity(0.55))
+        .foregroundStyle(.islandText(0.55, on: .homeTile))
         .lineLimit(1)
     }
 }

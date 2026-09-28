@@ -17,6 +17,7 @@ struct HomeView: View {
     /// Arranging the page where it is shown; `nil` where it cannot be.
     var editing: HomeEditing? = nil
     @AppStorage(Prefs.Key.homeLayout) private var layout = HomeLayout.scroll.rawValue
+    @Environment(\.islandTheme) private var theme
 
     /// The narrowest a weight-1 tile gets before the row scrolls or pages.
     static let minimumUnit: CGFloat = 112
@@ -52,7 +53,7 @@ struct HomeView: View {
             if widgets.isEmpty {
                 Text(emptyText)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(.islandText(0.35))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if usesPages {
                 GeometryReader { geo in
@@ -162,8 +163,11 @@ struct HomeView: View {
                     Button {
                         page = index
                     } label: {
+                        // The accent is already fitted to the island, so any other
+                        // island takes it at full strength; softened, it could fall
+                        // short. The black island keeps its 0.9.
                         Capsule()
-                            .fill(.white.opacity(index == min(page, pageCount - 1) ? 0.9 : 0.3))
+                            .fill(index == min(page, pageCount - 1) ? .islandAccent(.shell).opacity(theme.isDefault ? 0.9 : 1) : .islandGraphic(0.3))
                             .frame(width: index == min(page, pageCount - 1) ? 14 : 6, height: 6)
                             .padding(.vertical, 4)
                             .contentShape(Rectangle())
@@ -435,7 +439,13 @@ private struct RowOffsetKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
-/// A rounded, faintly lit card for a home widget.
+extension IslandBackdrop {
+    /// What a home tile's content lies on. Words and marks in a tile are measured
+    /// against it: `.islandText(0.55, on: .homeTile)`.
+    static let homeTile = IslandBackdrop.surface(0.07)
+}
+
+/// A rounded, faintly lit card for a home widget: a shade of the ink over the island.
 struct HomeTile<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -445,25 +455,35 @@ struct HomeTile<Content: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.white.opacity(0.07))
+                    .fill(.islandSurface(0.07))
             )
     }
 }
 
+extension FeatureTint {
+    /// The weekday over the date: the Calendar app's red, as the iPhone draws it on
+    /// black. The black island with Feature colours keeps the system's own red.
+    static let date = FeatureTint.colour(RGB(bytes: 255, 69, 58))
+}
+
 private struct DateTile: View {
+    @Environment(\.islandTheme) private var theme
+
     var body: some View {
         TimelineView(.everyMinute) { context in
             VStack(alignment: .leading, spacing: 2) {
                 Text(context.date.formatted(.dateTime.weekday(.wide)))
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.red.opacity(0.9))
+                    // Fitted to 4.5:1 already, so taken at full strength: at 0.9 it
+                    // falls short on a light island.
+                    .foregroundStyle(theme.isDefault ? AnyShapeStyle(.red.opacity(0.9)) : AnyShapeStyle(.islandAccentText(.date)))
                 Text(context.date.formatted(.dateTime.day()))
                     .font(.system(size: 40, weight: .light, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .monospacedDigit()
                 Text(context.date.formatted(.dateTime.month(.wide)))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.leading, 4)

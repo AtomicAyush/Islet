@@ -1,15 +1,24 @@
 import AppKit
 import SwiftUI
 
+extension FeatureTint {
+    /// A warm clay, for Claude at work: the mark, the rings, the bars and the spinner.
+    static let claudeCode = FeatureTint.colour(RGB(0.85, 0.47, 0.34))
+}
+
+/// The colours that say something about a session, so they never take the accent and
+/// are only fitted for contrast.
 enum ClaudeCodePalette {
-    /// A warm clay, for Claude at work.
-    static let clay = Color(red: 0.85, green: 0.47, blue: 0.34)
-    static let clayNS = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
     /// The iPhone's orange in its dark appearance, as the hook's banners use when Claude
     /// is waiting on you.
-    static let attention = Color(red: 1.0, green: 0.62, blue: 0.04)
+    static let attention = RGB(1.0, 0.62, 0.04)
     /// The iPhone's red in its dark appearance, for an agent a workflow gave up on.
-    static let failure = Color(red: 1.0, green: 0.27, blue: 0.23)
+    static let failure = RGB(1.0, 0.27, 0.23)
+
+    static var attentionMark: IslandStyle { .islandFitted(attention) }
+    static var attentionText: IslandStyle { .islandFitted(attention, minimum: Contrast.text) }
+    static var failureMark: IslandStyle { .islandFitted(failure) }
+    static var failureText: IslandStyle { .islandFitted(failure, minimum: Contrast.text) }
 }
 
 enum ClaudeCodeLayout {
@@ -183,11 +192,13 @@ enum ClaudeCodeText {
         }
     }
 
-    static func color(_ state: ClaudeSessionState) -> Color {
+    /// The words for how a session stands: clay while it works, orange while it
+    /// waits on you, grey once it is done.
+    static func style(_ state: ClaudeSessionState) -> IslandStyle {
         switch state {
-        case .working: ClaudeCodePalette.clay
-        case .needsPermission, .waitingForInput: ClaudeCodePalette.attention
-        case .idle: .white.opacity(0.5)
+        case .working: .islandAccentText(.claudeCode)
+        case .needsPermission, .waitingForInput: ClaudeCodePalette.attentionText
+        case .idle: .islandText(0.5)
         }
     }
 
@@ -265,23 +276,26 @@ struct ClaudeCodeMarkView: View {
     let mark: ClaudeCodeModel.Mark?
     var pointSize: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         ZStack {
             switch mark {
             case .needsPermission?:
-                glyph("hand.raised.fill", ClaudeCodePalette.attention)
+                glyph("hand.raised.fill", ClaudeCodePalette.attentionMark)
             case .waitingForInput?:
-                glyph("questionmark.bubble.fill", ClaudeCodePalette.attention)
+                glyph("questionmark.bubble.fill", ClaudeCodePalette.attentionMark)
             case .working?:
                 if reduceMotion {
-                    glyph("sparkle", ClaudeCodePalette.clay)
+                    glyph("sparkle", .islandAccent(.claudeCode))
                 } else {
-                    ClaudeBreathingSymbol(name: "sparkle", pointSize: pointSize, color: ClaudeCodePalette.clayNS)
+                    ClaudeBreathingSymbol(name: "sparkle", pointSize: pointSize, ink: .accent(.claudeCode))
                         .transition(.opacity)
                 }
             case .workflows?:
-                glyph("sparkle", ClaudeCodePalette.clay.opacity(0.8))
+                // Softer on black, as it always was; elsewhere the fitted clay at full
+                // strength, which a lower opacity would take under 3:1.
+                glyph("sparkle", theme.isDefault ? .islandAccent(.claudeCode).opacity(0.8) : .islandAccent(.claudeCode))
             case nil:
                 EmptyView()
             }
@@ -292,10 +306,10 @@ struct ClaudeCodeMarkView: View {
         .accessibilityLabel(label)
     }
 
-    private func glyph(_ name: String, _ color: Color) -> some View {
+    private func glyph(_ name: String, _ style: IslandStyle) -> some View {
         Image(systemName: name)
             .font(.system(size: pointSize, weight: .semibold))
-            .foregroundStyle(color)
+            .foregroundStyle(style)
             .transition(.scale(scale: 0.5).combined(with: .opacity))
     }
 
@@ -313,16 +327,21 @@ struct ClaudeCodeMarkView: View {
 /// An SF Symbol that swells and fades a little, over and over, turned by Core
 /// Animation: the render server runs it on its own, so a turn lasting an hour costs the
 /// app nothing per frame. With Reduce Motion on, the symbol is drawn still instead.
+///
+/// Its colour is one of the island's, worked out from the theme in the environment and
+/// handed to the view, which draws the symbol again when the island's colours change.
 struct ClaudeBreathingSymbol: NSViewRepresentable {
     let name: String
     let pointSize: CGFloat
-    let color: NSColor
+    let ink: IslandInk
 
     func makeNSView(context: Context) -> ClaudeBreathingSymbolView {
-        ClaudeBreathingSymbolView(name: name, pointSize: pointSize, color: color)
+        ClaudeBreathingSymbolView(name: name, pointSize: pointSize, color: ink.nsColor(in: context.environment.islandTheme))
     }
 
-    func updateNSView(_ view: ClaudeBreathingSymbolView, context: Context) {}
+    func updateNSView(_ view: ClaudeBreathingSymbolView, context: Context) {
+        view.color = ink.nsColor(in: context.environment.islandTheme)
+    }
 }
 
 final class ClaudeBreathingSymbolView: NSView {
@@ -334,12 +353,24 @@ final class ClaudeBreathingSymbolView: NSView {
     static let faintest: Float = 0.5
 
     let symbolLayer = CALayer()
-    private let image: NSImage?
+    private let name: String
+    private let pointSize: CGFloat
+    private var image: NSImage?
+    /// What the symbol is drawn in. Setting another colour draws it again, and the
+    /// breath goes on undisturbed.
+    var color: NSColor {
+        didSet {
+            guard color != oldValue else { return }
+            image = Self.symbol(name, pointSize: pointSize, color: color)
+            updateContents()
+        }
+    }
 
     init(name: String, pointSize: CGFloat, color: NSColor) {
-        let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-        image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
+        self.name = name
+        self.pointSize = pointSize
+        self.color = color
+        image = Self.symbol(name, pointSize: pointSize, color: color)
         super.init(frame: .zero)
         wantsLayer = true
         symbolLayer.contentsGravity = .center
@@ -349,6 +380,12 @@ final class ClaudeBreathingSymbolView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    private static func symbol(_ name: String, pointSize: CGFloat, color: NSColor) -> NSImage? {
+        let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
+    }
 
     override func layout() {
         super.layout()
@@ -421,19 +458,23 @@ final class ClaudeBreathingSymbolView: NSView {
 struct ClaudeCodeSpinner: View {
     var lineWidth: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         if reduceMotion {
             ZStack {
                 Circle().inset(by: lineWidth / 2)
-                    .stroke(ClaudeCodePalette.clay.opacity(0.18), lineWidth: lineWidth)
+                    .stroke(.islandAccent(.claudeCode).opacity(0.18), lineWidth: lineWidth)
                 Circle().inset(by: lineWidth / 2)
                     .trim(from: 0, to: 0.3)
-                    .stroke(ClaudeCodePalette.clay.opacity(0.9), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .stroke(theme.isDefault ? IslandStyle.islandAccent(.claudeCode).opacity(0.9) : .islandAccent(.claudeCode),
+                            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
         } else {
-            ShortcutSpinner(lineWidth: lineWidth, color: ClaudeCodePalette.clayNS)
+            // Recoloured by the spinner itself when the theme changes: softened to 0.9 on
+            // the black island, as always, and at full strength, fitted, anywhere else.
+            ShortcutSpinner(lineWidth: lineWidth, tint: .accent(.claudeCode))
         }
     }
 }
@@ -447,10 +488,10 @@ struct ClaudeProgressRing: View {
     var body: some View {
         ZStack {
             Circle().inset(by: lineWidth / 2)
-                .stroke(ClaudeCodePalette.clay.opacity(0.22), lineWidth: lineWidth)
+                .stroke(.islandAccent(.claudeCode).opacity(0.22), lineWidth: lineWidth)
             Circle().inset(by: lineWidth / 2)
                 .trim(from: 0, to: max(0.04, min(1, fraction)))
-                .stroke(ClaudeCodePalette.clay, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(.islandAccent(.claudeCode), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
         .animation(.easeInOut(duration: 0.5), value: fraction)
@@ -466,8 +507,8 @@ struct ClaudeProgressBar: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(failed ? ClaudeCodePalette.failure.opacity(0.35) : .white.opacity(0.14))
-                Capsule().fill(ClaudeCodePalette.clay)
+                Capsule().fill(failed ? ClaudeCodePalette.failureMark.opacity(0.35) : .islandDecorative(0.14))
+                Capsule().fill(.islandAccent(.claudeCode))
                     .frame(width: max(proxy.size.height, proxy.size.width * min(1, max(0, fraction))))
             }
         }
@@ -505,7 +546,7 @@ struct ClaudeCodeCompactTrailing: View {
                             Text("\(count)")
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                                 .monospacedDigit()
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(.islandText(0.6))
                                 .fixedSize()
                         }
                         Group {
@@ -525,7 +566,7 @@ struct ClaudeCodeCompactTrailing: View {
                     Text(session.record.turnStart, style: .timer)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(ClaudeCodeText.color(session.state))
+                        .foregroundStyle(ClaudeCodeText.style(session.state))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                         .padding(.trailing, 6)
@@ -672,7 +713,7 @@ private struct ClaudeSessionRow: View {
                     HStack(spacing: 8) {
                         Text(ClaudeCodeText.title(session, showsText: showsText))
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.islandPrimary)
                             .lineLimit(1)
                         Spacer(minLength: 8)
                         status
@@ -682,7 +723,7 @@ private struct ClaudeSessionRow: View {
                     if let detail = ClaudeCodeText.detail(session, showsText: showsText) {
                         Text(detail)
                             .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(.islandText(0.5))
                             .lineLimit(1)
                             .frame(height: ClaudeCodeLayout.textHeight, alignment: .leading)
                     }
@@ -706,7 +747,7 @@ private struct ClaudeSessionRow: View {
             .padding(.horizontal, 8)
             .padding(.vertical, ClaudeCodeLayout.rowPadding)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(shape.fill(.white.opacity(isHovering && host != nil ? 0.08 : 0)))
+            .background(shape.fill(.islandDecorative(isHovering && host != nil ? 0.08 : 0)))
             .contentShape(shape)
         }
         .buttonStyle(.plain)
@@ -721,7 +762,7 @@ private struct ClaudeSessionRow: View {
         if session.state == .idle {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(.islandGraphic(0.45))
         } else {
             ClaudeCodeMarkView(mark: ClaudeCodeModel.Mark(session.state), pointSize: 12)
         }
@@ -730,13 +771,13 @@ private struct ClaudeSessionRow: View {
     private var status: some View {
         HStack(spacing: 0) {
             Text(ClaudeCodeText.status(session.state))
-                .foregroundStyle(ClaudeCodeText.color(session.state))
+                .foregroundStyle(ClaudeCodeText.style(session.state))
             if session.state != .idle {
                 Text(" · ")
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(.islandText(0.35))
                 Text(session.record.turnStart, style: .timer)
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
             }
         }
         .font(.system(size: 11.5, weight: .medium))
@@ -767,16 +808,16 @@ private struct ClaudeWorkflowRow: View {
             Image(systemName: outcome == .failed ? "xmark.circle.fill" : outcome == .completed
                   ? "checkmark.circle.fill" : "stop.circle.fill")
                 .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(outcome == .failed ? ClaudeCodePalette.failure : .white.opacity(0.45))
+                .foregroundStyle(outcome == .failed ? ClaudeCodePalette.failureMark : .islandGraphic(0.45))
                 .frame(width: 10, height: 10)
             Text(workflow.name.isEmpty ? "Workflow" : workflow.name)
                 .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(.islandText(0.6))
                 .lineLimit(1)
                 .layoutPriority(1)
             Text(ClaudeCodeText.outcome(outcome))
                 .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(outcome == .failed ? ClaudeCodePalette.failure : .white.opacity(0.42))
+                .foregroundStyle(outcome == .failed ? ClaudeCodePalette.failureText : .islandText(0.42))
                 .lineLimit(1)
             Spacer(minLength: 6)
         }
@@ -797,14 +838,14 @@ private struct ClaudeWorkflowRow: View {
                 .frame(width: 10, height: 10)
                 Text(workflow.name.isEmpty ? "Workflow" : workflow.name)
                     .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(.islandText(0.8))
                     .lineLimit(1)
                     .layoutPriority(1)
                 let beside = progress.map(ClaudeCodeText.phase) ?? ClaudeCodeText.oneLine(workflow.summary)
                 if !beside.isEmpty {
                     Text(beside)
                         .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(progress == nil ? 0.42 : 0.55))
+                        .foregroundStyle(.islandText(progress == nil ? 0.42 : 0.55))
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)
@@ -818,15 +859,15 @@ private struct ClaudeWorkflowRow: View {
                         .frame(width: ClaudeCodeLayout.barWidth, height: 3)
                     Text(ClaudeCodeText.running(progress.running))
                         .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.42))
+                        .foregroundStyle(.islandText(0.42))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 4)
                     if progress.failed > 0 {
-                        ClaudeTaskTag(text: "\(progress.failed) failed", color: ClaudeCodePalette.failure)
+                        ClaudeTaskTag(text: "\(progress.failed) failed", style: ClaudeCodePalette.failureText)
                     } else if progress.retrying > 0 {
                         ClaudeTaskTag(text: progress.retrying == 1 ? "retrying" : "\(progress.retrying) retrying",
-                                      color: ClaudeCodePalette.attention)
+                                      style: ClaudeCodePalette.attentionText)
                     }
                 }
                 .padding(.leading, 16)
@@ -850,7 +891,7 @@ private struct ClaudeAgentRow: View {
                     if progress?.finished == true {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.45))
+                            .foregroundStyle(.islandGraphic(0.45))
                     } else {
                         ClaudeCodeSpinner(lineWidth: 1.5)
                     }
@@ -858,11 +899,11 @@ private struct ClaudeAgentRow: View {
                 .frame(width: 10, height: 10)
                 Text(title)
                     .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(.islandText(0.8))
                     .lineLimit(1)
                 Text("Agent")
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(.islandText(0.35))
                     .fixedSize()
                 Spacer(minLength: 6)
                 ClaudeTaskTimer(since: [progress?.began, task.firstSeen > .distantPast ? task.firstSeen : nil]
@@ -877,12 +918,12 @@ private struct ClaudeAgentRow: View {
                     HStack(spacing: 7) {
                         Text(ClaudeCodeText.agent(progress))
                             .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(.islandText(0.5))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: 4)
                         if let quiet = progress.quiet(at: context.date) {
-                            ClaudeTaskTag(text: ClaudeCodeText.quiet(quiet), color: ClaudeCodePalette.attention)
+                            ClaudeTaskTag(text: ClaudeCodeText.quiet(quiet), style: ClaudeCodePalette.attentionText)
                         }
                     }
                 }
@@ -909,11 +950,11 @@ private struct ClaudeOtherTaskRow: View {
         HStack(spacing: 6) {
             Image(systemName: symbol)
                 .font(.system(size: 8.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(.islandGraphic(0.45))
                 .frame(width: 10, height: 10)
             Text(ClaudeCodeText.command(task) ?? fallback)
                 .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(.islandText(0.6))
                 .lineLimit(1)
             Spacer(minLength: 6)
             ClaudeTaskTimer(since: task.firstSeen)
@@ -947,7 +988,7 @@ private struct ClaudeTaskTimer: View {
             Text(since, style: .timer)
                 .font(.system(size: 11, weight: .medium))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(.islandText(0.42))
                 .fixedSize()
         }
     }
@@ -957,12 +998,12 @@ private struct ClaudeTaskTimer: View {
 /// tried again; an agent gone quiet.
 private struct ClaudeTaskTag: View {
     let text: String
-    let color: Color
+    let style: IslandStyle
 
     var body: some View {
         Text(text)
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(color)
+            .foregroundStyle(style)
             .lineLimit(1)
             .fixedSize()
     }

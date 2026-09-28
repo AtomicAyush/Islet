@@ -8,6 +8,7 @@ struct SettingsWindowEnvironment: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .modifier(SettingsIslandTheme())
             .environment(search)
             .defaultAppStorage(search.defaults)
     }

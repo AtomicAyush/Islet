@@ -80,12 +80,23 @@ enum IndicatorCardLayout {
     }
 }
 
+extension IslandBackdrop {
+    /// What an indicator card's content lies on: a shade of the ink over the island,
+    /// drawn opaque so the page under the card does not show through. Words and marks in
+    /// a card are measured against it: `.islandText(0.55, on: .indicatorCard)`.
+    static let indicatorCard = IslandBackdrop.surface(0.14)
+}
+
 // MARK: - Marks and buttons
 
 /// An indicator's mark: a dot, or its symbol fitted into the box `IslandLayout` gives
-/// it, with a softer glow than a dot's so its shape stays crisp.
+/// it, with a softer glow than a dot's so its shape stays crisp. A light island has no
+/// glow: there a halo of colour reads as a smudge.
 struct IndicatorMark: View {
     let indicator: StatusIndicator
+    /// What the mark is drawn on, for its contrast: the island, or a button's capsule.
+    var backdrop: IslandBackdrop = .island
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         if let label = indicator.label {
@@ -97,19 +108,20 @@ struct IndicatorMark: View {
 
     @ViewBuilder
     private var mark: some View {
+        let colour = indicator.color.on(backdrop).color(in: theme)
         if let symbol = indicator.symbol {
             Image(systemName: symbol)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .fontWeight(.semibold)
-                .foregroundStyle(indicator.color)
+                .foregroundStyle(colour)
                 .frame(width: IslandLayout.indicatorSymbol.width, height: IslandLayout.indicatorSymbol.height)
-                .shadow(color: indicator.color.opacity(0.45), radius: 2)
+                .shadow(color: colour.opacity(theme.isLight ? 0 : 0.45), radius: 2)
         } else {
             Circle()
-                .fill(indicator.color)
+                .fill(colour)
                 .frame(width: IslandLayout.indicatorDot, height: IslandLayout.indicatorDot)
-                .shadow(color: indicator.color.opacity(0.6), radius: 3)
+                .shadow(color: colour.opacity(theme.isLight ? 0 : 0.6), radius: 3)
         }
     }
 }
@@ -193,15 +205,16 @@ struct MoreIndicatorsMenu: View {
 
     var body: some View {
         let open = isOpen || showsMenu
+        let lit = open ? 0.16 : (isHovering ? 0.08 : 0)
         Menu {
             entries
         } label: {
             Text("+\(items.count)")
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(open || isHovering ? 0.75 : 0.45))
+                .foregroundStyle(.islandText(open || isHovering ? 0.75 : 0.45, on: .surface(lit)))
                 .frame(width: HeaderIndicatorFit.moreWidth, height: IndicatorCardLayout.buttonHeight)
-                .background(Capsule().fill(.white.opacity(open ? 0.16 : (isHovering ? 0.08 : 0))))
+                .background(Capsule().fill(.islandSurface(lit)))
                 .contentShape(Capsule())
         }
         .menuStyle(.button)
@@ -217,7 +230,9 @@ struct MoreIndicatorsMenu: View {
 }
 
 /// An indicator that opens a card: its mark on a capsule that lights under the
-/// pointer and stays lit while the card is open, as a tab does while it is picked.
+/// pointer and stays lit while the card is open, as a tab does while it is picked. The
+/// capsule is always a shade of the ink, never the accent, which has no place among the
+/// indicators.
 private struct IndicatorButton: View {
     let indicator: StatusIndicator
     let isOpen: Bool
@@ -225,13 +240,14 @@ private struct IndicatorButton: View {
     @State private var isHovering = false
 
     var body: some View {
+        let lit = isOpen ? 0.16 : (isHovering ? 0.08 : 0)
         Button(action: action) {
-            IndicatorMark(indicator: indicator)
+            IndicatorMark(indicator: indicator, backdrop: .surface(lit))
                 .frame(
                     width: indicator.symbol == nil ? IndicatorCardLayout.dotButtonWidth : IndicatorCardLayout.symbolButtonWidth,
                     height: IndicatorCardLayout.buttonHeight
                 )
-                .background(Capsule().fill(.white.opacity(isOpen ? 0.16 : (isHovering ? 0.08 : 0))))
+                .background(Capsule().fill(.islandSurface(lit)))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -326,13 +342,15 @@ private struct IndicatorCardOverlay: View {
     }
 }
 
-/// The card itself: the feature's content on a panel a shade lighter than the island,
-/// so it reads as lying over the page, with a caret up to its indicator `caretInset`
-/// in from its right edge. Clicks inside it stay inside it; the caret takes none, so
-/// it never keeps a click from the button it points at.
+/// The card itself: the feature's content on a panel a shade of the ink away from the
+/// island (lighter on a dark island, darker on a light one), so it reads as lying over
+/// the page, with a caret up to its indicator `caretInset` in from its right edge.
+/// Clicks inside it stay inside it; the caret takes none, so it never keeps a click from
+/// the button it points at.
 private struct IndicatorCardView: View {
     let detail: IndicatorDetail
     let caretInset: CGFloat?
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let shape = CalloutShape(
@@ -347,10 +365,10 @@ private struct IndicatorCardView: View {
             detail.content()
                 .padding(IndicatorCardLayout.padding)
         }
-        .background(shape.fill(Color(white: 0.14)))
-        .overlay(shape.stroke(.white.opacity(0.1), lineWidth: 0.5))
+        .background(shape.fill(theme.colour(of: .indicatorCard).color))
+        .overlay(shape.stroke(.islandDecorative(0.1), lineWidth: 0.5))
         .compositingGroup()
-        .shadow(color: .black.opacity(0.6), radius: 12, y: 4)
+        .shadow(color: theme.shadow(0.6), radius: 12, y: 4)
         .contentShape(RoundedRectangle(cornerRadius: IndicatorCardLayout.cornerRadius))
         .onTapGesture {}
         .animation(.indicatorCard, value: caretInset)

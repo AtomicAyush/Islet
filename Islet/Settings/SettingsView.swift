@@ -21,6 +21,40 @@ struct SettingsView: View {
     }
 }
 
+/// The island's colours, for anything in the Settings window drawn as the island draws
+/// it (the feature badges, the preview), in the tabs and the search results alike; the
+/// window itself keeps following macOS.
+struct SettingsIslandTheme: ViewModifier {
+    @AppStorage(Prefs.Key.islandColour) private var islandColour = IslandTheme.standardIslandPref
+    @AppStorage(Prefs.Key.accentColour) private var accentColour = IslandTheme.standardAccentPref
+
+    func body(content: Content) -> some View {
+        content.environment(\.islandTheme, IslandTheme.cached(islandPref: islandColour, accentPref: accentColour))
+    }
+}
+
+/// A symbol on a rounded square of the island's colour, as Settings lists the features
+/// and the home tiles: the island in small, as it will draw them.
+struct IslandSymbolBadge: View {
+    let symbol: String
+    let size: CGFloat
+    let cornerRadius: CGFloat
+    let pointSize: CGFloat
+    @Environment(\.islandTheme) private var theme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        Image(systemName: symbol)
+            .font(.system(size: pointSize, weight: .semibold))
+            .foregroundStyle(.islandPrimary)
+            .frame(width: size, height: size)
+            .background(shape.fill(theme.background))
+            // A light island's colour would vanish into a light window.
+            .overlay(shape.strokeBorder(Color.primary.opacity(theme.isLight ? 0.15 : 0), lineWidth: 0.5))
+            .environment(\.colorScheme, theme.colorScheme)
+    }
+}
+
 // MARK: - General
 
 private struct GeneralSettings: View {
@@ -31,6 +65,8 @@ private struct GeneralSettings: View {
                 GeneralRow.menuBarIcon
                 GeneralRow.quit
             }
+
+            AppearanceSection()
 
             Section("Island") {
                 GeneralRow.hover
@@ -89,11 +125,7 @@ struct FeatureSection<Header: View>: View {
         Section {
             Toggle(isOn: $isEnabled) {
                 HStack(spacing: 10) {
-                    Image(systemName: feature.symbol)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 26, height: 26)
-                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.black))
+                    IslandSymbolBadge(symbol: feature.symbol, size: 26, cornerRadius: 7, pointSize: 13)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(feature.title)
                         Text(feature.summary)

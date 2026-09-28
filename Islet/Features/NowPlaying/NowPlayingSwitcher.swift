@@ -37,16 +37,20 @@ private struct SessionButton: View {
     let size: CGFloat
     let action: () -> Void
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let name = NowPlayingModel.appName(for: bundleID) ?? "Player"
+        // The ring round the player on show, softened on the black island as it always
+        // was; elsewhere at full strength, so it stands out as a mark.
+        let ring = isShown ? (theme.isDefault ? 0.85 : 1) : 0
         Button(action: action) {
             icon
                 .frame(width: size, height: size)
                 .opacity(isShown ? 1 : isHovering ? 0.85 : 0.5)
                 .overlay {
                     Circle()
-                        .strokeBorder(.white.opacity(isShown ? 0.85 : 0), lineWidth: 1.25)
+                        .strokeBorder(.islandAccent(.nowPlaying).opacity(ring), lineWidth: 1.25)
                         .padding(-3)
                 }
                 .overlay(alignment: .bottomTrailing) {
@@ -75,21 +79,21 @@ private struct SessionButton: View {
         } else {
             Image(systemName: "play.circle.fill")
                 .resizable()
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandGraphic())
         }
     }
 }
 
-/// Three small bars on a black disc, tucked over an icon's corner.
+/// Three small bars on a disc of the island's colour, tucked over an icon's corner.
 private struct PlayingBars: View {
     let size: CGFloat
     /// The player on show: its bars follow its music when they can.
     let follows: Bool
 
     var body: some View {
-        WaveformBars(playing: true, colour: .white, bars: 3, barWidth: 1.5, spacing: 1, follows: follows)
+        WaveformBars(playing: true, tint: .accent(.nowPlaying), bars: 3, barWidth: 1.5, spacing: 1, follows: follows)
             .frame(width: 6.5, height: size * 0.36)
             .frame(width: size * 0.62, height: size * 0.62)
-            .background(Circle().fill(.black))
+            .background(Circle().fill(.islandBackground))
     }
 }

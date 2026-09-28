@@ -127,7 +127,7 @@ final class MicMuteFeature: Feature {
             // the microphone open, hearing silence. It keeps the island up where there
             // is no notch, as that dot does: a muted microphone must be seen to be.
             center.setIndicator(StatusIndicator(
-                id: id, color: MicMutePalette.muted, order: 1, symbol: "mic.slash.fill", keepsIslandShown: true,
+                id: id, color: .hue(.muted), order: 1, symbol: "mic.slash.fill", keepsIslandShown: true,
                 label: "Microphone muted",
                 detail: IndicatorDetail(id: id, title: "Microphone", maxWidth: MicMuteIndicatorCard.maxWidth) { [model] in
                     AnyView(MicMuteIndicatorCard(model: model))

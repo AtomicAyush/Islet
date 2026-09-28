@@ -1,26 +1,34 @@
 import AppKit
 import SwiftUI
 
+extension SystemHue {
+    /// Presentation Mode's colour: the system teal, apart from the privacy dots' green,
+    /// orange, purple and blue. A mode's colour, as a Focus's is, so it never takes the
+    /// accent.
+    static let presentation = SystemHue.teal
+}
+
 enum PresentationPalette {
-    /// The system teal in its dark appearance, which is what the black island shows it
-    /// against: apart from the privacy dots' green, orange, purple and blue.
-    static let tint = Color(red: 64 / 255, green: 200 / 255, blue: 224 / 255)
-    static let off = Color.white.opacity(0.5)
+    /// The eye on the card once Presentation Mode is off.
+    static let offSymbol = IslandInk.graphic(0.5)
 }
 
 /// The crossed-out eye on a disc, matching `RoundButton`: teal while on, grey once off.
+/// The disc lies on `backdrop`, the indicator card as a rule.
 struct PresentationBadge: View {
     let isOn: Bool
     var diameter: CGFloat = 30
+    var backdrop: IslandBackdrop = .indicatorCard
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
-        let tint = isOn ? PresentationPalette.tint : PresentationPalette.off
+        let colours = theme.onWash(isOn ? .hue(.presentation) : PresentationPalette.offSymbol, wash: 0.18, on: backdrop)
         Image(systemName: isOn ? "eye.slash.fill" : "eye.fill")
             .font(.system(size: diameter * 0.4, weight: .semibold))
-            .foregroundStyle(tint)
+            .foregroundStyle(colours.mark)
             .contentTransition(.symbolEffect(.replace))
             .frame(width: diameter, height: diameter)
-            .background(Circle().fill(tint.opacity(0.18)))
+            .background(Circle().fill(colours.wash))
             .accessibilityHidden(true)
     }
 }
@@ -50,19 +58,19 @@ struct PresentationIndicatorCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(state.isOn ? "Presentation Mode" : "Presentation Mode off")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(state.isOn ? .white : .white.opacity(0.8))
+                        .foregroundStyle(.islandText(state.isOn ? 1 : 0.8, on: .indicatorCard))
                         .lineLimit(1)
                     ForEach(state.reasons, id: \.self) { reason in
                         Text(reason.text)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(.islandText(0.55, on: .indicatorCard))
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
                     if state.isOn {
                         Text(Self.heldText(center.heldBack.isEmpty ? nil : center.heldBackCount))
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(PresentationPalette.tint)
+                            .foregroundStyle(.islandHueText(.presentation, on: .indicatorCard))
                             .lineLimit(1)
                     }
                 }
@@ -119,23 +127,36 @@ private struct PresentationTurnOffButton: View {
     var isProminent = true
     let action: () -> Void
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
-        let tint = isProminent ? PresentationPalette.tint : Color.white
+        let colours = self.colours
         Button(action: action) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isProminent ? tint : tint.opacity(0.75))
+                .foregroundStyle(colours.words)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.horizontal, 10)
                 .frame(height: 24)
-                .background(Capsule().fill(tint.opacity((isHovering ? 0.3 : 0.2) * (isProminent ? 1 : 0.5))))
+                .background(Capsule().fill(colours.capsule))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .fixedSize(horizontal: false, vertical: true)
         .onHover { isHovering = $0 }
+    }
+
+    /// Teal on a capsule of it; or grey words on a faint capsule of the ink, measured
+    /// against it.
+    private var colours: (words: AnyShapeStyle, capsule: AnyShapeStyle) {
+        if isProminent {
+            let washed = theme.onWash(.hue(.presentation, minimum: Contrast.text), wash: isHovering ? 0.3 : 0.2, on: .indicatorCard)
+            return (AnyShapeStyle(washed.mark), AnyShapeStyle(washed.wash))
+        }
+        let wash = isHovering ? 0.15 : 0.1
+        return (AnyShapeStyle(.islandText(0.75, on: IslandBackdrop.indicatorCard.stacked(wash))),
+                AnyShapeStyle(.islandSurface(wash, on: .indicatorCard)))
     }
 }
 
@@ -154,7 +175,7 @@ enum PresentationAnnouncement: Equatable {
     }
 
     var symbol: String { self == .off ? "eye.fill" : "eye.slash.fill" }
-    var symbolColor: Color { self == .off ? .white : PresentationPalette.tint }
+    var symbolColor: IslandInk { self == .off ? .graphic(1) : .hue(.presentation) }
 
     /// Left of the notch.
     var name: String {
@@ -178,10 +199,10 @@ enum PresentationAnnouncement: Equatable {
         }
     }
 
-    var statusColor: Color {
+    var statusColor: IslandInk {
         switch self {
-        case .on: PresentationPalette.tint
-        case .off, .summary: .white.opacity(0.6)
+        case .on: .hue(.presentation, minimum: Contrast.text)
+        case .off, .summary: .text(0.6)
         }
     }
 }
@@ -198,7 +219,7 @@ struct PresentationBannerLeading: View {
                 symbol
                 Text(announcement.name)
                     .font(Font(PresentationBannerLayout.font))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -217,7 +238,7 @@ struct PresentationBannerLeading: View {
             .resizable()
             .aspectRatio(contentMode: .fit)
             .fontWeight(.semibold)
-            .foregroundStyle(announcement.symbolColor)
+            .foregroundStyle(.island(announcement.symbolColor))
             .frame(width: PresentationBannerLayout.symbolSize.width, height: PresentationBannerLayout.symbolSize.height)
             .accessibilityHidden(true)
     }
@@ -233,7 +254,7 @@ struct PresentationBannerTrailing: View {
     var body: some View {
         Text(isInHeader ? announcement.headerText : announcement.status)
             .font(Font(PresentationBannerLayout.font))
-            .foregroundStyle(isInHeader && announcement.isSummary ? .white : announcement.statusColor)
+            .foregroundStyle(.island(isInHeader && announcement.isSummary ? .text(1) : announcement.statusColor))
             .lineLimit(1)
             .fixedSize()
             .padding(.leading, PresentationBannerLayout.innerInset)

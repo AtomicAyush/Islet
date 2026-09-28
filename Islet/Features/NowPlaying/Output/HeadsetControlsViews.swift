@@ -126,7 +126,7 @@ struct HeadsetChoiceRow: View {
             if showsLabel {
                 Text(label)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
             }
@@ -137,7 +137,7 @@ struct HeadsetChoiceRow: View {
                 }
             }
             .padding(2)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.islandSurface(HeadsetChoiceButton.row)))
             .disabled(!isEnabled)
             .opacity(isEnabled ? 1 : 0.5)
             .allowsHitTesting(isSettled)
@@ -145,7 +145,7 @@ struct HeadsetChoiceRow: View {
             if let note {
                 Text(note)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .transition(.opacity)
@@ -163,10 +163,20 @@ struct HeadsetChoiceRow: View {
 private struct HeadsetChoiceButton: View {
     let choice: HeadsetChoice
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     static let height: CGFloat = 36
+    /// The row's shade, which the choices lie on.
+    static let row = 0.08
+    /// Under the pointer, the row's shade and the choice's own: what its words are
+    /// measured against, so they read either way.
+    private static let lit = IslandBackdrop.surface(0.16)
 
     var body: some View {
+        let fill = theme.nowPlayingFill
+        // The choice waiting for the headset: softened on the black island, as it
+        // always was; elsewhere a full mark.
+        let pending = theme.isDefault ? 0.6 : 1
         Button(action: choice.action) {
             VStack(spacing: 2) {
                 Image(systemName: choice.symbol)
@@ -177,19 +187,19 @@ private struct HeadsetChoiceButton: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(choice.isSelected ? Color.black : .white.opacity(0.85))
+            .foregroundStyle(choice.isSelected ? .islandOnFill(fill) : .islandText(0.85, on: Self.lit))
             .opacity(choice.isDimmed ? 0.35 : 1)
             .padding(.horizontal, 4)
             .frame(maxWidth: .infinity)
             .frame(height: Self.height)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(choice.isSelected ? Color.white : .white.opacity(isHovering ? 0.08 : 0))
+                    .fill(choice.isSelected ? .islandFill(fill) : .islandSurface(isHovering ? 0.08 : 0))
             )
             .overlay {
                 if choice.isPending {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(.white.opacity(0.6), lineWidth: 1.5)
+                        .strokeBorder(.islandAccent(.nowPlaying).opacity(pending), lineWidth: 1.5)
                 }
             }
             .contentShape(Rectangle())

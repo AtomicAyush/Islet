@@ -10,22 +10,23 @@ the camera while something is going on, and opens into a card when the pointer r
 ## What it shows
 
 **Now Playing.** Whatever the Mac is playing — Music, Spotify, a browser — with the artwork
-left of the camera and a waveform on the right, tinted with the cover's colour. Opened, it
-is a player: artwork, a scrolling title, a scrubber you can drag, and the controls, with
-shuffle and repeat where the player reports them. The button at the end of the controls lists
-the Mac's outputs as the Sound menu does — its speakers, AirPods with each bud's and the case's
-battery, a display, USB or HDMI — with the volume above them, and moves the sound to the one
-you click; macOS lets only its own Sound menu and Sound settings list AirPlay receivers, so for
-those the last row opens Sound settings. On macOS 27, under AirPods that have them sit their
-listening modes (Transparency, Adaptive, Noise Cancellation, and Off once the AirPods have been
-seen allowing it) and, while something they can spatialize plays, Spatialize Stereo or Spatial
-Audio: Off, Fixed or Head Tracked. Both follow changes made from the stem, Control Center or an
-iPhone, and change only when you click one; Noise Cancellation and Adaptive wait for both AirPods
-to be in. A song change gets a moment's banner. On macOS 15 and later, once Islet may record
-system audio (the permission the Sound Mixer asks for), the waveform follows the music itself,
-bass on the left and cymbals on the right, in time with what you hear; macOS shows its purple
-recording indicator while it listens. Without that, or with "Waveform follows the music" off, the
-bars dance on Core Animation as before.
+left of the camera and a waveform on the right, tinted with the cover's colour while the accent
+is Feature colours (otherwise it takes the accent). Opened, it is a player: artwork, a
+scrolling title, a scrubber you can drag, and the controls, with shuffle and repeat where the
+player reports them. The button at the end of the controls lists the Mac's outputs as the Sound
+menu does — its speakers, AirPods with each bud's and the case's battery, a display, USB or
+HDMI — with the volume above them, and moves the sound to the one you click; macOS lets only
+its own Sound menu and Sound settings list AirPlay receivers, so for those the last row opens
+Sound settings. On macOS 27, under AirPods that have them sit their listening modes
+(Transparency, Adaptive, Noise Cancellation, and Off once the AirPods have been seen allowing
+it) and, while something they can spatialize plays, Spatialize Stereo or Spatial Audio: Off,
+Fixed or Head Tracked. Both follow changes made from the stem, Control Center or an iPhone, and
+change only when you click one; Noise Cancellation and Adaptive wait for both AirPods to be in.
+A song change gets a moment's banner. On macOS 15 and later, once Islet may record system audio
+(the permission the Sound Mixer asks for), the waveform follows the music itself, bass on the
+left and cymbals on the right, in time with what you hear; macOS shows its purple recording
+indicator while it listens. Without that, or with "Waveform follows the music" off, the bars
+dance on Core Animation as before.
 
 Video gets its own look — YouTube in a browser, the TV app, QuickTime, IINA, VLC: a 16:9
 thumbnail and a progress ring beside the notch, and 15-second jumps in the player.
@@ -66,8 +67,8 @@ on in Settings → Activities → Now Playing (for titles like "Artist - Song").
 kept in Application Support/Islet/Lyrics, so a track played again sends nothing.
 
 **Timer.** Start one from the opened island (or `islet://timer/start?minutes=5`) and it counts
-down beside the notch in the Clock app's orange; opened, it pauses and cancels. When it ends
-the island rings, with the last length one click away.
+down beside the notch in the Clock app's orange (or the accent: see Appearance); opened, it
+pauses and cancels. When it ends the island rings, with the last length one click away.
 
 **Keep Awake.** Keeps the Mac from sleeping for fifteen minutes, an hour, two, or until you turn
 it off, started from the home page, `islet://keepAwake/start?minutes=60` or the Keep Mac Awake
@@ -87,11 +88,11 @@ back up when Islet next opens.
 **Pomodoro.** Twenty-five minutes of focus, a five-minute break, and after every fourth focus a
 fifteen-minute one, each length and the count set in Settings. Start it from the home page,
 `islet://pomodoro/start` or the Start Pomodoro action in Shortcuts, and end it with Stop
-Pomodoro. While it runs, the phase's symbol sits left of the camera, red for focus and green for
-a break, with the time left on the right, or "Ready" when the next phase waits for your click;
-beside music it waits in the bubble as a draining ring, and the song keeps the island. Opened,
-it says which focus of the cycle it is ("Focus 2 of 4"), and pauses, skips or stops; a pause
-holds the time left. Drag the bar under the time left to move through the phase, on to skip
+Pomodoro. While it runs, the phase's symbol sits left of the camera, red for focus (or the
+accent) and green for a break, with the time left on the right, or "Ready" when the next phase
+waits for your click; beside music it waits in the bubble as a draining ring, and the song keeps
+the island. Opened, it says which focus of the cycle it is ("Focus 2 of 4"), and pauses, skips
+or stops; a pause holds the time left. Drag the bar under the time left to move through the phase, on to skip
 ahead or back for more time; the phase holds still while you drag, and if you let go at its end
 it finishes as if its time had run out. As each phase ends a sound plays and a word shows beside the notch, or in a
 row under the music: "Focus done — 5 minute break", "Break over — Back to it". Breaks start by
@@ -124,11 +125,11 @@ underneath instead of taking its place. Needs Accessibility (called Device Contr
 Access from macOS 27), so it is off until you turn it on.
 
 **Caps Lock.** Pressing Caps Lock flashes a word either side of the camera, as the iPhone does
-for its Ring/Silent switch: the Caps Lock symbol and name on the left, a green "On" or a grey
-"Off" on the right, never over another alert such as a timer's. Its symbol can stay beside the
-notch while it is on, too. macOS says nothing when Caps Lock changes, so Islet watches the
-modifier keys, which needs the same Accessibility permission as Volume & Brightness; until it
-has it, the island shows nothing for Caps Lock pressed in other apps.
+for its Ring/Silent switch: the Caps Lock symbol and name on the left, a green "On" (or one in
+the accent) or a grey "Off" on the right, never over another alert such as a timer's. Its symbol
+can stay beside the notch while it is on, too. macOS says nothing when Caps Lock changes, so
+Islet watches the modifier keys, which needs the same Accessibility permission as Volume &
+Brightness; until it has it, the island shows nothing for Caps Lock pressed in other apps.
 
 **Headphones.** AirPods and other headphones connecting, as a card with a battery ring for
 each earbud and the case. Connections are read from CoreAudio, so they need no permission;
@@ -157,14 +158,14 @@ Weather asks when it uses this Mac's own location; this never asks. Without it t
 traffic, by the name System Settings gives it where Islet can read that. Settings picks which
 of these show.
 
-**Calendar.** Your next event counts down beside the notch from ten minutes before it
-starts, with a Join button when there is a Zoom, Meet, Teams, Webex, FaceTime or Slack huddle
-link in its URL, location or notes, Outlook's Safe Links and Google's redirects looked through.
-From five minutes before a call until ten minutes in, a green camera sits beside the countdown,
-and until five minutes in the call takes the island over from music. Rest the pointer on the
-camera a moment, then click to join, in the Zoom or Teams app where it is installed. The **Join
-Meeting** action in Shortcuts and `islet://calendar/join` join the call under way or starting
-within 15 minutes.
+**Calendar.** Your next event counts down beside the notch from ten minutes before it starts,
+with a Join button when there is a Zoom, Meet, Teams, Webex, FaceTime or Slack huddle link in
+its URL, location or notes, Outlook's Safe Links and Google's redirects looked through. From
+five minutes before a call until ten minutes in, a green camera (or one in the accent) sits
+beside the countdown, and until five minutes in the call takes the island over from music. Rest
+the pointer on the camera a moment, then click to join, in the Zoom or Teams app where it is
+installed. The **Join Meeting** action in Shortcuts and `islet://calendar/join` join the call
+under way or starting within 15 minutes.
 
 **Weather.** The temperature on the home page beside a symbol for the sky, with the day's high
 and low and, when rain is on the way, when it should start: "Rain in about 20 min", "Rain
@@ -428,8 +429,8 @@ is full the rest go on the other. A single other activity only ever goes right. 
 stop short of the front app's menus, which Islet finds through Accessibility and looks at again
 as you switch app; without it, or with the menus reaching the notch, they all go right, short of
 any menus that run on past it. Settings → General → Bubble placement keeps them to the right
-only. Each is drawn through a blur and an alpha threshold while it is close to the
-island or the bubble before it, so a neck of black joins them, stretches and snaps as the bubble
+only. Each is drawn through a blur and an alpha threshold while it is close to the island or the
+bubble before it, so a neck of the island's colour joins them, stretches and snaps as the bubble
 springs out — and forms again when it merges back; the others slide along to make room or close
 the gap. Where neither side leaves room for the next bubble, that activity folds into the
 island instead, as a small circle at its left end, so long as that costs none of the bubbles
@@ -484,6 +485,24 @@ top edge, like the iPhone's, and hides when there is nothing to show. It can fol
 notched display, the main display, or appear on all of them, and it steps aside while an app
 is full screen. Stepped aside, it still opens when the pointer rests on the notch (on a display
 without one, on the middle of the top edge), and hides again once the pointer leaves.
+
+**Its colours are yours.** Settings › General › Appearance picks the island's colour and one
+accent. The island can be any colour, light ones included: on a light island words and symbols
+turn black. On a display with a notch the island stays black at rest, because there it is the
+notch; once it shows something it takes the colour, and the camera housing stays a black shape
+at its top. The accent is what symbols, rings, progress and selected things are drawn in:
+"Feature colours" (the default) keeps each feature's own, and a preset, Mono (the island's own
+black or white) or any colour you pick replaces them all. Colours that mean something — the
+camera and microphone lights, a low battery, a failure, a Focus, Presentation Mode, a network
+coming and going, a Pomodoro break, a banner's or a calendar's own colour — never take the
+accent, though an event whose calendar has no colour of its own is drawn in it. Every colour is
+kept as chosen where it reads, and otherwise darkened or lightened, never shifted in hue, just
+enough to stand out: 4.5:1 for words, 3:1 for symbols. On a mid-tone island, a grey or a system
+blue, where even the island's own black or white only just reads, coloured words that would
+come out all but black are drawn plainly in it instead, and the symbol beside them keeps the
+colour. A light island has a hairline edge, so it still shows against a light menu bar, and a
+file's icon lies on a faint plate there, so a white page still shows. Black with Feature colours
+looks exactly as the island always has.
 
 ## Building
 
@@ -547,22 +566,23 @@ open "islet://timer/start?minutes=25"
 | `title` | Beside the notch, or the card's first line |
 | `subtitle` | Right of the notch, in the banner's colour or grey without one; or up to three lines under a card's title |
 | `symbol` | An SF Symbol, such as `checkmark.circle.fill`; a bell if macOS has none by that name, or for Apple's logo |
-| `tint` | `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `brown`, `gray` or `white`, or hex as `ff9500` or `%23ff9500` (`colour` and `color` work too) |
+| `tint` | `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `brown`, `gray` or `white`, or hex as `ff9500` or `%23ff9500` (`colour` and `color` work too); `white` is the island's own ink, black on a light island, whatever the accent; with none the symbol is a highlight like a feature's, the island's ink under Feature colours and otherwise the accent |
 | `duration` | Seconds, from 1 to 30: 4 beside the notch and 6 for a card if left out |
 | `style` | `compact`, beside the notch, or `card` |
 | `sound` | One of the Mac's alert sounds (`Glass`, `Ping`, `Basso` and the rest of /System/Library/Sounds); silent without |
 | `interruption` | `passive` lets a Focus that asks for quiet hold it back, as it does a song change |
 
 Spaces go in as `%20` (a `+` stays a plus), and a `#` as `%23`, since a bare one ends the
-query. Titles are cut at 60 characters and subtitles at 120, and a colour too dark to see on
-the island's black is lightened until it shows. Nothing in a banner can be clicked, whatever
-the URL says. Banners that come faster than one a second, or more than five in ten seconds,
-wait their turn, and only the newest of those waiting is shown, so a script stuck in a loop
-cannot keep the island flickering. While something is already in the island — music, a video,
-a timer — a banner beside the notch goes in a slim row under it instead, as the volume does, so
-what was there stays in sight. With the island open, a banner shows in its header, and a card
-comes as a compact one instead. While Presentation Mode is on they are held back, sounds and
-all, and counted. Settings → Activities → Show in Islet turns them all off.
+query. Titles are cut at 60 characters and subtitles at 120, and a colour that would not show
+on the island's colour is darkened or lightened, keeping its hue, only as far as it must be to
+stand out. Nothing in a banner can be clicked, whatever the URL says. Banners that come faster
+than one a second, or more than five in ten seconds, wait their turn, and only the newest of
+those waiting is shown, so a script stuck in a loop cannot keep the island flickering. While
+something is already in the island — music, a video, a timer — a banner beside the notch goes
+in a slim row under it instead, as the volume does, so what was there stays in sight. With the
+island open, a banner shows in its header, and a card comes as a compact one instead. While
+Presentation Mode is on they are held back, sounds and all, and counted. Settings → Activities
+→ Show in Islet turns them all off.
 
 `open -g` hands the URL over without bringing anything to the front:
 
@@ -571,8 +591,9 @@ open -g "islet://banner?title=Build%20finished&subtitle=12%20s&symbol=hammer.fil
 ```
 
 In Shortcuts, the **Show in Islet** action puts up the same banner, with title, subtitle,
-symbol, colour, style and duration as fields. It runs in the background, starting Islet if it
-is not running, and fails with a reason if Show in Islet is turned off.
+symbol, colour, style and duration as fields (a colour of Default is none, as a URL without a
+`tint`). It runs in the background, starting Islet if it is not running, and fails with a reason
+if Show in Islet is turned off.
 
 A Stop hook in `~/.claude/settings.json` whose command is
 `open -g 'islet://banner?title=Claude%20finished&symbol=checkmark.circle.fill&tint=green'`
@@ -651,11 +672,95 @@ goes once they have all been, or are a day old.
 - `Islet/Features/` — one folder per feature. Each owns its model and views and talks to
   the island only through `ActivityCenter`. The timer is the smallest and the pattern the
   rest follow.
+- `Islet/Home/` — the opened island's home page: its tiles, its pages, and arranging them.
+- `Islet/Support/` — views and helpers shared by every feature, and the island's colours:
+  `IslandTheme`, the `.island…` styles, `SystemHue` and `FeatureTint`.
 - `Islet/Settings/` — the Settings window and its search. The search finds a feature by its
   title and summary with nothing more; the other words it goes by, its settings' labels and
   other names for it, are in `SettingsSearchTerms.swift` beside every other feature's. A
   section added to the General tab is found once it is a `GeneralRow`.
 - `Vendor/mediaremote-adapter/` — see below.
+
+**Colours in the code.** Island views never write `.white`, `.black` or a colour literal, and
+never read UserDefaults for a colour. The theme (`IslandTheme`) is worked out once when the
+preferences change and put in the environment at `IslandRootView` and in Settings; views ask it
+for a colour by what the colour is for, through the `.island…` shape styles in
+`Support/IslandStyles.swift`:
+
+- words: `.islandPrimary`, `.islandText(0.55)` — today's opacity, raised only as far as 4.5:1
+  needs;
+- symbols, rings and meaningful strokes: `.islandGraphic(0.6)` (3:1);
+- tracks, dividers and hover washes: `.islandDecorative(0.2)` (no floor);
+- cards, chips and rows: `.islandSurface(0.12)`, with what sits on them measured against it,
+  e.g. `.islandText(0.55, on: .surface(0.12))`; a wash of a colour with words on it (a lit
+  tile) is only as strong as `theme.readableWash(0.2, of: colour, over: base)` allows;
+- a feature's highlights: `.islandAccent(.timer)`, or `.islandAccentText(.timer)` for coloured
+  words;
+- colours that mean something: `.islandHue(.failure)` (see `Support/SystemHue.swift`); a colour
+  someone chose: `.islandFitted(colour)`; words on a filled button: `.islandOnFill(fill)` over
+  `.islandFill(fill)`;
+- in a home tile or an indicator card, measured against it: `.islandText(0.55, on: .homeTile)`,
+  `.islandText(0.55, on: .indicatorCard)`; a chip, capsule button or plate on a tile or card:
+  `.islandSurface(0.12, on: .homeTile)`, with its words measured against
+  `IslandBackdrop.homeTile.stacked(0.12)` (where the tile leaves no room for more ink, the chip
+  goes the other way, toward white on a light island, so it keeps its shape);
+- a symbol or word on a wash of its own colour (a badge's disc, a pill button's capsule, a
+  picked tab): `.islandWashed(.accent(.keepAwake, minimum: Contrast.text), wash: 0.2,
+  in: Capsule())`, or `theme.onWash(_:wash:on:)` for the two colours, which keeps the wash
+  faint enough for the mark to read on it;
+- a level's fill inside its track (a volume, a scrubber): `.islandAccent(.nowPlaying,
+  on: .track(0.2))`, fitted against the track and against the island along its edges; dimmed
+  while muted with `.dimmedLevel(0.35, on: .track(0.2))` rather than an opacity;
+- a faint outline in a colour, such as a battery's body: `.islandFaint(ink, 0.4)`, which keeps
+  it at 3:1 off the default island;
+- a file's icon from the system: `.fileIconBacking(size:)`, a faint plate under it on a light
+  island, where Finder's white page would vanish;
+- round buttons and progress rings take an ink, the island's own by default:
+  `RoundButton(symbol: "play.fill", tint: .accent(.timer))`,
+  `ProgressRing(fraction:lineWidth:tint: .accent(.downloads))`.
+
+Each style is fitted as it is drawn, so it is used at full strength: an `.opacity` added after
+it (`.islandAccentText(.date).opacity(0.9)`) undoes the fitting and can fall short on a light
+island. Words and symbols take their opacity as the argument (`.islandText(0.55)`), where the
+floor still applies; where the black island needs today's softer value, the view keeps it for
+the default theme only (`theme.isDefault`).
+
+The shell decides what the island is painted in (`IslandRootView`): the chosen colour whenever
+it shows something, and, under a notch, black at rest (`IslandLayout.wearsColour`), with the
+black theme (`IslandTheme.resting`) in the environment. Views read whichever it is and never
+need to know. A model that keeps a colour (an alert, an indicator, a banner) stores an
+`IslandInk`, which says what the colour is for, rather than a `Color`, so it follows the island
+when the colour changes. An AppKit or Core Animation view in the island is given its colour by
+its SwiftUI wrapper, from `@Environment(\.islandTheme)`; only code outside any view asks
+`ink.nsColor(in: Prefs.islandTheme)`.
+
+A feature declares its own colour once, in its own folder, as tuned for the black island:
+
+```swift
+extension FeatureTint {
+    static let timer = FeatureTint.colour(RGB(1.0, 0.62, 0.04))
+}
+```
+
+A feature whose highlights are white today declares `.neutral`. Under Feature colours it draws in
+its own colour, under any other accent it takes that accent, and it is fitted for contrast in
+every theme but the default (black with Feature colours), which draws every colour exactly as
+given. Only highlights take the accent: symbols, rings, progress and what's selected. A colour
+that means something (a privacy light, a battery low or charging, done, failed, a warning, muted,
+a Focus) is a `SystemHue`, and a colour someone chose is drawn with `.islandFitted`; both keep
+their hue on every island. Three more things a feature may need:
+
+- a meaningful colour of its own: name one of the system's hues once, in its folder
+  (`extension SystemHue { static let presentation = SystemHue.teal }`), and draw it with
+  `.islandHue(.presentation)`; if an accent could be taken for it beside the notch, where it
+  would be a bare dot, add it to `SystemHue.guarded` and give it a `meaning` for the Settings
+  caption. A colour of the feature's own that must never take the accent, such as Pomodoro's
+  break green, is drawn with `.islandFitted`;
+- a level that is fine (a headset's battery): `theme.restingLevel(.headsetLevel)`, which is the
+  island's ink instead wherever the accent could be taken for a low battery's red or a
+  warning's orange;
+- a button filled with the feature's colour: `theme.filledButton(.calendarJoin)` gives its fill
+  and its word, black or white, whichever reads.
 
 ## Credits
 

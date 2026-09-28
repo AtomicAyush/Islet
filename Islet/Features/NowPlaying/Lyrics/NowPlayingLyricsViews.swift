@@ -56,15 +56,15 @@ private struct LyricsPanelHeader: View {
             if case .plain = lyrics.status {
                 Text("Not synced")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(.islandText(0.7, on: .surface(0.12)))
                     .padding(.horizontal, 7)
                     .frame(height: 16)
-                    .background(Capsule().fill(.white.opacity(0.12)))
+                    .background(Capsule().fill(.islandSurface(0.12)))
             }
             if lyrics.status.hasLyrics {
                 Text("LRCLIB")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(.islandText(0.4))
                     .help("Lyrics from lrclib.net")
             }
             Spacer(minLength: 0)
@@ -89,7 +89,7 @@ private struct LyricsOffsetControl: View {
             Text(Self.text(lyrics.offset))
                 .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(lyrics.offset == 0 ? 0.4 : 0.85))
+                .foregroundStyle(.islandText(lyrics.offset == 0 ? 0.4 : 0.85))
                 .contentTransition(.numericText(value: lyrics.offset))
                 .animation(.smooth(duration: 0.2), value: lyrics.offset)
                 .frame(minWidth: 34)
@@ -114,12 +114,13 @@ private struct LyricsHeaderButton: View {
     @State private var isHovering = false
 
     var body: some View {
+        let disc = isHovering ? 0.18 : 0.1
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.white.opacity(isHovering ? 1 : 0.75))
+                .foregroundStyle(.islandGraphic(isHovering ? 1 : 0.75, on: .surface(disc)))
                 .frame(width: 20, height: 20)
-                .background(Circle().fill(.white.opacity(isHovering ? 0.18 : 0.1)))
+                .background(Circle().fill(.islandSurface(disc)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -135,14 +136,17 @@ private struct LyricsIslandToggle: View {
     let isOn: Bool
     let action: () -> Void
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
+        let disc = isHovering ? 0.18 : 0.1
+        let fill = theme.nowPlayingFill
         Button(action: action) {
             Image(systemName: "music.mic")
                 .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(isOn ? Color.black : .white.opacity(isHovering ? 1 : 0.8))
+                .foregroundStyle(isOn ? .islandOnFill(fill) : .islandGraphic(isHovering ? 1 : 0.8, on: .surface(disc)))
                 .frame(width: 22, height: 22)
-                .background(Circle().fill(isOn ? Color.white : .white.opacity(isHovering ? 0.18 : 0.1)))
+                .background(Circle().fill(isOn ? .islandFill(fill) : .islandSurface(disc)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -167,7 +171,7 @@ private struct LyricsNote: View {
             Text(text)
                 .font(.system(size: 12, weight: .medium))
         }
-        .foregroundStyle(.white.opacity(0.5))
+        .foregroundStyle(.islandText(0.5))
     }
 }
 
@@ -372,7 +376,7 @@ private struct LyricsRow: View {
                         .accessibilityLabel("Instrumental")
                 }
             }
-            .foregroundStyle(.white.opacity(opacity))
+            .foregroundStyle(ink)
             // A right-to-left line starts at the right, so it grows from there, and its
             // room to grow is at its left.
             .scaleEffect(place == .current ? Self.currentScale : 1, anchor: row.isRightToLeft ? .trailing : .leading)
@@ -382,7 +386,7 @@ private struct LyricsRow: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.white.opacity(isHovering && canSeek ? 0.07 : 0))
+                    .fill(.islandSurface(isHovering && canSeek ? 0.07 : 0))
             )
             .contentShape(Rectangle())
         }
@@ -393,13 +397,18 @@ private struct LyricsRow: View {
         .accessibilityAddTraits(place == .current ? .isSelected : [])
     }
 
-    private var opacity: Double {
+    /// The line being sung at full strength, those to come as words to read, and
+    /// those sung, kept faint on purpose, only as strong as a mark needs to be.
+    private var ink: IslandStyle {
         switch place {
-        case .sung: 0.32
-        case .current: 1
-        case .upcoming: 0.62
+        case .sung: .islandGraphic(0.32, on: Self.hover)
+        case .current: .islandText(1, on: Self.hover)
+        case .upcoming: .islandText(0.62, on: Self.hover)
         }
     }
+
+    /// Under the pointer, a line lies on this.
+    private static let hover = IslandBackdrop.surface(0.07)
 }
 
 // MARK: - Plain lyrics
@@ -417,7 +426,7 @@ private struct PlainLyricsList: View {
                     let rightToLeft = LyricsText.isRightToLeft(line)
                     Text(line)
                         .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(.islandText(0.8))
                         .multilineTextAlignment(rightToLeft ? .trailing : .leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: rightToLeft ? .trailing : .leading)
@@ -601,7 +610,7 @@ private struct KaraokeLine: View {
                         .truncationMode(.tail)
                 }
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(.islandPrimary)
             .background {
                 line
                     .hidden()

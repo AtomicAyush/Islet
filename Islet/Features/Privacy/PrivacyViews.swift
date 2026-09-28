@@ -1,19 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// The privacy indicator colours: the iPhone's green while a camera is on and orange
-/// while only a microphone is, macOS's purple while the screen or the Mac's sound is
-/// being recorded, and the system blue of the location arrow.
-let privacyGreen = Color(red: 0x30 / 255, green: 0xD1 / 255, blue: 0x58 / 255)
-let privacyOrange = Color(red: 0xFF / 255, green: 0x9F / 255, blue: 0x0A / 255)
-let privacyPurple = Color(red: 0xBF / 255, green: 0x5A / 255, blue: 0xF2 / 255)
-let privacyBlue = Color(red: 0x0A / 255, green: 0x84 / 255, blue: 0xFF / 255)
-
 extension PrivacyUsage {
     /// The camera and microphone dot's colour, or `nil` when neither is in use.
-    var dotTint: Color? {
-        if camera.inUse { return privacyGreen }
-        return microphone.inUse ? privacyOrange : nil
+    var dotHue: SystemHue? {
+        if camera.inUse { return .camera }
+        return microphone.inUse ? .microphone : nil
     }
 
     /// Whether the purple dot is lit: the screen, or the Mac's sound, recorded by an
@@ -52,13 +44,16 @@ extension PrivacyMonitor.Sensor {
         }
     }
 
-    /// The colour of the mark this sensor lights.
-    var tint: Color {
+    /// The colour of the mark this sensor lights: the iPhone's green while a camera is
+    /// on and orange while only a microphone is, macOS's purple while the screen or the
+    /// Mac's sound is being recorded, and the system blue of the location arrow. They
+    /// mean something, so they never take the accent.
+    var hue: SystemHue {
         switch self {
-        case .camera: privacyGreen
-        case .microphone: privacyOrange
-        case .screen, .systemAudio: privacyPurple
-        case .location: privacyBlue
+        case .camera: .camera
+        case .microphone: .microphone
+        case .screen, .systemAudio: .capture
+        case .location: .location
         }
     }
 }
@@ -84,18 +79,19 @@ struct PrivacyAppIcon: View {
     }
 }
 
-/// A sensor's symbol on a tinted disc, matching `RoundButton`.
+/// A sensor's symbol on a tinted disc, matching `RoundButton`. The disc lies on
+/// `backdrop`: the island, or a home tile.
 struct PrivacyBadge: View {
     let symbol: String
-    let tint: Color
+    let hue: SystemHue
     var diameter: CGFloat = 30
+    var backdrop: IslandBackdrop = .island
 
     var body: some View {
         Image(systemName: symbol)
             .font(.system(size: diameter * 0.4, weight: .bold))
-            .foregroundStyle(tint)
             .frame(width: diameter, height: diameter)
-            .background(Circle().fill(tint.opacity(0.2)))
+            .islandWashed(.hue(hue), wash: 0.2, in: Circle(), on: backdrop)
     }
 }
 
@@ -132,13 +128,13 @@ struct PrivacyHomeTile: View {
     private func lines(_ usage: PrivacyUsage, _ sensors: [PrivacyMonitor.Sensor], full: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(sensors, id: \.self) { sensor in
-                PrivacySensorLine(sensor: sensor, use: usage[sensor], full: full)
+                PrivacySensorLine(sensor: sensor, use: usage[sensor], full: full, backdrop: .homeTile)
                     .frame(maxHeight: 22)
             }
             // Islet's own recording, beside the rest, where there is room: it explains
             // the purple dot macOS shows that Islet does not.
             if usage.soundMixer, sensors.count < 4 {
-                PrivacySoundMixerLine(full: full)
+                PrivacySoundMixerLine(full: full, backdrop: .homeTile)
                     .frame(maxHeight: 22)
             }
         }
@@ -152,7 +148,7 @@ private struct PrivacySingleSensor: View {
     let use: PrivacyUse
 
     var body: some View {
-        let tint = sensor.tint
+        let hue = sensor.hue
         let lines = [sensor.name, use.appNames ?? "In use"]
 
         VStack(alignment: .leading, spacing: 0) {
@@ -160,14 +156,14 @@ private struct PrivacySingleSensor: View {
             // the badge shrinks, so nothing spills into the neighbouring tile.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) {
-                    PrivacyBadge(symbol: sensor.symbol, tint: tint)
+                    PrivacyBadge(symbol: sensor.symbol, hue: hue, backdrop: .homeTile)
                     if let app = use.apps.first, app.bundlePath != nil {
                         PrivacyAppIcon(app: app)
                             .frame(width: 30, height: 30)
                     }
                 }
-                PrivacyBadge(symbol: sensor.symbol, tint: tint)
-                PrivacyBadge(symbol: sensor.symbol, tint: tint, diameter: 22)
+                PrivacyBadge(symbol: sensor.symbol, hue: hue, backdrop: .homeTile)
+                PrivacyBadge(symbol: sensor.symbol, hue: hue, diameter: 22, backdrop: .homeTile)
             }
             Spacer(minLength: 6)
             // One line when the tile is wide enough; otherwise the sensor over the app,
@@ -185,7 +181,7 @@ private struct PrivacySingleSensor: View {
                     .lineLimit(1)
                 }
             }
-            .foregroundStyle(tint)
+            .foregroundStyle(.islandHueText(hue, on: .homeTile))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
@@ -198,6 +194,8 @@ struct PrivacySensorLine: View {
     let sensor: PrivacyMonitor.Sensor
     let use: PrivacyUse
     let full: Bool
+    /// A home tile, or an indicator card.
+    var backdrop: IslandBackdrop = .island
 
     static let font = Font.system(size: 11, weight: .semibold)
 
@@ -205,7 +203,7 @@ struct PrivacySensorLine: View {
         HStack(spacing: 5) {
             Image(systemName: sensor.symbol)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(sensor.tint)
+                .foregroundStyle(.islandHue(sensor.hue, on: backdrop))
                 .frame(width: 16)
             // The line names the app, so its icon says nothing more to VoiceOver.
             if let app = use.apps.first, app.bundlePath != nil {
@@ -215,7 +213,7 @@ struct PrivacySensorLine: View {
             }
             Text(full ? "\(sensor.name) · \(use.appNames ?? "In use")" : use.appNames ?? sensor.name)
                 .font(Self.font)
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(.islandText(0.9, on: backdrop))
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -226,6 +224,7 @@ struct PrivacySensorLine: View {
 /// The Sound Mixer's own recording, muted: it is expected, and lights nothing.
 struct PrivacySoundMixerLine: View {
     let full: Bool
+    var backdrop: IslandBackdrop = .island
 
     var body: some View {
         HStack(spacing: 5) {
@@ -242,7 +241,7 @@ struct PrivacySoundMixerLine: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .foregroundStyle(.white.opacity(0.4))
+        .foregroundStyle(.islandGraphic(0.4, on: backdrop))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -279,12 +278,12 @@ struct PrivacyIndicatorCard: View {
             if sensors.isEmpty {
                 Text("Nothing in use now")
                     .font(PrivacySensorLine.font)
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55, on: .indicatorCard))
                     .frame(height: Self.lineHeight)
             } else {
                 ForEach(sensors, id: \.self) { sensor in
                     HStack(spacing: 8) {
-                        PrivacySensorLine(sensor: sensor, use: usage[sensor], full: true)
+                        PrivacySensorLine(sensor: sensor, use: usage[sensor], full: true, backdrop: .indicatorCard)
                         if sensor == .microphone, offersMute, let microphoneMute {
                             MicMuteButton(model: microphoneMute, height: Self.muteButtonHeight)
                         }
@@ -293,7 +292,7 @@ struct PrivacyIndicatorCard: View {
                 }
                 // It explains the purple dot macOS shows and Islet does not.
                 if usage.soundMixer {
-                    PrivacySoundMixerLine(full: true)
+                    PrivacySoundMixerLine(full: true, backdrop: .indicatorCard)
                         .frame(height: Self.lineHeight)
                 }
             }
@@ -312,7 +311,7 @@ struct PrivacyIndicatorCard: View {
 /// name (the opened island's header gives it 24 points), just the icon.
 struct PrivacyBannerLeading: View {
     let start: PrivacyMonitor.Start
-    let tint: Color
+    let hue: SystemHue
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -320,7 +319,7 @@ struct PrivacyBannerLeading: View {
                 icon
                 Text(PrivacyBannerLayout.name(of: start))
                     .font(Font(PrivacyBannerLayout.font))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: PrivacyBannerLayout.maximumNameWidth, alignment: .leading)
@@ -337,7 +336,7 @@ struct PrivacyBannerLeading: View {
             PrivacyAppIcon(app: app)
                 .frame(width: PrivacyBannerLayout.iconWidth, height: PrivacyBannerLayout.iconWidth)
         } else {
-            PrivacyBadge(symbol: start.sensor.symbol, tint: tint, diameter: PrivacyBannerLayout.iconWidth)
+            PrivacyBadge(symbol: start.sensor.symbol, hue: hue, diameter: PrivacyBannerLayout.iconWidth)
         }
     }
 }
@@ -346,7 +345,7 @@ struct PrivacyBannerLeading: View {
 /// app can be named — that the sensor is in use, in the colour of the dot.
 struct PrivacyBannerTrailing: View {
     let start: PrivacyMonitor.Start
-    let tint: Color
+    let hue: SystemHue
 
     /// Only as wide as its content: the opened island's header sets this beside the
     /// leading icon, where a view that filled its width would push the two apart.
@@ -361,7 +360,7 @@ struct PrivacyBannerTrailing: View {
                 .font(Font(PrivacyBannerLayout.font))
                 .lineLimit(1)
         }
-        .foregroundStyle(tint)
+        .foregroundStyle(.islandHueText(hue))
         .padding(.leading, PrivacyBannerLayout.innerInset)
         .padding(.trailing, PrivacyBannerLayout.outerInset)
     }

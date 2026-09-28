@@ -243,7 +243,10 @@ enum PersonalContent: String, CaseIterable, Hashable, Sendable {
 /// the island over.
 struct StatusIndicator: Identifiable, Equatable {
     var id: String
-    var color: Color
+    /// A colour that means something (`.hue(.camera)`), or the island's ink for a mark
+    /// that only names a state. Never the accent: a mark beside the notch in the accent
+    /// could be taken for a privacy light.
+    var color: IslandInk
     /// Lower sorts first (closest to the notch).
     var order: Int = 0
     /// An SF Symbol drawn in `color` in place of the dot, for a state that needs

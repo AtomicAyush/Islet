@@ -1,25 +1,62 @@
 import AppKit
 import SwiftUI
 
-/// The iPhone's system colours, as its Weather app uses them on black.
-enum WeatherPalette {
-    /// The tile's heading.
-    static let sky = Color(red: 100 / 255, green: 210 / 255, blue: 1)
-    /// Rain on the way.
-    static let rain = Color(red: 90 / 255, green: 200 / 255, blue: 250 / 255)
+extension FeatureTint {
+    /// The tile's heading: the iPhone's cyan, as its Weather app uses it on black.
+    static let weather = FeatureTint.colour(RGB(bytes: 100, 210, 255))
 }
 
-/// A condition's symbol in its own colours, as the iPhone's Weather draws them.
+/// The iPhone's system colours, as its Weather app uses them on black, fitted on other
+/// islands.
+enum WeatherPalette {
+    /// Rain on the way: a colour that says what the weather is doing, so it is never
+    /// the accent, only fitted, as words, where it would not read.
+    static let rain = RGB(bytes: 90, 200, 250)
+
+    /// Rain's words, measured against what they lie on.
+    static func rainText(on backdrop: IslandBackdrop = .island) -> IslandStyle {
+        .islandFitted(rain, minimum: Contrast.text, on: backdrop)
+    }
+}
+
+/// A condition's symbol in its own colours, as the iPhone's Weather draws them, on a
+/// dark island; in the feature's colour on a light one (`WeatherSymbolColours`).
 struct WeatherSymbol: View {
     let name: String
     var size: CGFloat
 
     var body: some View {
         Image(systemName: name)
-            .symbolRenderingMode(.multicolor)
+            .modifier(WeatherSymbolColours(plain: .islandPrimary, backdrop: .homeTile))
             .font(.system(size: size, weight: .medium))
-            .foregroundStyle(.white)
             .accessibilityHidden(true)
+    }
+}
+
+/// A weather symbol's colours: Apple's own on a dark island, with its plain layers in
+/// `plain`. Their clouds are white whatever the island, so on a light one, where they
+/// would all but vanish, the symbol is drawn in the feature's colour instead, every
+/// layer in it.
+struct WeatherSymbolColours: ViewModifier {
+    var plain: IslandStyle?
+    var backdrop: IslandBackdrop = .island
+    @Environment(\.islandTheme) private var theme
+
+    func body(content: Content) -> some View {
+        if theme.isLight {
+            // Every layer in the one fitted colour: hierarchical rendering would draw the
+            // rain's drops and a sun behind a cloud in a lighter tint of it, well under
+            // 3:1 on a light island, and the drops are what a rain warning is about.
+            content
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(.islandAccent(.weather, on: backdrop))
+        } else if let plain {
+            content
+                .symbolRenderingMode(.multicolor)
+                .foregroundStyle(plain)
+        } else {
+            content.symbolRenderingMode(.multicolor)
+        }
     }
 }
 
@@ -66,7 +103,7 @@ struct WeatherBannerLeading: View {
                 symbol
                 Text(fall.word)
                     .font(Font(WeatherBannerLayout.font))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
             }
             .padding(.leading, WeatherBannerLayout.outerInset)
@@ -80,7 +117,7 @@ struct WeatherBannerLeading: View {
         Image(systemName: fall.symbol)
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .symbolRenderingMode(.multicolor)
+            .modifier(WeatherSymbolColours())
             .fontWeight(.semibold)
             .frame(width: WeatherBannerLayout.symbolSize.width, height: WeatherBannerLayout.symbolSize.height)
             .accessibilityHidden(true)
@@ -111,14 +148,14 @@ struct WeatherBannerTrailing: View {
                         .fixedSize()
                         .modifier(Insets())
                     Text(WeatherRainWords.soonShort(minutes))
-                        .foregroundStyle(WeatherPalette.rain)
+                        .foregroundStyle(WeatherPalette.rainText())
                         .truncationMode(.tail)
                         .modifier(Insets())
                 }
             } else {
                 let when = WeatherRainWords.soon(minutes)
                 Text(when)
-                    .foregroundStyle(WeatherPalette.rain)
+                    .foregroundStyle(WeatherPalette.rainText())
                     .frame(width: WeatherBannerLayout.textWidth(when), alignment: .trailing)
                     .modifier(Insets())
             }
@@ -129,9 +166,9 @@ struct WeatherBannerTrailing: View {
         .accessibilityLabel("\(fall.word) \(WeatherRainWords.soon(minutes))")
     }
 
-    /// The word in white, then when in rain's blue.
+    /// The word in the island's ink, then when in rain's blue.
     private func warning(_ when: String) -> Text {
-        Text("\(Text(fall.word).foregroundStyle(.white)) \(Text(when).foregroundStyle(WeatherPalette.rain))")
+        Text("\(Text(fall.word).foregroundStyle(.islandPrimary)) \(Text(when).foregroundStyle(WeatherPalette.rainText()))")
     }
 
     private struct Insets: ViewModifier {
@@ -219,7 +256,7 @@ private struct WeatherHeading: View {
             Text(title).lineLimit(1)
         }
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(WeatherPalette.sky)
+        .foregroundStyle(.islandAccentText(.weather, on: .homeTile))
     }
 }
 
@@ -239,7 +276,7 @@ struct WeatherForecastTile: View {
                 Text(scale.text(forecast.current.temperature))
                     .font(.system(size: 28, weight: .medium, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandText(1, on: .homeTile))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Spacer(minLength: 0)
@@ -253,7 +290,7 @@ struct WeatherForecastTile: View {
                 Text("H:\(scale.text(day.high))  L:\(scale.text(day.low))")
                     .font(.system(size: 11, weight: .medium))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55, on: .homeTile))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
@@ -269,17 +306,17 @@ struct WeatherForecastTile: View {
     private func footer(_ condition: WeatherCondition) -> some View {
         if now.timeIntervalSince(forecast.fetched) >= WeatherModel.staleAfter {
             Text("As of \(Self.age(forecast.fetched, now: now))")
-                .foregroundStyle(.white.opacity(0.4))
+                .foregroundStyle(.islandText(0.4, on: .homeTile))
         } else if case .starting(let start, let fall) = forecast.rainOutlook(at: now) {
             ViewThatFits(in: .horizontal) {
                 ForEach(WeatherRainWords.tile(fall, start: start, from: now), id: \.self) { words in
                     Text(words)
                 }
             }
-            .foregroundStyle(WeatherPalette.rain)
+            .foregroundStyle(WeatherPalette.rainText(on: .homeTile))
         } else {
             Text(condition.name)
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55, on: .homeTile))
                 .minimumScaleFactor(0.8)
         }
     }
@@ -296,6 +333,11 @@ struct WeatherForecastTile: View {
 /// The tile before there is a forecast to show: what is missing, and a button to do
 /// something about it where there is something to do.
 private struct WeatherPrompt: View {
+    /// The button's capsule, a shade of the ink over the tile; its word is measured
+    /// against the two together.
+    static let buttonWash = 0.12
+    static let button = IslandBackdrop.homeTile.stacked(buttonWash)
+
     let title: String
     var symbol: String? = "cloud.sun.fill"
     let message: String
@@ -307,16 +349,16 @@ private struct WeatherPrompt: View {
             WeatherHeading(title: title, symbol: symbol)
             Text(message)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(.islandText(0.8, on: .homeTile))
                 .fixedSize(horizontal: false, vertical: true)
             if let action {
                 Button(action: perform) {
                     Text(action)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandText(1, on: WeatherPrompt.button))
                         .padding(.horizontal, 12)
                         .frame(height: 24)
-                        .background(Capsule().fill(Color.white.opacity(0.12)))
+                        .background(Capsule().fill(.islandSurface(WeatherPrompt.buttonWash, on: .homeTile)))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)

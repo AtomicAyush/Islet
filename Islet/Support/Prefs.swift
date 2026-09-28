@@ -76,6 +76,10 @@ enum Prefs {
         static let openFromNotchInFullScreen = "openFromNotchInFullScreen"
         static let showMenuBarIcon = "showMenuBarIcon"
         static let idlePillOnPlainDisplays = "idlePillOnPlainDisplays"
+        /// The island's colour as "#RRGGBB".
+        static let islandColour = "islandColour"
+        /// Appearance › Accent: "feature", "mono" or "#RRGGBB".
+        static let accentColour = "accentColour"
 
         static func featureEnabled(_ id: String) -> String { "feature.\(id).enabled" }
     }
@@ -93,6 +97,8 @@ enum Prefs {
             Key.openFromNotchInFullScreen: true,
             Key.showMenuBarIcon: true,
             Key.idlePillOnPlainDisplays: false,
+            Key.islandColour: IslandTheme.standardIslandPref,
+            Key.accentColour: IslandTheme.standardAccentPref,
         ]
         for feature in features {
             defaults[Key.featureEnabled(feature.id)] = feature.enabledByDefault
@@ -118,6 +124,15 @@ enum Prefs {
 
     static var bubblePlacement: BubblePlacement {
         BubblePlacement(rawValue: store.string(forKey: Key.bubblePlacement) ?? "") ?? .bothSides
+    }
+
+    /// The island's colours, for AppKit code outside a SwiftUI body. Views read
+    /// `\.islandTheme` from the environment instead.
+    static var islandTheme: IslandTheme {
+        IslandTheme.cached(
+            islandPref: store.string(forKey: Key.islandColour) ?? IslandTheme.standardIslandPref,
+            accentPref: store.string(forKey: Key.accentColour) ?? IslandTheme.standardAccentPref
+        )
     }
 
     static var displays: DisplayChoice {

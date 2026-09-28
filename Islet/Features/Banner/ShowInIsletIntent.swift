@@ -58,9 +58,11 @@ struct ShowInIsletIntent: AppIntent {
     @MainActor static var target: () -> BannerFeature? = { FeatureRegistry.shared.feature(BannerFeature.self) }
 
     /// The banner the fields describe, checked as a URL's parameters are. `nil` when the
-    /// title is only white space.
+    /// title is only white space. Default, the one colour without a hue of its own, is no
+    /// colour, as a URL without a tint, not the white a URL can ask for.
     var banner: CustomBanner? {
-        CustomBanner(title: title, subtitle: subtitle, symbol: symbol, tint: colour.tint, duration: duration, style: style)
+        CustomBanner(title: title, subtitle: subtitle, symbol: symbol, tint: colour.hue == nil ? nil : colour.tint,
+                     duration: duration, style: style)
     }
 
     @MainActor
@@ -105,7 +107,9 @@ enum ShowInIsletError: Error, CustomLocalizedStringResourceConvertible {
 extension BannerColour: AppEnum {
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Colour"
     static let caseDisplayRepresentations: [BannerColour: DisplayRepresentation] = [
-        .white: "White",
+        // No colour of its own: the island's ink under Feature colours, otherwise the
+        // accent, as a banner without a tint.
+        .white: "Default",
         .red: "Red",
         .orange: "Orange",
         .yellow: "Yellow",

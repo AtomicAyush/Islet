@@ -1,25 +1,32 @@
 import AppKit
 import SwiftUI
 
-/// The iPhone's system colours in their dark appearance, as its Batteries widget uses
-/// them: green, orange from 20%, red from 10%.
-enum InputDevicePalette {
-    static let green = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-    static let orange = Color(red: 255 / 255, green: 159 / 255, blue: 10 / 255)
-    static let red = Color(red: 255 / 255, green: 69 / 255, blue: 58 / 255)
+extension FeatureTint {
+    /// A keyboard's, mouse's or trackpad's level when it is fine: the iPhone's green, as
+    /// its Batteries widget draws it.
+    static let inputDeviceLevel = FeatureTint.colour(RGB(bytes: 48, 209, 88))
+}
 
+/// The iPhone's Batteries widget's colours: green, orange from 20%, red from 10%.
+enum InputDevicePalette {
     /// The level's colour. On its cable a device is green whatever its level, as the
-    /// iPhone's battery turns green on the charger.
-    static func tint(for device: InputDevice) -> Color {
-        if device.isOnPower { return green }
-        if device.level <= 10 { return red }
-        if device.level <= 20 { return orange }
-        return green
+    /// iPhone's battery turns green on the charger. Charging, a warning and a low
+    /// battery never take the accent; a level that is fine is the feature's own colour.
+    /// With `minimum: Contrast.text` it is the level's words.
+    static func tint(
+        for device: InputDevice, in theme: IslandTheme, minimum: Double = Contrast.graphic,
+        on backdrop: IslandBackdrop = .island
+    ) -> IslandInk {
+        if device.isOnPower { return .hue(.charging, minimum: minimum, on: backdrop) }
+        if device.level <= 10 { return .hue(.lowBattery, minimum: minimum, on: backdrop) }
+        if device.level <= 20 { return .hue(.warning, minimum: minimum, on: backdrop) }
+        return theme.restingLevel(.inputDeviceLevel, minimum: minimum, on: backdrop)
     }
 
-    /// The level as words are drawn: white, unless it is low.
-    static func text(for device: InputDevice) -> Color {
-        device.isOnPower || device.level > 20 ? .white : tint(for: device)
+    /// The level as words are drawn: the island's ink, unless it is low.
+    static func text(for device: InputDevice, in theme: IslandTheme, on backdrop: IslandBackdrop = .island) -> IslandInk {
+        device.isOnPower || device.level > 20
+            ? .text(1, on: backdrop) : tint(for: device, in: theme, minimum: Contrast.text, on: backdrop)
     }
 }
 
@@ -55,7 +62,7 @@ struct InputDeviceLowLeading: View {
                 glyph
                 Text(device.shortName)
                     .font(Font(InputDeviceBannerLayout.font))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: InputDeviceBannerLayout.maximumNameWidth, alignment: .leading)
@@ -76,7 +83,7 @@ struct InputDeviceLowLeading: View {
             width: InputDeviceBannerLayout.glyphWidth(for: device.symbol),
             height: InputDeviceBannerLayout.glyphSize.height
         )
-        .foregroundStyle(.white)
+        .foregroundStyle(.islandGraphic())
     }
 }
 
@@ -84,14 +91,15 @@ struct InputDeviceLowLeading: View {
 /// the wing's outer edge. Only as wide as its content, for the opened island's header.
 struct InputDeviceLowTrailing: View {
     let device: InputDevice
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
-        let tint = InputDevicePalette.tint(for: device)
+        let tint = InputDevicePalette.tint(for: device, in: theme)
         HStack(spacing: InputDeviceBannerLayout.valueSpacing) {
             Text("\(device.level)%")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(tint)
+                .foregroundStyle(.island(InputDevicePalette.tint(for: device, in: theme, minimum: Contrast.text)))
                 .lineLimit(1)
                 .contentTransition(.numericText(value: Double(device.level)))
             BatteryGlyph(level: device.level, tint: tint)
@@ -156,12 +164,13 @@ enum InputDeviceBannerLayout {
 /// its name, and its battery. A device that connects low says so in the card.
 struct InputDeviceConnectedCard: View {
     let device: InputDevice
+    @Environment(\.islandTheme) private var theme
     @State private var hasAppeared = false
 
     var body: some View {
         HStack(spacing: 12) {
             InputDeviceGlyph(symbol: device.symbol, width: 44, height: 32, weight: .regular)
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandGraphic())
                 .frame(width: 46)
                 .scaleEffect(hasAppeared ? 1 : 0.7)
                 .opacity(hasAppeared ? 1 : 0)
@@ -169,12 +178,12 @@ struct InputDeviceConnectedCard: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(device.name)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 Text(status)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(statusColor)
+                    .foregroundStyle(.island(statusColor))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -193,8 +202,9 @@ struct InputDeviceConnectedCard: View {
         return "Connected"
     }
 
-    private var statusColor: Color {
-        device.isOnPower || device.level > 20 ? .white.opacity(0.55) : InputDevicePalette.tint(for: device)
+    private var statusColor: IslandInk {
+        device.isOnPower || device.level > 20
+            ? .text(0.55) : InputDevicePalette.tint(for: device, in: theme, minimum: Contrast.text)
     }
 }
 
@@ -203,9 +213,10 @@ struct InputDeviceConnectedCard: View {
 struct InputDeviceBatteryRing: View {
     let device: InputDevice
     let diameter: CGFloat
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
-        let tint = InputDevicePalette.tint(for: device)
+        let tint = IslandStyle(ink: InputDevicePalette.tint(for: device, in: theme))
         ZStack {
             Circle()
                 .stroke(tint.opacity(0.25), lineWidth: lineWidth)
@@ -216,7 +227,7 @@ struct InputDeviceBatteryRing: View {
             Text("\(device.level)")
                 .font(.system(size: diameter * 0.34, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandPrimary)
         }
         .frame(width: diameter, height: diameter)
         .animation(.easeOut(duration: 0.4), value: device.level)
@@ -235,6 +246,7 @@ struct InputDeviceBatteryRing: View {
 /// and by picture alone where it is not.
 struct InputDevicesHomeTile: View {
     let model: InputDevicesModel
+    @Environment(\.islandTheme) private var theme
 
     /// As many rows as the tile holds, with a line under them for the rest.
     static let maximumRows = 3
@@ -266,27 +278,27 @@ struct InputDevicesHomeTile: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 InputDeviceGlyph(symbol: device.symbol, width: 24, height: 20)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandGraphic(1, on: .homeTile))
                 VStack(alignment: .leading, spacing: 0) {
                     Text(device.shortName)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandText(1, on: .homeTile))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     Text(device.isOnPower ? "Charging" : "Connected")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55, on: .homeTile))
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
             HStack(spacing: 7) {
-                BatteryGlyph(level: device.level, tint: InputDevicePalette.tint(for: device), showsBolt: device.isOnPower)
+                BatteryGlyph(level: device.level, tint: InputDevicePalette.tint(for: device, in: theme, on: .homeTile), showsBolt: device.isOnPower)
                     .frame(width: 30, height: 14)
                 Text("\(device.level)%")
                     .font(.system(size: 24, weight: .medium, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(InputDevicePalette.text(for: device))
+                    .foregroundStyle(.island(InputDevicePalette.text(for: device, in: theme, on: .homeTile)))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .contentTransition(.numericText(value: Double(device.level)))
@@ -308,7 +320,7 @@ struct InputDevicesHomeTile: View {
             if more > 0 {
                 Text("+\(more) more")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(.islandText(0.45, on: .homeTile))
                     .lineLimit(1)
             }
         }
@@ -321,11 +333,11 @@ struct InputDevicesHomeTile: View {
             ForEach(devices) { device in
                 HStack(spacing: 0) {
                     InputDeviceGlyph(symbol: device.symbol, width: 20, height: 16)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandGraphic(1, on: .homeTile))
                     if showsNames {
                         Text(device.shortName)
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.8))
+                            .foregroundStyle(.islandText(0.8, on: .homeTile))
                             .lineLimit(1)
                             .fixedSize()
                             .padding(.leading, 6)
@@ -333,19 +345,19 @@ struct InputDevicesHomeTile: View {
                         if device.isOnPower {
                             Image(systemName: "bolt.fill")
                                 .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(InputDevicePalette.green)
+                                .foregroundStyle(.islandHue(.charging, on: .homeTile))
                                 .padding(.trailing, 1)
                         }
                     } else {
                         Spacer(minLength: 6)
-                        BatteryGlyph(level: device.level, tint: InputDevicePalette.tint(for: device), showsBolt: device.isOnPower)
+                        BatteryGlyph(level: device.level, tint: InputDevicePalette.tint(for: device, in: theme, on: .homeTile), showsBolt: device.isOnPower)
                             .frame(width: 22, height: 10)
                             .padding(.trailing, 6)
                     }
                     Text("\(device.level)%")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(InputDevicePalette.text(for: device))
+                        .foregroundStyle(.island(InputDevicePalette.text(for: device, in: theme, on: .homeTile)))
                         .lineLimit(1)
                         .fixedSize()
                         .frame(minWidth: 31, alignment: .trailing)

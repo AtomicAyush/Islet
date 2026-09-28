@@ -1,12 +1,18 @@
 import AppKit
 import SwiftUI
 
+extension FeatureTint {
+    /// The feature's label and symbol: the iPhone's purple in its dark appearance.
+    static let hiddenMenuBarIcons = FeatureTint.colour(RGB(bytes: 191, 90, 242))
+}
+
 enum HiddenMenuBarIconsPalette {
-    /// The iPhone's purple in its dark appearance: the feature's label and symbol.
-    static let accent = Color(red: 191 / 255, green: 90 / 255, blue: 242 / 255)
-    /// An icon that would not open, and the request for Accessibility.
-    static let problem = Color(red: 255 / 255, green: 159 / 255, blue: 10 / 255)
-    static let secondary = Color.white.opacity(0.5)
+    /// An icon that would not open, and the request for Accessibility: a warning, so
+    /// never the accent.
+    static let problem = SystemHue.warning
+    /// The shade of the ink behind a symbol's plate, a "+3" cell and a capsule button.
+    static let plate = 0.14
+    static let chip = 0.12
 }
 
 enum HiddenMenuBarIconsLayout {
@@ -77,6 +83,8 @@ enum HiddenMenuBarIconsLayout {
 struct MenuBarIconGlyph: View {
     let glyph: HiddenMenuBarIcon.Glyph
     let size: CGFloat
+    /// What the icon lies on: a home tile, or the island itself.
+    var backdrop: IslandBackdrop = .island
 
     var body: some View {
         Group {
@@ -87,12 +95,13 @@ struct MenuBarIconGlyph: View {
                         .resizable()
                         .interpolation(.high)
                 } else {
-                    plate(symbol: SystemMenuExtras.fallbackSymbol, fill: .white.opacity(0.14))
+                    plate(symbol: SystemMenuExtras.fallbackSymbol)
                 }
             case .symbol(let symbol):
-                plate(symbol: symbol, fill: .white.opacity(0.14))
+                plate(symbol: symbol)
             case .sample(let symbol, let hue):
-                plate(symbol: symbol, fill: Color(hue: hue, saturation: 0.62, brightness: 0.85), gloss: true)
+                // A made-up app's own icon: its colours are the app's, on any island.
+                plate(symbol: symbol, fill: AnyShapeStyle(Color(hue: hue, saturation: 0.62, brightness: 0.85)), gloss: true)
             }
         }
         .frame(width: size, height: size)
@@ -101,12 +110,14 @@ struct MenuBarIconGlyph: View {
 
     /// A symbol on a rounded square, inset a little as an app icon's artwork is inset
     /// within its frame, so the two sit side by side at one size.
-    private func plate(symbol: String, fill: Color, gloss: Bool = false) -> some View {
+    /// Without a fill of its own, the plate is a shade of the ink, with the symbol in
+    /// the ink measured against it.
+    private func plate(symbol: String, fill: AnyShapeStyle? = nil, gloss: Bool = false) -> some View {
         let inset = size * 0.08
         let side = size - 2 * inset
         let shape = RoundedRectangle(cornerRadius: side * 0.26, style: .continuous)
         return ZStack {
-            shape.fill(fill)
+            shape.fill(fill ?? AnyShapeStyle(.islandSurface(HiddenMenuBarIconsPalette.plate, on: backdrop)))
             if gloss {
                 shape.fill(LinearGradient(
                     colors: [.white.opacity(0.16), .white.opacity(0)], startPoint: .top, endPoint: .bottom
@@ -116,7 +127,9 @@ struct MenuBarIconGlyph: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .fontWeight(.semibold)
-                .foregroundStyle(.white.opacity(gloss ? 1 : 0.9))
+                .foregroundStyle(gloss
+                    ? AnyShapeStyle(Color.white)
+                    : AnyShapeStyle(.islandGraphic(0.9, on: backdrop.stacked(HiddenMenuBarIconsPalette.plate))))
                 .frame(width: side * 0.56, height: side * 0.5)
         }
         .frame(width: side, height: side)
@@ -183,7 +196,7 @@ struct HiddenMenuBarIconsTile: View {
                 Group {
                     if let name {
                         Text(name)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.islandText(1, on: .homeTile))
                     } else {
                         // The tile's width depends on how many other tiles are up; the
                         // symbol goes first, then half the title.
@@ -193,7 +206,7 @@ struct HiddenMenuBarIconsTile: View {
                             Text(shortTitle)
                             Image(systemName: symbol)
                         }
-                        .foregroundStyle(HiddenMenuBarIconsPalette.accent)
+                        .foregroundStyle(.islandAccentText(.hiddenMenuBarIcons, on: .homeTile))
                     }
                 }
                 .font(.system(size: 11, weight: .semibold))
@@ -203,15 +216,15 @@ struct HiddenMenuBarIconsTile: View {
                     Text("\(count)")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55, on: .homeTile))
                         .contentTransition(.numericText())
                 }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandGraphic(0.55, on: IslandBackdrop.homeTile.stacked(HiddenMenuBarIconsPalette.chip)))
                     .frame(width: 18, height: 16)
-                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .background(Capsule().fill(.islandSurface(HiddenMenuBarIconsPalette.chip, on: .homeTile)))
             }
             .contentShape(Rectangle())
         }
@@ -237,11 +250,11 @@ struct HiddenMenuBarIconsTile: View {
                     Text("+\(cells.more)")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(.islandText(0.8, on: IslandBackdrop.homeTile.stacked(HiddenMenuBarIconsPalette.chip)))
                         .frame(width: layout.tileIcon, height: layout.tileIcon)
                         .background(
                             RoundedRectangle(cornerRadius: layout.tileIcon * 0.26, style: .continuous)
-                                .fill(Color.white.opacity(0.12))
+                                .fill(.islandSurface(HiddenMenuBarIconsPalette.chip, on: .homeTile))
                         )
                         .contentShape(Rectangle())
                 }
@@ -258,7 +271,7 @@ struct HiddenMenuBarIconsTile: View {
         return Button {
             model.press(icon)
         } label: {
-            MenuBarIconGlyph(glyph: icon.glyph, size: HiddenMenuBarIconsLayout.tileIcon)
+            MenuBarIconGlyph(glyph: icon.glyph, size: HiddenMenuBarIconsLayout.tileIcon, backdrop: .homeTile)
                 .opacity(icon.isEnabled ? 1 : 0.4)
                 .scaleEffect(isHovered && icon.isEnabled ? 1.08 : 1)
                 .animation(.islandHover, value: isHovered)
@@ -307,7 +320,7 @@ struct HiddenMenuBarIconsPage: View {
             } else if icons.isEmpty {
                 Text(model.hasLooked || model.sample != nil ? "Every menu bar icon is in sight." : "Looking…")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(.islandText(0.4))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(.vertical) {
@@ -315,7 +328,7 @@ struct HiddenMenuBarIconsPage: View {
                         cells(hidden)
                         if !hidden.isEmpty, !inSight.isEmpty {
                             Rectangle()
-                                .fill(Color.white.opacity(0.1))
+                                .fill(.islandDecorative(0.1))
                                 .frame(height: 1)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, (HiddenMenuBarIconsLayout.pageDivider - 1) / 2)
@@ -355,12 +368,12 @@ struct HiddenMenuBarIconsPage: View {
                 systemImage: isHiddenList ? "menubar.arrow.up.rectangle" : "menubar.rectangle"
             )
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(HiddenMenuBarIconsPalette.accent)
+                .foregroundStyle(.islandAccentText(.hiddenMenuBarIcons))
             if count > 0 {
                 Text("\(count)")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
                     .contentTransition(.numericText())
             }
             Spacer(minLength: 4)
@@ -404,7 +417,7 @@ private struct HiddenMenuBarPageCell: View {
                 MenuBarIconGlyph(glyph: icon.glyph, size: HiddenMenuBarIconsLayout.pageIcon)
                 Text(icon.name)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(icon.isHidden ? 1 : 0.7))
+                    .foregroundStyle(.islandText(icon.isHidden ? 1 : 0.7))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -414,7 +427,7 @@ private struct HiddenMenuBarPageCell: View {
             .frame(height: HiddenMenuBarIconsLayout.pageCellHeight)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color.white.opacity(isHovered && icon.isEnabled ? 0.09 : 0))
+                    .fill(.islandDecorative(isHovered && icon.isEnabled ? 0.09 : 0))
             )
             .contentShape(Rectangle())
         }
@@ -439,16 +452,19 @@ private struct HiddenMenuBarAccessNotice: View {
     private static let explanation =
         "Islet needs \(AccessibilityAccess.paneName) to see which icons the menu bar hides, and to open them."
 
+    /// On the home tile, or on the page, which is the island itself.
+    private var backdrop: IslandBackdrop { compact ? .homeTile : .island }
+
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 6 : 8) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "hand.raised.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(HiddenMenuBarIconsPalette.problem)
+                    .foregroundStyle(.islandHue(HiddenMenuBarIconsPalette.problem, on: backdrop))
                     .accessibilityHidden(true)
                 Text(compact ? "Needs permission." : Self.explanation)
                     .font(.system(size: compact ? 10.5 : 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(.islandText(0.7, on: backdrop))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(Self.explanation)
@@ -461,10 +477,10 @@ private struct HiddenMenuBarAccessNotice: View {
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                     .padding(.horizontal, 12)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandText(1, on: backdrop.stacked(HiddenMenuBarIconsPalette.chip)))
                     .frame(maxWidth: compact ? .infinity : nil)
                     .frame(height: 24)
-                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .background(Capsule().fill(.islandSurface(HiddenMenuBarIconsPalette.chip, on: backdrop)))
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -488,7 +504,7 @@ struct HiddenMenuBarFailureLeading: View {
                 glyph
                 Text(icon.name)
                     .font(Font(HiddenMenuBarBannerLayout.font))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: HiddenMenuBarBannerLayout.maximumNameWidth, alignment: .leading)
@@ -512,7 +528,7 @@ struct HiddenMenuBarFailureTrailing: View {
     var body: some View {
         Text(HiddenMenuBarBannerLayout.status)
             .font(Font(HiddenMenuBarBannerLayout.font))
-            .foregroundStyle(HiddenMenuBarIconsPalette.problem)
+            .foregroundStyle(.islandHueText(HiddenMenuBarIconsPalette.problem))
             .lineLimit(1)
             .fixedSize()
             .padding(.leading, HiddenMenuBarBannerLayout.innerInset)

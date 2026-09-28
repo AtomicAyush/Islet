@@ -17,7 +17,7 @@ extension CalendarEvent {
         minutes: Double,
         allDay: Bool = false,
         location: String? = nil,
-        color: Color,
+        color: RGB,
         meeting: String? = nil
     ) -> CalendarEvent {
         CalendarEvent(

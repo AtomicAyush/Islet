@@ -11,17 +11,20 @@ struct NowPlayingOutputButton: View {
     let isSelected: Bool
     let action: () -> Void
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     static let diameter: CGFloat = 26
 
     var body: some View {
+        let disc = isHovering ? 0.18 : 0.11
+        let fill = theme.nowPlayingFill
         Button(action: action) {
             Image(systemName: outputs.buttonSymbol)
                 .font(.system(size: 11.5, weight: .bold))
-                .foregroundStyle(isSelected ? Color.black : .white.opacity(isHovering ? 1 : 0.85))
+                .foregroundStyle(isSelected ? .islandOnFill(fill) : .islandGraphic(isHovering ? 1 : 0.85, on: .surface(disc)))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: Self.diameter, height: Self.diameter)
-                .background(Circle().fill(isSelected ? Color.white : .white.opacity(isHovering ? 0.18 : 0.11)))
+                .background(Circle().fill(isSelected ? .islandFill(fill) : .islandSurface(disc)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -199,6 +202,7 @@ private struct OutputRow: View {
     let action: () -> Void
     @State private var isHovering = false
     @AppStorage(NowPlayingPrefs.tintWaveform) private var tinted = NowPlayingPrefs.tintWaveformDefault
+    @Environment(\.islandTheme) private var theme
 
     static let height: CGFloat = 38
 
@@ -209,7 +213,7 @@ private struct OutputRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(device.name)
                         .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandText(1, on: .panelRow))
                     if let battery, !battery.isEmpty {
                         OutputBatteryLine(battery: battery)
                     }
@@ -223,7 +227,7 @@ private struct OutputRow: View {
                 } else if isCurrent {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(model.tint(tinted))
+                        .foregroundStyle(.island(model.tint(tinted, in: theme).on(.panelRow)))
                         .accessibilityLabel("Current output")
                 }
             }
@@ -231,7 +235,7 @@ private struct OutputRow: View {
             .frame(height: OutputRow.height)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.white.opacity(isHovering && !isCurrent ? 0.08 : 0))
+                    .fill(.islandSurface(isHovering && !isCurrent ? 0.08 : 0))
             )
             .contentShape(Rectangle())
         }
@@ -254,23 +258,23 @@ private struct AirPlayRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("AirPlay receivers")
                         .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandText(1, on: .panelRow))
                     Text("Choose one in Sound Settings")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55, on: .panelRow))
                 }
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "arrow.up.forward")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandGraphic(0.55, on: .panelRow))
             }
             .padding(.horizontal, 8)
             .frame(height: OutputRow.height)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.white.opacity(isHovering ? 0.08 : 0))
+                    .fill(.islandSurface(isHovering ? 0.08 : 0))
             )
             .contentShape(Rectangle())
         }
@@ -280,17 +284,23 @@ private struct AirPlayRow: View {
     }
 }
 
-/// An output's picture on a disc, the size of the library's artwork: white on grey,
-/// or black on white for the one in use, as the Sound menu lights it.
+/// An output's picture on a disc, the size of the library's artwork: the island's ink
+/// on a shade of it, or lit in Now Playing's highlight for the one in use, as the
+/// Sound menu lights it (white on grey, and black on white, on the black island).
 private struct OutputIcon: View {
     let symbol: String
     let isLit: Bool
+    @Environment(\.islandTheme) private var theme
+
+    /// The unlit disc: opaque, as the Sound menu's are.
+    private static let disc = IslandBackdrop.surface(0.2)
 
     var body: some View {
+        let fill = theme.nowPlayingFill
         HeadsetGlyph(symbol: symbol, width: 16, height: 14, weight: .semibold)
-            .foregroundStyle(isLit ? Color.black : .white.opacity(0.85))
+            .foregroundStyle(isLit ? .islandOnFill(fill) : .islandGraphic(0.85, on: Self.disc))
             .frame(width: 30, height: 30)
-            .background(Circle().fill(isLit ? Color.white : Color(white: 0.2)))
+            .background(Circle().fill(isLit ? AnyShapeStyle(.islandFill(fill)) : AnyShapeStyle(theme.colour(of: Self.disc).color)))
             .accessibilityHidden(true)
     }
 }
@@ -305,12 +315,12 @@ private struct OutputBatteryLine: View {
             ForEach(battery.readings) { reading in
                 HStack(spacing: 3) {
                     if let label = reading.label {
-                        Text(label).foregroundStyle(.white.opacity(0.45))
+                        Text(label).foregroundStyle(.islandText(0.45, on: .panelRow))
                     } else {
-                        Image(systemName: "battery.75percent").foregroundStyle(.white.opacity(0.45))
+                        Image(systemName: "battery.75percent").foregroundStyle(.islandGraphic(0.45, on: .panelRow))
                     }
                     Text("\(reading.level)%")
-                        .foregroundStyle(reading.level <= 20 ? HeadsetPalette.red : .white.opacity(0.7))
+                        .foregroundStyle(reading.level <= 20 ? .islandHueText(.lowBattery, on: .panelRow) : .islandText(0.7, on: .panelRow))
                 }
             }
         }
@@ -340,7 +350,7 @@ private struct OutputVolumeSlider: View {
                 .frame(width: 20)
         }
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.white.opacity(0.55))
+        .foregroundStyle(.islandGraphic(0.55))
         .frame(height: 22)
         .opacity(isSettable ? 1 : 0.45)
         .animation(.smooth(duration: 0.2), value: volume)
@@ -359,8 +369,8 @@ private struct OutputVolumeSlider: View {
         return GeometryReader { geo in
             let width = max(1, geo.size.width)
             ZStack(alignment: .leading) {
-                Rectangle().fill(.white.opacity(0.2))
-                Rectangle().fill(.white).frame(width: width * min(1, max(0, level)))
+                Rectangle().fill(.islandSurface(0.2))
+                Rectangle().fill(.islandAccent(.nowPlaying, on: .track(0.2))).frame(width: width * min(1, max(0, level)))
             }
             .frame(height: thickness)
             .clipShape(Capsule())
@@ -391,9 +401,9 @@ private struct OutputFailureLine: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(HeadsetPalette.red)
+                .foregroundStyle(.islandHue(.failure))
             Text(text)
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(.islandText(0.75))
                 .lineLimit(1)
                 .truncationMode(.middle)
         }

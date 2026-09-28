@@ -1,14 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// Mic Mute's colours all mean something, so none of them takes the accent: the mic
+/// state sits beside the privacy lights.
 enum MicMutePalette {
-    /// The system red in its dark appearance, which is what the black island shows it
-    /// against: muted.
-    static let muted = Color(red: 255 / 255, green: 69 / 255, blue: 58 / 255)
+    /// Muted: the system red.
+    static let muted = SystemHue.muted
     /// Something to notice: the mute came off elsewhere, or could not go on.
-    static let warning = Color(red: 255 / 255, green: 159 / 255, blue: 10 / 255)
-    /// A microphone that cannot be muted, or none at all.
-    static let unavailable = Color.white.opacity(0.5)
+    static let warning = SystemHue.warning
+    /// A microphone that cannot be muted, or none at all: its symbol, greyed.
+    static let unavailable = IslandInk.graphic(0.5)
 }
 
 /// What the tile and the card say, worked out from the model once so the views only lay
@@ -19,9 +20,11 @@ struct MicMuteDisplay: Equatable {
     var isMuted: Bool { snapshot.isMuted }
     var canToggle: Bool { snapshot.isMuted || snapshot.microphone?.way != nil }
     var symbol: String { isMuted ? "mic.slash.fill" : "mic.fill" }
-    var tint: Color? {
-        if isMuted { return MicMutePalette.muted }
-        return canToggle ? .white : nil
+    /// The symbol's colour: red while muted, the island's ink while it can be muted,
+    /// and `nil` when it can't, when it is greyed.
+    var tint: IslandInk? {
+        if isMuted { return .hue(MicMutePalette.muted) }
+        return canToggle ? .graphic(1) : nil
     }
 
     var status: String {
@@ -30,9 +33,9 @@ struct MicMuteDisplay: Equatable {
         return microphone.way == nil ? "Can't be muted" : "On"
     }
 
-    var statusColor: Color {
-        if isMuted { return MicMutePalette.muted }
-        return .white.opacity(0.55)
+    /// The status's words, on `backdrop`.
+    func statusColor(on backdrop: IslandBackdrop) -> IslandInk {
+        isMuted ? .hue(MicMutePalette.muted, minimum: Contrast.text, on: backdrop) : .text(0.55, on: backdrop)
     }
 
     /// Which microphone, where there is one.
@@ -45,18 +48,23 @@ struct MicMuteDisplay: Equatable {
 }
 
 /// The microphone on a disc, matching `RoundButton`: red and crossed out while muted,
-/// white while on, grey where it cannot be muted.
+/// in the island's ink while on, grey where it cannot be muted.
 struct MicMuteBadge: View {
     let display: MicMuteDisplay
     var diameter: CGFloat = 30
+    /// What the disc lies on: a home tile, or an indicator card.
+    var backdrop: IslandBackdrop = .island
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
+        let colours = display.tint.map { theme.onWash($0, wash: display.isMuted ? 0.2 : 0.12, on: backdrop) }
+            ?? (mark: MicMutePalette.unavailable.on(backdrop.stacked(0.12)).color(in: theme), wash: theme.surface(0.12, on: backdrop))
         Image(systemName: display.symbol)
             .font(.system(size: diameter * 0.42, weight: .semibold))
-            .foregroundStyle(display.tint ?? MicMutePalette.unavailable)
+            .foregroundStyle(colours.mark)
             .contentTransition(.symbolEffect(.replace))
             .frame(width: diameter, height: diameter)
-            .background(Circle().fill((display.tint ?? .white).opacity(display.isMuted ? 0.2 : 0.12)))
+            .background(Circle().fill(colours.wash))
             .accessibilityHidden(true)
     }
 }
@@ -75,21 +83,21 @@ struct MicMuteHomeTile: View {
             model.perform(.toggle, from: .island)
         } label: {
             VStack(alignment: .leading, spacing: 0) {
-                MicMuteBadge(display: display)
+                MicMuteBadge(display: display, backdrop: .homeTile)
                 Spacer(minLength: 6)
                 Text("Microphone")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(display.canToggle ? .white : .white.opacity(0.8))
+                    .foregroundStyle(.islandText(display.canToggle ? 1 : 0.8, on: .homeTile))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                 Text(display.status)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(display.statusColor)
+                    .foregroundStyle(.island(display.statusColor(on: .homeTile)))
                     .lineLimit(1)
                 if let device = display.device {
                     Text(device)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(.islandText(0.4, on: .homeTile))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -119,16 +127,16 @@ struct MicMuteIndicatorCard: View {
     var body: some View {
         let display = MicMuteDisplay(snapshot: model.shown)
         HStack(spacing: 10) {
-            MicMuteBadge(display: display)
+            MicMuteBadge(display: display, backdrop: .indicatorCard)
             VStack(alignment: .leading, spacing: 1) {
                 Text(display.isMuted ? "Microphone muted" : "Microphone on")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandText(1, on: .indicatorCard))
                     .lineLimit(1)
                 if let device = display.device {
                     Text(device)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.islandText(0.55, on: .indicatorCard))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -148,20 +156,21 @@ struct MicMuteIndicatorCard: View {
 struct MicMuteButton: View {
     let model: MicMuteModel
     var height: CGFloat = 24
+    /// What the capsule lies on: both of its places are indicator cards.
+    var backdrop: IslandBackdrop = .indicatorCard
     @State private var isHovering = false
 
     var body: some View {
         let isMuted = model.shown.isMuted
-        let tint = isMuted ? MicMutePalette.muted : .white
+        let tint: IslandInk = isMuted ? .hue(MicMutePalette.muted, minimum: Contrast.text) : .text(1)
         Button {
             model.perform(isMuted ? .unmute : .mute, from: .island)
         } label: {
             Text(isMuted ? "Unmute" : "Mute")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(tint)
                 .padding(.horizontal, 10)
                 .frame(height: height)
-                .background(Capsule().fill(tint.opacity(isHovering ? 0.3 : 0.2)))
+                .islandWashed(tint, wash: isHovering ? 0.3 : 0.2, in: Capsule(), on: backdrop)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -178,28 +187,33 @@ struct MicMuteButton: View {
 /// What a banner says: the microphone left of the notch, what became of it right of it.
 struct MicMuteAnnouncement: Equatable {
     var symbol: String
-    var symbolColor: Color
+    var symbolColor: IslandInk
     var name: String
     var status: String
-    var statusColor: Color
+    var statusColor: IslandInk
     /// Not asked for, or not done: said for longer, and felt.
     var isWarning: Bool
 
     init(_ event: MicMuteEvent) {
         switch event {
         case .muted:
-            self.init("mic.slash.fill", MicMutePalette.muted, "Microphone", "Muted", MicMutePalette.muted)
+            self.init("mic.slash.fill", .hue(.muted), "Microphone", "Muted", .hue(.muted, minimum: Contrast.text))
         case .unmuted:
-            self.init("mic.fill", .white, "Microphone", "On", .white.opacity(0.9))
+            self.init("mic.fill", .graphic(1), "Microphone", "On", .text(0.9))
         case .unmutedElsewhere:
-            self.init("mic.fill", MicMutePalette.warning, "Microphone", "Unmuted", MicMutePalette.warning, isWarning: true)
+            self.init(
+                "mic.fill", .hue(.warning), "Microphone", "Unmuted", .hue(.warning, minimum: Contrast.text), isWarning: true
+            )
         case .cannotMute(let name):
-            self.init("mic.fill", MicMutePalette.warning, name ?? "Microphone", "Can't Mute", MicMutePalette.warning, isWarning: true)
+            self.init(
+                "mic.fill", .hue(.warning), name ?? "Microphone", "Can't Mute", .hue(.warning, minimum: Contrast.text),
+                isWarning: true
+            )
         }
     }
 
     private init(
-        _ symbol: String, _ symbolColor: Color, _ name: String, _ status: String, _ statusColor: Color,
+        _ symbol: String, _ symbolColor: IslandInk, _ name: String, _ status: String, _ statusColor: IslandInk,
         isWarning: Bool = false
     ) {
         self.symbol = symbol
@@ -223,7 +237,7 @@ struct MicMuteBannerLeading: View {
                 symbol
                 Text(announcement.name)
                     .font(Font(MicMuteBannerLayout.font))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: MicMuteBannerLayout.maximumNameWidth, alignment: .leading)
@@ -243,7 +257,7 @@ struct MicMuteBannerLeading: View {
             .resizable()
             .aspectRatio(contentMode: .fit)
             .fontWeight(.semibold)
-            .foregroundStyle(announcement.symbolColor)
+            .foregroundStyle(.island(announcement.symbolColor))
             .frame(width: MicMuteBannerLayout.symbolSize.width, height: MicMuteBannerLayout.symbolSize.height)
             .accessibilityHidden(true)
     }
@@ -259,7 +273,7 @@ struct MicMuteBannerTrailing: View {
     var body: some View {
         Text(announcement.status)
             .font(Font(MicMuteBannerLayout.font))
-            .foregroundStyle(announcement.statusColor)
+            .foregroundStyle(.island(announcement.statusColor))
             .lineLimit(1)
             .fixedSize()
             .padding(.leading, MicMuteBannerLayout.innerInset)

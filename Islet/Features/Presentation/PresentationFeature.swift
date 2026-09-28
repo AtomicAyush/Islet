@@ -218,7 +218,7 @@ final class PresentationFeature: Feature {
             // Closest to the notch, before a Focus. It never brings up an island that
             // would otherwise hide: while presenting, the less of it the better.
             center.setIndicator(StatusIndicator(
-                id: id, color: PresentationPalette.tint, order: -2, symbol: symbol, keepsIslandShown: false,
+                id: id, color: .hue(.presentation), order: -2, symbol: symbol, keepsIslandShown: false,
                 label: (["Presentation Mode"] + shown.reasons.map(\.text)).joined(separator: " — "),
                 detail: IndicatorDetail(id: id, title: title, maxWidth: PresentationIndicatorCard.maxWidth) { [model, weak self] in
                     AnyView(PresentationIndicatorCard(

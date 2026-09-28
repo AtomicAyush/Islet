@@ -1,10 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The iPhone's green and red in their dark appearance: done, and gone to the Trash.
-private let screenshotGreen = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-private let screenshotRed = Color(red: 255 / 255, green: 69 / 255, blue: 58 / 255)
-
 enum ScreenshotCardLayout {
     static let width: CGFloat = 400
     static let height: CGFloat = 88
@@ -61,30 +57,30 @@ struct ScreenshotCard: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Screenshot")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(.islandPrimary)
                         Text(subtitle)
                             .font(.system(size: 12, weight: .medium))
                             .monospacedDigit()
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(.islandText(0.55))
                             .lineLimit(1)
                     }
                     Spacer(minLength: 4)
-                    RoundButton(symbol: "xmark", tint: .white, diameter: 24, action: dismiss)
+                    RoundButton(symbol: "xmark", diameter: 24, action: dismiss)
                         .accessibilityLabel("Close")
                 }
 
                 HStack(spacing: 8) {
-                    button(copied ? "checkmark" : "doc.on.doc", copied ? screenshotGreen : .white, "Copy") {
+                    button(copied ? "checkmark" : "doc.on.doc", copied ? .hue(.success) : .text(1), "Copy") {
                         copied = actions.copy()
                     }
                     if let shelve = actions.shelve {
-                        button(shelved ? "checkmark" : "tray.and.arrow.down.fill", shelved ? screenshotGreen : dropZoneYellow,
+                        button(shelved ? "checkmark" : "tray.and.arrow.down.fill", shelved ? .hue(.success) : .accent(.dropZoneShelf),
                                shelved ? "On the Shelf" : "Add to Shelf") {
                             shelved = shelve()
                         }
                     }
-                    button("folder", .white, "Show in Finder", action: actions.reveal)
-                    button("trash", screenshotRed, "Move to Trash", action: actions.delete)
+                    button("folder", .text(1), "Show in Finder", action: actions.reveal)
+                    button("trash", .hue(.destructive), "Move to Trash", action: actions.delete)
                 }
             }
         }
@@ -94,7 +90,7 @@ struct ScreenshotCard: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: shelved)
     }
 
-    private func button(_ symbol: String, _ tint: Color, _ label: String, action: @escaping () -> Void) -> some View {
+    private func button(_ symbol: String, _ tint: IslandInk, _ label: String, action: @escaping () -> Void) -> some View {
         RoundButton(symbol: symbol, tint: tint, diameter: ScreenshotCardLayout.button, action: action)
         .help(label)
         .accessibilityLabel(label)
@@ -112,6 +108,7 @@ struct ScreenshotCard: View {
 struct ScreenshotThumbnail: View {
     let shot: Screenshot
     let open: () -> Void
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let size = ScreenshotCardLayout.thumbnailSize(for: shot.pixelSize ?? shot.thumbnail.size)
@@ -122,8 +119,8 @@ struct ScreenshotThumbnail: View {
             .aspectRatio(contentMode: .fill)
             .frame(width: size.width, height: size.height)
             .clipShape(shape)
-            .overlay(shape.strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
-            .shadow(color: .black.opacity(0.5), radius: 4, y: 2)
+            .overlay(shape.strokeBorder(.islandDecorative(0.22), lineWidth: 1))
+            .shadow(color: theme.shadow(0.5), radius: 4, y: 2)
             .contentShape(shape)
             .onDrag { FileDrag.provider(for: shot.url) }
             .onTapGesture(perform: open)

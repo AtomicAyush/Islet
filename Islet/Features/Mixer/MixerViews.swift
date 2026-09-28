@@ -1,7 +1,43 @@
 import SwiftUI
 
-/// The colour of a level above 100%: louder than the app plays by itself.
-private let boostOrange = Color(nsColor: .systemOrange)
+extension FeatureTint {
+    /// The levels' bars: white on the black island.
+    static let mixer = FeatureTint.neutral
+}
+
+/// The Mixer's colours that mean something, as macOS draws its system orange, red and
+/// yellow in dark mode, which is what the Mixer has always drawn on the black island.
+/// They never take the accent; on other islands they are only fitted for contrast.
+enum MixerColour {
+    /// A level past 100%: louder than the app plays by itself.
+    static let boost = RGB(bytes: 255, 146, 48)
+    /// A muted app.
+    static let muted = RGB(bytes: 255, 66, 69)
+    /// A level that could not be set, or access Islet has not been given.
+    static let caution = RGB(bytes: 255, 214, 0)
+}
+
+extension IslandTheme {
+    /// An accent so near the boost's orange that the two parts of a boosted bar would
+    /// run together: the bar up to 100% is then drawn in the island's ink instead.
+    var mixerAccentLikeBoost: Bool {
+        let source = accentSource(.mixer)
+        return source != ink && source.couldBeTaken(for: MixerColour.boost)
+    }
+
+    /// The bar up to 100%, as a style and as the colour it is drawn in, measured
+    /// against the track it lies on.
+    var mixerLevel: (style: IslandStyle, colour: RGB) {
+        let source = accentSource(.mixer)
+        if source == ink || mixerAccentLikeBoost { return (.islandGraphic(on: .mixerTrack), ink) }
+        return (.islandAccent(.mixer, on: .mixerTrack), fitted(source, on: .mixerTrack))
+    }
+}
+
+extension IslandBackdrop {
+    /// A level's track: the bar and the part past 100% lie on it.
+    static let mixerTrack = IslandBackdrop.track(0.18)
+}
 
 // MARK: - Pieces
 
@@ -23,6 +59,7 @@ struct MixerAppIcon: View {
 struct MixerIconStack: View {
     let model: MixerModel
     var size: CGFloat = 18
+    @Environment(\.islandTheme) private var theme
 
     static let limit = 3
     /// How much of an icon the next one covers.
@@ -38,7 +75,9 @@ struct MixerIconStack: View {
         HStack(spacing: -size * Self.overlap) {
             ForEach(shown, id: \.element.id) { index, app in
                 MixerAppIcon(model: model, app: app, size: size)
-                    .shadow(color: .black.opacity(0.8), radius: 1.5)
+                    // A halo of the island's own colour, parting each icon from the one
+                    // behind it.
+                    .shadow(color: theme.background.opacity(0.8), radius: 1.5)
                     .zIndex(Double(index))
                     .transition(.scale.combined(with: .opacity))
             }
@@ -54,6 +93,7 @@ struct MixerSlider: View {
     let app: MixerSource
     var thickness: CGFloat = 6
     @State private var isDragging = false
+    @Environment(\.islandTheme) private var theme
 
     /// Levels this close to 100% snap to it.
     private static let detent = 0.04
@@ -62,6 +102,7 @@ struct MixerSlider: View {
         let level = model.level(for: app)
         let muted = model.isMuted(app)
         let height = isDragging ? thickness + 3 : thickness
+        let bar = theme.mixerLevel
 
         GeometryReader { geo in
             let width = max(1, geo.size.width)
@@ -69,13 +110,13 @@ struct MixerSlider: View {
             let filled = width * CGFloat(level / MixerModel.maximum)
 
             ZStack(alignment: .leading) {
-                Rectangle().fill(.white.opacity(0.18))
+                Rectangle().fill(.islandSurface(0.18))
                 Rectangle()
-                    .fill(.white.opacity(muted ? 0.3 : 1))
+                    .fill(bar.style.dimmedLevel(muted ? 0.3 : 1, on: .mixerTrack))
                     .frame(width: min(filled, unity))
                 if filled > unity {
                     Rectangle()
-                        .fill(boostOrange.opacity(muted ? 0.3 : 1))
+                        .fill(IslandStyle.islandFitted(MixerColour.boost, on: .mixerTrack).dimmedLevel(muted ? 0.3 : 1, on: .mixerTrack))
                         .frame(width: filled - unity)
                         .offset(x: unity)
                 }
@@ -83,8 +124,9 @@ struct MixerSlider: View {
             .frame(height: height)
             .clipShape(Capsule())
             .overlay(alignment: .leading) {
+                // Over the bar, the colour that stands out on it; over the track, the ink.
                 Capsule()
-                    .fill(filled > unity ? Color.black.opacity(0.45) : Color.white.opacity(0.45))
+                    .fill(filled > unity ? .islandOnFill(bar.colour).opacity(0.45) : .islandGraphic(0.45, on: .mixerTrack))
                     .frame(width: 2, height: height + 4)
                     .offset(x: unity - 1)
             }
@@ -165,7 +207,7 @@ struct MixerCompactTrailing: View {
             if let featured = model.apps.last {
                 Text(featured.name)
                     .font(Font(Self.nameFont))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: Self.maximumNameWidth, alignment: .trailing)
@@ -175,7 +217,7 @@ struct MixerCompactTrailing: View {
             if others > 0 {
                 Text("+\(others)")
                     .font(Font(Self.nameFont))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.islandText(0.55))
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .fixedSize()
@@ -203,7 +245,7 @@ struct MixerMinimal: View {
         } else {
             Image(systemName: "speaker.wave.2.fill")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandGraphic(0.55))
         }
     }
 }
@@ -265,7 +307,7 @@ private struct MixerRow: View {
             MixerAppIcon(model: model, app: app, size: 26)
             Text(app.name)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandPrimary)
                 .lineLimit(1)
                 .frame(width: 92, alignment: .leading)
             MixerSlider(model: model, app: app)
@@ -273,7 +315,7 @@ private struct MixerRow: View {
                 .frame(width: 44, alignment: .trailing)
             RoundButton(
                 symbol: muted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                tint: muted ? Color(nsColor: .systemRed) : .white,
+                tint: muted ? .fitted(MixerColour.muted) : .text(1),
                 diameter: 28
             ) {
                 model.toggleMute(app)
@@ -287,13 +329,13 @@ private struct MixerRow: View {
         if model.failed.contains(app.id) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color(nsColor: .systemYellow))
+                .foregroundStyle(.islandFitted(MixerColour.caution))
                 .help("Islet couldn't set \(app.name)'s volume")
         } else {
             Text(muted ? "Muted" : MixerPercent.text(model.level(for: app)))
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55))
                 .lineLimit(1)
                 .fixedSize()
         }
@@ -311,7 +353,7 @@ private struct MixerNoteView: View {
                 .foregroundStyle(tint)
             Text(text)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55))
                 .lineLimit(2)
                 .minimumScaleFactor(0.85)
             Spacer(minLength: 0)
@@ -321,10 +363,10 @@ private struct MixerNoteView: View {
                 } label: {
                     Text("Open Settings")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.islandText(1, on: .surface(0.14)))
                         .padding(.horizontal, 10)
                         .frame(height: 22)
-                        .background(Capsule().fill(.white.opacity(0.14)))
+                        .background(Capsule().fill(.islandSurface(0.14)))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -342,10 +384,10 @@ private struct MixerNoteView: View {
         }
     }
 
-    private var tint: Color {
+    private var tint: IslandStyle {
         switch note {
-        case .unsupported, .requesting: .white.opacity(0.55)
-        case .denied, .failed: Color(nsColor: .systemYellow)
+        case .unsupported, .requesting: .islandGraphic(0.55)
+        case .denied, .failed: .islandFitted(MixerColour.caution)
         }
     }
 
@@ -374,7 +416,7 @@ struct MixerHomeTile: View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Sound", systemImage: "speaker.wave.2.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55, on: .homeTile))
                 .lineLimit(1)
 
             ScrollView(.vertical, showsIndicators: false) {
@@ -394,9 +436,11 @@ struct MixerHomeTile: View {
 private struct MixerHomeRow: View {
     let model: MixerModel
     let app: MixerSource
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let muted = model.isMuted(app)
+        let badge = theme.fitted(MixerColour.muted, on: .homeTile)
 
         HStack(spacing: 8) {
             Button {
@@ -406,11 +450,13 @@ private struct MixerHomeRow: View {
                     .opacity(muted ? 0.45 : 1)
                     .overlay(alignment: .bottomTrailing) {
                         if muted {
+                            // White on the red badge on the black island, as it always
+                            // was; elsewhere whichever of black and white reads on it.
                             Image(systemName: "speaker.slash.fill")
                                 .font(.system(size: 6, weight: .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(theme.isDefault ? .islandPrimary : .islandOnFill(badge))
                                 .frame(width: 11, height: 11)
-                                .background(Circle().fill(Color(nsColor: .systemRed)))
+                                .background(Circle().fill(.islandFill(badge)))
                                 .offset(x: 3, y: 3)
                         }
                     }

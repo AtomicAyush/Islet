@@ -126,9 +126,9 @@ final class PrivacyFeature: Feature {
             AnyView(PrivacyIndicatorCard(monitor: monitor, microphoneMute: PrivacyFeature.microphoneMute()))
         }
 
-        if let tint = usage.dotTint {
+        if let hue = usage.dotHue {
             center.setIndicator(StatusIndicator(
-                id: Self.dotID, color: tint, order: 2,
+                id: Self.dotID, color: .hue(hue), order: 2,
                 label: usage.indicatorLabel(for: [.camera, .microphone]), detail: detail
             ))
         } else {
@@ -136,7 +136,7 @@ final class PrivacyFeature: Feature {
         }
         if usage.capturesScreenOrSound {
             center.setIndicator(StatusIndicator(
-                id: Self.captureID, color: privacyPurple, order: 3,
+                id: Self.captureID, color: .hue(.capture), order: 3,
                 label: usage.indicatorLabel(for: [.screen, .systemAudio]), detail: detail
             ))
         } else {
@@ -144,7 +144,7 @@ final class PrivacyFeature: Feature {
         }
         if usage.location.inUse {
             center.setIndicator(StatusIndicator(
-                id: Self.locationID, color: privacyBlue, order: 4, symbol: PrivacyMonitor.Sensor.location.symbol,
+                id: Self.locationID, color: .hue(.location), order: 4, symbol: PrivacyMonitor.Sensor.location.symbol,
                 keepsIslandShown: false, label: usage.indicatorLabel(for: [.location]), detail: detail
             ))
         } else {
@@ -164,16 +164,16 @@ final class PrivacyFeature: Feature {
 
     /// Names what just started, in the colour its dot is about to be.
     private func announce(_ start: PrivacyMonitor.Start, cameraInUse: Bool) {
-        let tint = start.sensor == .camera || start.sensor == .microphone
-            ? (cameraInUse ? privacyGreen : privacyOrange)
-            : start.sensor.tint
+        let hue: SystemHue = start.sensor == .camera || start.sensor == .microphone
+            ? (cameraInUse ? .camera : .microphone)
+            : start.sensor.hue
         let widths = PrivacyBannerLayout.widths(for: start)
         ActivityCenter.shared.present(IslandBanner(
             id: Self.bannerID,
             style: .compact(leading: widths.leading, trailing: widths.trailing),
             duration: 2.5,
-            leading: AnyView(PrivacyBannerLeading(start: start, tint: tint)),
-            trailing: AnyView(PrivacyBannerTrailing(start: start, tint: tint))
+            leading: AnyView(PrivacyBannerLeading(start: start, hue: hue)),
+            trailing: AnyView(PrivacyBannerTrailing(start: start, hue: hue))
         ))
     }
 }

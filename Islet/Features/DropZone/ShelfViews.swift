@@ -46,12 +46,12 @@ struct ShelfHomeTile: View {
                 }
             }
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(dropZoneYellow)
+            .foregroundStyle(.islandAccentText(.dropZoneShelf, on: .homeTile))
             .lineLimit(1)
             Text("\(count)")
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(.islandText(0.55, on: .homeTile))
                 .contentTransition(.numericText())
             Spacer(minLength: 4)
             ClearButton(spelled: spelledClear) { model.shelf.clear() }
@@ -75,13 +75,13 @@ private struct ShelfItemView: View {
             FileIcon(url: item.url, size: 36)
             Text(item.name)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(.islandText(0.8, on: IslandBackdrop.homeTile.stacked(isHovering ? 0.1 : 0)))
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
         .frame(width: 60)
         .padding(.vertical, 4)
-        .background(shape.fill(Color.white.opacity(isHovering ? 0.1 : 0)))
+        .background(shape.fill(.islandSurface(isHovering ? 0.1 : 0, on: .homeTile)))
         .overlay(alignment: .topTrailing) {
             if isHovering {
                 RemoveBadge { model.shelf.remove(item) }
@@ -121,7 +121,7 @@ private struct ArrivingItemView: View {
                 .frame(width: 36, height: 36)
             Text("Fetching…")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(.islandText(0.5, on: .homeTile))
                 .lineLimit(1)
         }
         .frame(width: 60)
@@ -130,16 +130,18 @@ private struct ArrivingItemView: View {
     }
 }
 
+/// A cross on a grey disc, solid so it reads over the file's icon on any island.
 private struct RemoveBadge: View {
     let action: () -> Void
+    static let disc = RGB(0.32, 0.32, 0.32)
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
                 .font(.system(size: 7, weight: .heavy))
-                .foregroundStyle(.white)
+                .foregroundStyle(.islandOnFill(Self.disc))
                 .frame(width: 15, height: 15)
-                .background(Circle().fill(Color(white: 0.32)))
+                .background(Circle().fill(.islandFill(Self.disc)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -165,9 +167,9 @@ private struct ClearButton: View {
                         .frame(width: 16)
                 }
             }
-            .foregroundStyle(.white.opacity(isHovering ? 0.95 : 0.7))
+            .foregroundStyle(.islandText(isHovering ? 0.95 : 0.7, on: IslandBackdrop.homeTile.stacked(isHovering ? 0.2 : 0.12)))
             .frame(height: 16)
-            .background(Capsule().fill(Color.white.opacity(isHovering ? 0.2 : 0.12)))
+            .background(Capsule().fill(.islandSurface(isHovering ? 0.2 : 0.12, on: .homeTile)))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -206,6 +208,7 @@ struct FileIcon: View {
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
+            .fileIconBacking(size: size)
             .task(id: url) {
                 thumbnail = await FileThumbnails.shared.thumbnail(for: url, size: size)
             }

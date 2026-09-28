@@ -1,19 +1,22 @@
 import AppKit
 import SwiftUI
 
+extension FeatureTint {
+    /// The word "On": the green of the Caps Lock key's own light, as the iPhone draws
+    /// green on black. The symbol beside the notch stays in the island's ink, since a
+    /// green mark there means the camera is on.
+    static let capsLockOn = FeatureTint.colour(RGB(bytes: 48, 209, 88))
+}
+
 enum CapsLockPalette {
-    /// The green of the Caps Lock key's own light, as the iPhone draws green on black.
-    static let on = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-    /// Caps Lock off: its symbol, its name and the word "Off".
-    static let off = Color.white.opacity(0.5)
-    /// The symbol beside the notch. White rather than the key's green: a green mark
-    /// beside the notch means the camera is on.
-    static let indicator = Color.white.opacity(0.9)
+    /// Caps Lock off: the words "Caps Lock" and "Off", and, as a symbol, its hollow key.
+    static let off = IslandInk.text(0.5)
+    static let offSymbol = IslandInk.graphic(0.5)
 }
 
 // MARK: - Banner
 
-/// Left of the notch: the Caps Lock symbol and its name, filled and white while on,
+/// Left of the notch: the Caps Lock symbol and its name, filled and in full ink while on,
 /// hollow and grey once off. Where there is no room for the name, or even the insets
 /// (the opened island's header gives it 24 points), the symbol.
 struct CapsLockBannerLeading: View {
@@ -25,7 +28,7 @@ struct CapsLockBannerLeading: View {
                 symbol
                 Text(CapsLockBannerLayout.name)
                     .font(Font(CapsLockBannerLayout.font))
-                    .foregroundStyle(isOn ? .white : CapsLockPalette.off)
+                    .foregroundStyle(.island(isOn ? .text(1) : CapsLockPalette.off))
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -45,7 +48,7 @@ struct CapsLockBannerLeading: View {
             .resizable()
             .aspectRatio(contentMode: .fit)
             .fontWeight(.semibold)
-            .foregroundStyle(isOn ? .white : CapsLockPalette.off)
+            .foregroundStyle(.island(isOn ? .graphic(1) : CapsLockPalette.offSymbol))
             .contentTransition(.symbolEffect(.replace))
             .frame(width: CapsLockBannerLayout.symbolSize.width, height: CapsLockBannerLayout.symbolSize.height)
             .accessibilityHidden(true)
@@ -62,7 +65,7 @@ struct CapsLockBannerTrailing: View {
     var body: some View {
         Text(CapsLockBannerLayout.status(isOn: isOn))
             .font(Font(CapsLockBannerLayout.font))
-            .foregroundStyle(isOn ? CapsLockPalette.on : CapsLockPalette.off)
+            .foregroundStyle(isOn ? .islandAccentText(.capsLockOn) : .island(CapsLockPalette.off))
             .lineLimit(1)
             .fixedSize()
             .contentTransition(.opacity)

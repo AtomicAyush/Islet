@@ -1,15 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// The iPhone's system colours in their dark appearance, as the black island shows
-/// them.
+extension SystemHue {
+    /// Wi-Fi on, a network joined, a VPN connected: Control Center's blue. It says the
+    /// connection is up, so it never takes the accent.
+    static let connected = SystemHue.blue
+}
+
+/// The banners' colours: what they mean, fitted to the island, and grey for what is off.
 enum NetworkPalette {
-    /// Wi-Fi on, a network joined, a VPN connected: Control Center's blue.
-    static let on = Color(red: 10 / 255, green: 132 / 255, blue: 255 / 255)
-    static let backOnline = Color(red: 48 / 255, green: 209 / 255, blue: 88 / 255)
-    static let offline = Color(red: 255 / 255, green: 159 / 255, blue: 10 / 255)
-    /// Wi-Fi off, a VPN gone: its symbol, its name and the word.
-    static let off = Color.white.opacity(0.5)
+    static let on = SystemHue.connected
+    static let backOnline = SystemHue.success
+    static let offline = SystemHue.warning
+    /// Wi-Fi off, a VPN gone: its name and the word, and its symbol.
+    static let off = IslandInk.text(0.5)
+    static let offSymbol = IslandInk.graphic(0.5)
+
+    /// Words in a hue that means something.
+    static func words(_ hue: SystemHue) -> IslandInk { .hue(hue, minimum: Contrast.text) }
 }
 
 // MARK: - Banner
@@ -19,11 +27,11 @@ enum NetworkPalette {
 /// where macOS gives it, and otherwise what it is: "Wi-Fi", "Ethernet", "VPN".
 struct NetworkAnnouncement: Equatable {
     var symbol: String
-    var symbolColor: Color
+    var symbolColor: IslandInk
     var name: String
-    var nameColor: Color
+    var nameColor: IslandInk
     var status: String
-    var statusColor: Color
+    var statusColor: IslandInk
     /// Whether the name is what happened, as for a network joined, rather than who it
     /// happened to.
     var nameIsNews = false
@@ -32,40 +40,40 @@ struct NetworkAnnouncement: Equatable {
         switch change {
         case let .offline(kind, name):
             self.init(
-                symbol: kind == .wifi ? "wifi.exclamationmark" : "network.slash", symbolColor: NetworkPalette.offline,
-                name: name ?? Self.word(for: kind), status: "Offline", statusColor: NetworkPalette.offline
+                symbol: kind == .wifi ? "wifi.exclamationmark" : "network.slash", symbolColor: .hue(NetworkPalette.offline),
+                name: name ?? Self.word(for: kind), status: "Offline", statusColor: NetworkPalette.words(NetworkPalette.offline)
             )
         case let .online(kind, name):
             self.init(
                 symbol: Self.symbol(for: kind), name: name ?? Self.word(for: kind),
-                status: "Back online", statusColor: NetworkPalette.backOnline
+                status: "Back online", statusColor: NetworkPalette.words(NetworkPalette.backOnline)
             )
         case let .joined(name), let .wifiPower(true, name?):
             // Wi-Fi turned on and joining a network says which, as joining another does.
-            self.init(symbol: "wifi", name: name, status: "Joined", statusColor: NetworkPalette.on)
+            self.init(symbol: "wifi", name: name, status: "Joined", statusColor: NetworkPalette.words(NetworkPalette.on))
             nameIsNews = true
         case let .wifiPower(isOn, _):
             self.init(
-                symbol: isOn ? "wifi" : "wifi.slash", symbolColor: isOn ? .white : NetworkPalette.off,
-                name: "Wi-Fi", nameColor: isOn ? .white : NetworkPalette.off,
-                status: isOn ? "On" : "Off", statusColor: isOn ? NetworkPalette.on : NetworkPalette.off
+                symbol: isOn ? "wifi" : "wifi.slash", symbolColor: isOn ? .graphic(1) : NetworkPalette.offSymbol,
+                name: "Wi-Fi", nameColor: isOn ? .text(1) : NetworkPalette.off,
+                status: isOn ? "On" : "Off", statusColor: isOn ? NetworkPalette.words(NetworkPalette.on) : NetworkPalette.off
             )
         case let .vpnConnected(name):
             self.init(
                 symbol: Self.vpnSymbol, name: name ?? "VPN",
-                status: Self.vpnStatus("Connected", name: name), statusColor: NetworkPalette.on
+                status: Self.vpnStatus("Connected", name: name), statusColor: NetworkPalette.words(NetworkPalette.on)
             )
         case let .vpnDisconnected(name):
             self.init(
-                symbol: Self.vpnSymbol, symbolColor: NetworkPalette.off, name: name ?? "VPN", nameColor: NetworkPalette.off,
+                symbol: Self.vpnSymbol, symbolColor: NetworkPalette.offSymbol, name: name ?? "VPN", nameColor: NetworkPalette.off,
                 status: Self.vpnStatus("Disconnected", name: name), statusColor: NetworkPalette.off
             )
         }
     }
 
     private init(
-        symbol: String, symbolColor: Color = .white, name: String, nameColor: Color = .white,
-        status: String, statusColor: Color
+        symbol: String, symbolColor: IslandInk = .graphic(1), name: String, nameColor: IslandInk = .text(1),
+        status: String, statusColor: IslandInk
     ) {
         self.symbol = symbol
         self.symbolColor = symbolColor
@@ -109,7 +117,7 @@ struct NetworkBannerLeading: View {
                 symbol
                 Text(announcement.name)
                     .font(Font(NetworkBannerLayout.font))
-                    .foregroundStyle(announcement.nameColor)
+                    .foregroundStyle(.island(announcement.nameColor))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: NetworkBannerLayout.maximumNameWidth, alignment: .leading)
@@ -129,7 +137,7 @@ struct NetworkBannerLeading: View {
             .resizable()
             .aspectRatio(contentMode: .fit)
             .fontWeight(.semibold)
-            .foregroundStyle(announcement.symbolColor)
+            .foregroundStyle(.island(announcement.symbolColor))
             .frame(width: NetworkBannerLayout.symbolSize.width, height: NetworkBannerLayout.symbolSize.height)
             .accessibilityHidden(true)
     }
@@ -157,16 +165,16 @@ struct NetworkBannerTrailing: View {
                         // Whole: a name long enough to be cut short leaves no room
                         // for what happened beside it anyway.
                         Text(verbatim: announcement.name)
-                            .foregroundStyle(announcement.nameColor)
+                            .foregroundStyle(.island(announcement.nameColor))
                         Text(verbatim: "·")
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(.islandDecorative(0.4))
                         status
                     }
                     .fixedSize()
                     .modifier(Insets())
                     if announcement.nameIsNews {
                         Text(verbatim: announcement.name)
-                            .foregroundStyle(announcement.statusColor)
+                            .foregroundStyle(.island(announcement.statusColor))
                             .truncationMode(.tail)
                             .modifier(Insets())
                     } else {
@@ -189,7 +197,7 @@ struct NetworkBannerTrailing: View {
 
     private var status: some View {
         Text(verbatim: announcement.status)
-            .foregroundStyle(announcement.statusColor)
+            .foregroundStyle(.island(announcement.statusColor))
     }
 
     private struct Insets: ViewModifier {

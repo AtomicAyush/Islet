@@ -155,9 +155,10 @@ final class CapsLockFeature: Feature {
                 && CapsLockPrefs.bool(CapsLockPrefs.showIndicator, default: false))
         if isOn {
             // After the Focus symbol, which stays put for hours, and before the camera
-            // and microphone dot at the island's end.
+            // and microphone dot at the island's end. In the island's ink rather than
+            // the key's green: a green mark beside the notch means the camera is on.
             center.setIndicator(StatusIndicator(
-                id: id, color: CapsLockPalette.indicator, order: 0, symbol: "capslock.fill",
+                id: id, color: .text(0.9), order: 0, symbol: "capslock.fill",
                 keepsIslandShown: false, label: "Caps Lock on"
             ))
         } else {
