@@ -201,12 +201,46 @@ private final class MenuExtras: @unchecked Sendable {
             }
             level = next
         }
-        return frames
+        return frames + wideFrames(in: app)
     }
+
+    /// The items in `wideItems` that the agent shows, each widened by its bleed. The
+    /// extras bar's own children are holders with no identifier; the item inside each
+    /// has one, a level or two further down. Only the leftmost frame matters, so a
+    /// widened copy beside the plain one is enough.
+    private static func wideFrames(in app: AXUIElement) -> [CGRect] {
+        var found: [CGRect] = []
+        var level = [app]
+        for _ in 0..<4 where !level.isEmpty {
+            var next: [AXUIElement] = []
+            for element in level {
+                if let identifier = value("AXIdentifier", of: element) as? String,
+                   let bleed = wideItems[identifier], let frame = frame(of: element) {
+                    found.append(frame.insetBy(dx: -bleed, dy: 0))
+                } else {
+                    next += (value(kAXChildrenAttribute, of: element) as? [CFTypeRef] ?? []).compactMap(self.element)
+                }
+            }
+            level = next
+        }
+        return found
+    }
+
+    /// Status items macOS draws wider than Accessibility says they are, by their
+    /// identifier, and how far past the frame to keep clear. The camera and microphone
+    /// item ("Audio and Video Controls") turns into a coloured capsule while either is
+    /// in use, reaching about four points left of its frame; nine keeps a bubble the
+    /// same seven points from the capsule as bubbles keep from each other.
+    static let wideItems: [String: CGFloat] = ["com.apple.menuextra.audiovideo": 9]
 
     /// The frames of one app's status items: none if it has none, or does not answer in time.
     private static func extras(of pid: pid_t) -> [CGRect] {
-        MenuBarAccessibility.extras(of: pid).compactMap(frame(of:))
+        MenuBarAccessibility.extras(of: pid).compactMap { item in
+            guard let frame = frame(of: item) else { return nil }
+            guard let identifier = value("AXIdentifier", of: item) as? String,
+                  let bleed = wideItems[identifier] else { return frame }
+            return frame.insetBy(dx: -bleed, dy: 0)
+        }
     }
 
     private static func frame(of item: AXUIElement) -> CGRect? {
