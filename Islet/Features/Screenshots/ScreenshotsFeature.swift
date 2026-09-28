@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 
 /// A screenshot, the moment it is taken, the way the iPhone offers one: its picture in a
@@ -7,6 +8,11 @@ import SwiftUI
 ///
 /// `ScreenshotWatcher` notices screenshots as macOS saves them. Nothing is done to one
 /// unless a button is clicked; Delete moves it to the Trash, where it can be put back.
+/// With Delete after Copying on, Copy deletes the file for good once the picture is on
+/// the clipboard (`actions(for:)` says when it does not). That is the same whether the
+/// card comes at once or after macOS's floating thumbnail: either way it comes only once
+/// the file is saved. The watcher pays no heed to a file that goes, so a deleted
+/// screenshot is not heard of again.
 @MainActor
 final class ScreenshotsFeature: Feature {
     let id = "screenshots"
@@ -21,28 +27,35 @@ final class ScreenshotsFeature: Feature {
     /// How long the card stays with the pointer on it: until the pointer leaves, but no
     /// more than a minute, should its leaving go unheard.
     static let heldDuration: TimeInterval = 60
+    /// How long the card stays once Copy has deleted its file: long enough to see the tick.
+    static let deletedDuration: TimeInterval = 0.9
 
     private let watcher: ScreenshotWatcher
     private let shelf: ScreenshotShelf
     private let files: ScreenshotFileActions
     private let settings: ScreenshotSettingsStore
+    private let defaults: UserDefaults
     private var isRunning = false
     private var banner: IslandBanner?
+    /// The screenshot whose card was put up last.
+    private var shown: URL?
 
     /// Tests give a watcher on a folder of their own, a shelf of their own, file actions
-    /// that leave the pasteboard, Finder and the Trash alone, and a stand-in for the
-    /// Screenshot app's settings.
+    /// that leave the pasteboard, Finder and the Trash alone, a stand-in for the
+    /// Screenshot app's settings, and defaults of their own.
     init(
         watcher: ScreenshotWatcher? = nil,
         shelf: ScreenshotShelf = .dropZone,
         files: ScreenshotFileActions = .system,
-        settings: ScreenshotSettingsStore = .system
+        settings: ScreenshotSettingsStore = .system,
+        defaults: UserDefaults = .standard
     ) {
         let watcher = watcher ?? ScreenshotWatcher(preferences: { ScreenshotPreferences.read(from: settings) })
         self.watcher = watcher
         self.shelf = shelf
         self.files = files
         self.settings = settings
+        self.defaults = defaults
         watcher.onScreenshot = { [weak self] shot in self?.present(shot) }
     }
 
@@ -89,28 +102,72 @@ final class ScreenshotsFeature: Feature {
             ).id(shot.url))
         )
         self.banner = banner
+        shown = shot.url
         ActivityCenter.shared.present(banner)
     }
 
     /// What the card's buttons do for `shot`. Opening it, or showing it in Finder,
     /// hands it to another app, and the card goes; so does Delete.
+    ///
+    /// With Delete after Copying on, Copy copies, reads the picture back from the
+    /// clipboard, and only then deletes the file, for good, the first time it copies.
+    /// It keeps the file, and the card says why, while the shelf holds it (the shelf
+    /// keeps only where a file is), or if it is no longer the file the card was made
+    /// for: moved, replaced, turned into a symbolic link or changed. A preview's sample
+    /// is never deleted. Once the file is deleted the other buttons do nothing, and the
+    /// card goes a moment later.
     func actions(for shot: Screenshot) -> ScreenshotCardActions {
         let files = files
         let shelf = shelf
+        let defaults = defaults
+        let card = ScreenshotCardFile()
+        // A moment after Copy has deleted the file, for the tick to be seen.
+        let dismissSoon: () -> Void = { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.deletedDuration) {
+                MainActor.assumeIsolated { self?.dismissCard(of: shot.url) }
+            }
+        }
         return ScreenshotCardActions(
             open: {
+                guard !card.isDeleted else { return }
                 files.open(shot.url)
                 Self.dismissCard()
             },
-            copy: { files.copy(shot.url) },
-            shelve: shelf.isAvailable() ? { shelf.add(shot.url) } : nil,
+            copy: {
+                guard !card.isDeleted else { return .copiedAndDeleted }
+                guard files.copy(shot.url) else { return .failed }
+                guard ScreenshotsPrefs.bool(ScreenshotsPrefs.deleteAfterCopying, default: false, in: defaults) else {
+                    return .copied
+                }
+                // Tried once: a later copy only copies.
+                if let kept = card.kept { return .copiedAndKept(kept) }
+                guard files.isCopied(shot.url) else { return .failed }
+                if card.isShelved || shelf.holds(shot.url) { return card.keep("Copied · kept for the shelf") }
+                // A preview's sample is not the person's to delete: the card goes as a
+                // screenshot's would, and the sample stays.
+                if !shot.isSample {
+                    guard let stamp = shot.file, ScreenshotFileStamp.read(shot.url) == stamp else {
+                        return card.keep("Copied · file changed, so kept")
+                    }
+                    guard files.delete(shot.url) else { return card.keep("Copied · couldn't delete the file") }
+                }
+                card.isDeleted = true
+                dismissSoon()
+                return .copiedAndDeleted
+            },
+            shelve: shelf.isAvailable() ? {
+                guard !card.isDeleted, shelf.add(shot.url) else { return false }
+                card.isShelved = true
+                return true
+            } : nil,
             reveal: {
+                guard !card.isDeleted else { return }
                 files.reveal(shot.url)
                 Self.dismissCard()
             },
             delete: {
                 // A preview's sample is not the person's to throw away.
-                if !shot.isSample { _ = files.trash(shot.url) }
+                if !shot.isSample, !card.isDeleted { _ = files.trash(shot.url) }
                 Self.dismissCard()
             }
         )
@@ -118,6 +175,12 @@ final class ScreenshotsFeature: Feature {
 
     private static func dismissCard() {
         ActivityCenter.shared.dismissBanner(id: bannerID)
+    }
+
+    /// Takes the card down if it is still `url`'s, not another screenshot's put up since.
+    private func dismissCard(of url: URL) {
+        guard shown == url else { return }
+        Self.dismissCard()
     }
 
     /// The card stays while the pointer is on it, so it does not go while a button is
@@ -137,29 +200,97 @@ final class ScreenshotsFeature: Feature {
     }
 }
 
+/// What a card's buttons have done to its screenshot, shared by them.
+@MainActor
+private final class ScreenshotCardFile {
+    /// Copy deleted the file.
+    var isDeleted = false
+    /// Add to Shelf put it on the shelf.
+    var isShelved = false
+    /// Why Copy kept the file, once it has.
+    private(set) var kept: String?
+
+    func keep(_ reason: String) -> ScreenshotCopyResult {
+        kept = reason
+        return .copiedAndKept(reason)
+    }
+}
+
+/// The feature's own preference keys, shared by the feature and its settings; the rest
+/// of its settings are the Screenshot app's. Unset keys read as their defaults, the same
+/// ones the settings toggles declare.
+enum ScreenshotsPrefs {
+    /// Copy deletes the screenshot's file for good once the picture is on the clipboard.
+    static let deleteAfterCopying = "screenshots.deleteAfterCopying"
+
+    static func bool(_ key: String, default value: Bool, in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? value
+    }
+}
+
 /// Where Add to Shelf puts a screenshot: Drop Zone's shelf, while Drop Zone is on.
 struct ScreenshotShelf {
     var isAvailable: @MainActor () -> Bool
     /// Returns whether the screenshot is on the shelf afterwards.
     var add: @MainActor (URL) -> Bool
+    /// Whether the shelf holds the file, however it got there: added from the card, or
+    /// dragged from it to the island.
+    var holds: @MainActor (URL) -> Bool
 
     static let dropZone = ScreenshotShelf(
         isAvailable: { FeatureRegistry.shared.feature(DropZoneFeature.self)?.takesFiles ?? false },
-        add: { FeatureRegistry.shared.feature(DropZoneFeature.self)?.shelve([$0]) ?? false }
+        add: { FeatureRegistry.shared.feature(DropZoneFeature.self)?.shelve([$0]) ?? false },
+        holds: { FeatureRegistry.shared.feature(DropZoneFeature.self)?.holds($0) ?? false }
     )
 }
 
 /// What the card's buttons do to the file.
 struct ScreenshotFileActions {
     var open: @MainActor (URL) -> Void
+    /// Returns whether the picture went on the clipboard.
     var copy: @MainActor (URL) -> Bool
+    /// Whether the clipboard holds the picture Copy last put there for the file, read
+    /// back from it: asked before Delete after Copying deletes the file.
+    var isCopied: @MainActor (URL) -> Bool
     var reveal: @MainActor (URL) -> Void
     var trash: @MainActor (URL) -> Bool
+    /// Deletes the file for good, not to the Trash. Returns whether it is gone.
+    var delete: @MainActor (URL) -> Bool
 
-    static let system = ScreenshotFileActions(
-        open: { NSWorkspace.shared.open($0) },
-        copy: { ScreenshotFiles.copy($0) },
-        reveal: { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
-        trash: { ScreenshotFiles.trash($0) }
-    )
+    static let system = ScreenshotFileActions(pasteboard: .general)
+}
+
+extension ScreenshotFileActions {
+    /// The real thing, copying to `pasteboard`: the general one, or a test's own.
+    init(pasteboard: NSPasteboard) {
+        let last = ScreenshotLastCopy()
+        self.init(
+            open: { NSWorkspace.shared.open($0) },
+            copy: { url in
+                let picture = ScreenshotFiles.copy(url, to: pasteboard)
+                last.url = url
+                last.fingerprint = picture.map(ScreenshotFiles.fingerprint(of:))
+                last.changeCount = pasteboard.changeCount
+                return picture != nil
+            },
+            isCopied: { url in
+                // Nothing copied since, by Islet or another app.
+                guard last.url == url, let fingerprint = last.fingerprint, pasteboard.changeCount == last.changeCount
+                else { return false }
+                return ScreenshotFiles.holds(fingerprint, on: pasteboard)
+            },
+            reveal: { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
+            trash: { ScreenshotFiles.trash($0) },
+            delete: { ScreenshotFiles.delete($0) }
+        )
+    }
+}
+
+/// What Copy last put on the clipboard, and for which file, to be read back. Only
+/// Copy's actions, on the main thread, use it.
+private final class ScreenshotLastCopy {
+    var url: URL?
+    /// The picture's fingerprint, not the picture, so a large one is not held on to.
+    var fingerprint: [NSPasteboard.PasteboardType: SHA256.Digest]?
+    var changeCount = 0
 }

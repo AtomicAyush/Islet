@@ -79,6 +79,12 @@ final class DropZoneFeature: Feature {
         return true
     }
 
+    /// Whether the shelf holds the file, with Drop Zone on or off: the screenshot card keeps
+    /// a file the shelf holds rather than delete it.
+    func holds(_ url: URL) -> Bool {
+        model.shelf.holds(url)
+    }
+
     // MARK: Island
 
     private var isAttached: Bool { isRunning || previewTeardown != nil }

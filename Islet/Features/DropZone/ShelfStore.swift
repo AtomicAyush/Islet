@@ -64,6 +64,12 @@ final class ShelfStore {
         return fresh.count
     }
 
+    /// Whether an item is the file at `url`, however either path is spelled.
+    func holds(_ url: URL) -> Bool {
+        let identity = Self.identity(of: url)
+        return items.contains { Self.identity(of: $0.url) == identity }
+    }
+
     func remove(_ item: ShelfItem) {
         remove(ids: [item.id])
     }

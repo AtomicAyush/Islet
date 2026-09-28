@@ -272,8 +272,9 @@ extension FileCopiesFeature {
 extension ScreenshotsFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
-            labels: ["Show screenshots here at once", "Screenshots are saved to"],
-            keywords: ["screen capture", "screencap", "capture", "floating thumbnail", "markup", "cmd shift 4"]
+            labels: ["Show screenshots here at once", "Delete after copying", "Screenshots are saved to"],
+            keywords: ["screen capture", "screencap", "capture", "floating thumbnail", "markup", "cmd shift 4", "trash",
+                       "delete", "copy", "clipboard"]
         )
     }
 }

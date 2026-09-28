@@ -374,9 +374,14 @@ for about five seconds before saving it, so the card comes after that. Turn on S
 here at once in Islet's Screenshots settings (or turn off Show Floating Thumbnail under Options
 in the Screenshot app, ⇧⌘5) and it comes the moment it is taken, the card standing in for the
 thumbnail: click its picture to mark it up in Preview. Islet changes that setting only when you
-click the switch. A screenshot copied to the clipboard (with Control held down) makes no file,
-so Islet doesn't see it. The first time, macOS asks whether Islet may see the folder screenshots
-are saved to (the Desktop, unless you've chosen another).
+click the switch. Turn on Delete after copying and Copy on the card also deletes the screenshot
+once its picture is on the clipboard, to paste wherever it's wanted: deleted for good, not put in
+the Trash, so it can't be got back. Islet reads the picture back from the clipboard before it
+deletes anything, deletes only the screenshot the card was made for, and keeps one that has
+changed or moved since, or that is on the Drop Zone shelf; the card says when it has kept one.
+A screenshot copied to the clipboard (with Control held down) makes no file, so Islet doesn't
+see it. The first time, macOS asks whether Islet may see the folder screenshots are saved to
+(the Desktop, unless you've chosen another).
 
 **Clipboard History.** The last dozen things you copied — text, links, pictures and files —
 on the home page, newest first, each with the app it came from and when; click one and it is

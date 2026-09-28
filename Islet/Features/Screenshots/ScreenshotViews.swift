@@ -29,12 +29,34 @@ enum ScreenshotCardLayout {
 /// something harmless for a preview's sample.
 struct ScreenshotCardActions {
     var open: () -> Void
-    var copy: () -> Bool
+    var copy: () -> ScreenshotCopyResult
     /// `nil` while there is no shelf to add to (Drop Zone is off). Returns whether the
     /// screenshot is on the shelf afterwards.
     var shelve: (() -> Bool)?
     var reveal: () -> Void
     var delete: () -> Void
+}
+
+/// What Copy did, for the card to show.
+enum ScreenshotCopyResult: Equatable {
+    /// The picture is on the clipboard.
+    case copied
+    /// On the clipboard, and the file deleted for good (Delete after Copying): the card
+    /// says so and goes, as there is nothing left to drag, open or show.
+    case copiedAndDeleted
+    /// On the clipboard, and the file kept, for the reason the card shows.
+    case copiedAndKept(String)
+    /// Not on the clipboard, and nothing done to the file.
+    case failed
+
+    /// What the card says in place of the screenshot's size and place, if anything.
+    var note: String? {
+        switch self {
+        case .copiedAndDeleted: "Copied · file deleted"
+        case .copiedAndKept(let reason): reason
+        case .copied, .failed: nil
+        }
+    }
 }
 
 /// A screenshot just taken: the picture, to drag straight into another app, and
@@ -47,10 +69,15 @@ struct ScreenshotCard: View {
     let dismiss: () -> Void
     @State private var copied = false
     @State private var shelved = false
+    /// Said in place of the size and place once Copy has deleted the file, or kept it.
+    @State private var note: String?
+    /// Copy deleted the file: there is nothing left to drag or open.
+    @State private var deleted = false
 
     var body: some View {
         HStack(spacing: 14) {
             ScreenshotThumbnail(shot: shot, open: actions.open)
+                .allowsHitTesting(!deleted)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 8) {
@@ -58,7 +85,7 @@ struct ScreenshotCard: View {
                         Text("Screenshot")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(.islandPrimary)
-                        Text(subtitle)
+                        Text(note ?? subtitle)
                             .font(.system(size: 12, weight: .medium))
                             .monospacedDigit()
                             .foregroundStyle(.islandText(0.55))
@@ -70,9 +97,7 @@ struct ScreenshotCard: View {
                 }
 
                 HStack(spacing: 8) {
-                    button(copied ? "checkmark" : "doc.on.doc", copied ? .hue(.success) : .text(1), "Copy") {
-                        copied = actions.copy()
-                    }
+                    button(copied ? "checkmark" : "doc.on.doc", copied ? .hue(.success) : .text(1), "Copy", action: copy)
                     if let shelve = actions.shelve {
                         button(shelved ? "checkmark" : "tray.and.arrow.down.fill", shelved ? .hue(.success) : .accent(.dropZoneShelf),
                                shelved ? "On the Shelf" : "Add to Shelf") {
@@ -88,6 +113,15 @@ struct ScreenshotCard: View {
         .onHover(perform: hover)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: copied)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: shelved)
+    }
+
+    private func copy() {
+        let result = actions.copy()
+        copied = result != .failed
+        deleted = result == .copiedAndDeleted
+        guard let said = result.note else { return }
+        note = said
+        AccessibilityNotification.Announcement(said).post()
     }
 
     private func button(_ symbol: String, _ tint: IslandInk, _ label: String, action: @escaping () -> Void) -> some View {
@@ -134,9 +168,10 @@ struct ScreenshotThumbnail: View {
 /// Where screenshots are saved, what in macOS's own settings keeps them from the island,
 /// and a switch for the floating thumbnail that holds them back. Those settings are the
 /// Screenshot app's. They are read here, and only the thumbnail's is ever written, when
-/// the switch is clicked.
+/// the switch is clicked. Delete after Copying is Islet's own.
 struct ScreenshotsSettingsView: View {
     @State private var model: ScreenshotsSettingsModel
+    @AppStorage(ScreenshotsPrefs.deleteAfterCopying) private var deleteAfterCopying = false
 
     /// `refresh` is called with the settings as they are read, so the feature follows a
     /// folder changed meanwhile, or tries again one it was refused.
@@ -167,6 +202,11 @@ struct ScreenshotsSettingsView: View {
                 Text("Show screenshots here at once")
                 Text("Turns off macOS's floating thumbnail, so each screenshot is saved as it is taken and its card comes straight away, in the thumbnail's place: click the picture to mark it up in Preview.")
             }
+        }
+
+        Toggle(isOn: $deleteAfterCopying) {
+            Text("Delete after copying")
+            Text("Copy on a screenshot's card puts the picture on the clipboard, where it stays to be pasted, then deletes the file for good. It isn't put in the Trash, so it can't be got back. A screenshot on the Drop Zone shelf is kept.")
         }
     }
 
