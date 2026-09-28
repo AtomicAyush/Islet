@@ -856,14 +856,18 @@ private struct ExpandedIsland: View {
 
 /// The row beside the notch: tabs on the left, a compact banner or settings on the
 /// right. While the home page is arranged, its hidden tiles on the left instead, and
-/// Done on the right beside the banner or indicators.
+/// Done on the right beside the banner or indicators. Each side keeps to its room:
+/// tabs that do not fit go into a menu (`HeaderTabFit`), and so do indicators
+/// (`HeaderIndicatorFit`).
 private struct ExpandedHeader: View {
     let model: IslandViewModel
     let focus: String
     let layout: IslandLayout
 
+    /// The room either side of the notch.
+    private var sideWidth: CGFloat { layout.headerSideWidth }
+
     var body: some View {
-        let sideWidth = max(0, (layout.size.width - 2 * layout.earRadius - layout.notch.width) / 2 - 16)
         let arranging = model.isEditingHome && focus == IslandViewModel.homeFocus
 
         HStack(spacing: 0) {
@@ -890,15 +894,20 @@ private struct ExpandedHeader: View {
 
     private var tabs: some View {
         let page = model.center.pages[focus]
-        return HStack(spacing: 4) {
+        let activities = model.center.activities
+        let fit = HeaderTabFit(center: model.center, focus: focus, room: sideWidth)
+        return HStack(spacing: fit.spacing) {
             if !model.center.activities.isEmpty || page != nil {
                 TabButton(symbol: "house.fill", isSelected: focus == IslandViewModel.homeFocus) {
                     model.select(focus: IslandViewModel.homeFocus)
                 }
-                ForEach(model.center.activities, id: \.id) { activity in
+                ForEach(activities.filter { fit.shown.contains($0.id) }, id: \.id) { activity in
                     TabButton(symbol: activity.symbol, isSelected: focus == activity.id) {
                         model.select(focus: activity.id)
                     }
+                }
+                if !fit.overflow.isEmpty {
+                    MoreActivitiesMenu(model: model, fit: fit)
                 }
                 // A feature's page has a tab only while it is open; home is the way back.
                 if let page {
@@ -906,6 +915,7 @@ private struct ExpandedHeader: View {
                 }
             }
         }
+        .environment(\.headerTabWidth, fit.tabWidth)
     }
 
     /// A compact banner, as the header shows it.
@@ -931,18 +941,19 @@ private struct ExpandedHeader: View {
     /// microphone lights stay in sight while the home page is arranged.
     private var arrangingTrailing: some View {
         let done = HomeDoneButton { model.endEditingHome() }
+        let room = sideWidth - 8 - HomeDoneButton.width
         return ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
                 if let banner = compactBanner {
                     headerBanner(banner)
                 } else if !model.center.indicators.isEmpty {
-                    HeaderIndicators(model: model)
+                    HeaderIndicators(model: model, room: room)
                 }
                 done
             }
             HStack(spacing: 8) {
                 if !model.center.indicators.isEmpty {
-                    HeaderIndicators(model: model)
+                    HeaderIndicators(model: model, room: room)
                 }
                 done
             }
@@ -957,7 +968,7 @@ private struct ExpandedHeader: View {
         } else {
             HStack(spacing: 8) {
                 if !model.center.indicators.isEmpty {
-                    HeaderIndicators(model: model)
+                    HeaderIndicators(model: model, room: sideWidth - 8 - HeaderTabFit.tabWidth)
                 }
                 TabButton(symbol: "gearshape.fill", isSelected: false) {
                     model.collapse()
@@ -973,6 +984,7 @@ private struct TabButton: View {
     let isSelected: Bool
     let action: () -> Void
     @State private var isHovering = false
+    @Environment(\.headerTabWidth) private var width
 
     var body: some View {
         Button(action: action) {
@@ -980,6 +992,8 @@ private struct TabButton: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(isSelected ? .white : .white.opacity(isHovering ? 0.75 : 0.45))
                 .frame(width: 24, height: 20)
+                // Narrower where the row is short of room (`HeaderTabFit`).
+                .frame(width: width)
                 .background(
                     Capsule().fill(.white.opacity(isSelected ? 0.16 : (isHovering ? 0.08 : 0)))
                 )
@@ -988,4 +1002,80 @@ private struct TabButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
     }
+}
+
+/// The last of the tabs while more activities are running than there are tabs room
+/// for: a menu of the rest, each by its symbol and name, that opens the one chosen.
+/// It is coloured as a tab that is not picked is (`TabButton`), and lit as one is
+/// under the pointer, and while its menu is up.
+struct MoreActivitiesMenu: View {
+    let model: IslandViewModel
+    let items: [HeaderMenuItem]
+    @State private var isHovering = false
+    @State private var showsMenu = false
+    @Environment(\.headerTabWidth) private var width
+
+    init(model: IslandViewModel, fit: HeaderTabFit) {
+        self.model = model
+        items = fit.menuItems(model.center.activities)
+    }
+
+    /// Opens the activity `id`, as its tab would.
+    func choose(_ id: String) {
+        model.select(focus: id)
+    }
+
+    /// The menu's items.
+    var entries: some View {
+        ForEach(items) { item in
+            Button {
+                choose(item.id)
+            } label: {
+                Label(item.title, systemImage: item.symbol)
+            }
+        }
+    }
+
+    var body: some View {
+        let lit = isHovering || showsMenu
+        Menu {
+            entries
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(lit ? 0.75 : 0.45))
+                .frame(width: width, height: 20)
+                .background(Capsule().fill(.white.opacity(lit ? 0.08 : 0)))
+                .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { isHovering = $0 }
+        .headerMenuState(isUp: model.isShowingMenu, isHovering: $isHovering, showsMenu: $showsMenu)
+        .help("More activities")
+        .accessibilityLabel("More activities")
+        .accessibilityValue("\(items.count)")
+    }
+}
+
+extension View {
+    /// Keeps a header menu button's light true to its menu. A menu from the island came
+    /// up with the pointer on the button, so it is the button's own, and the button
+    /// stays lit while it is up. The pointer's comings and goings are not heard while a
+    /// menu is up, so whatever the button last heard is forgotten as the menu goes: the
+    /// pointer is most likely where the chosen item was.
+    func headerMenuState(isUp: Bool, isHovering: Binding<Bool>, showsMenu: Binding<Bool>) -> some View {
+        onChange(of: isUp) { _, up in
+            showsMenu.wrappedValue = up && isHovering.wrappedValue
+            if !up { isHovering.wrappedValue = false }
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// How wide the opened island's tabs are: narrower while the header is short of
+    /// room (`HeaderTabFit`).
+    @Entry var headerTabWidth: CGFloat = HeaderTabFit.tabWidth
 }

@@ -81,6 +81,16 @@ final class IslandViewModel {
     /// from, does not stay open for ever. Tests shorten it.
     @ObservationIgnored var editingIdleTimeout: TimeInterval = 60
     @ObservationIgnored private var editingIdleWork: DispatchWorkItem?
+    /// A menu opened from the opened island is up: one of the header's lists of what it
+    /// has no room for, or a right click's. The island stays open meanwhile, whatever
+    /// the pointer does (`menu(isUp:)`).
+    private(set) var isShowingMenu = false
+    /// A menu from the island has gone, and the pointer, left where it went, has not
+    /// been back on the island since.
+    @ObservationIgnored private var menuLeftPointer = false
+    /// How long an island stays open once the pointer is found off it after one of its
+    /// menus, for it to come back from where the chosen item was.
+    static let menuGrace: TimeInterval = 1.2
     /// The indicator card open in the opened island, if any (`IndicatorDetail`).
     private(set) var indicatorCard: OpenIndicatorCard?
     /// How tall each card is as drawn, by its id, as the card reports it, so the island
@@ -392,6 +402,8 @@ final class IslandViewModel {
         inside: Bool, overSecondary: SecondaryTarget? = nil, at point: CGPoint? = nil, buttonsDown: Bool = false
     ) {
         if let point { pointerLocation = point }
+        // Back on the island after a menu, or never off it.
+        if inside { menuLeftPointer = false }
         if overSecondary != hoveredSecondary {
             withAnimation(.islandHover) { hoveredSecondary = overSecondary }
         }
@@ -421,8 +433,10 @@ final class IslandViewModel {
             // ends it.
             if isEditingHome {
                 scheduleEditingIdle()
-            } else if isExpanded {
-                scheduleCollapse(after: 0.28)
+            } else if isExpanded, !isShowingMenu {
+                // One of its menus holds it open while up, and gives the pointer longer
+                // to come back as it goes (`menu(isUp:)`).
+                scheduleCollapse(after: menuLeftPointer ? Self.menuGrace : 0.28)
             }
         }
     }
@@ -556,7 +570,28 @@ final class IslandViewModel {
         }
         homePage = 0
         cancelEditingIdle()
+        menuLeftPointer = false
         if wasEditing { editingHomeChanged(false) }
+    }
+
+    /// A menu came up in Islet, or went. One that comes up with the pointer on the
+    /// opened island is the island's: the header's lists of what it has no room for,
+    /// or a right click's. It can reach well below the island, and while it is up the
+    /// pointer's moves are the menu's and never seen here, so the island stays open
+    /// meanwhile. As it goes, the pointer is left where the chosen item was, likely
+    /// off the island: leaving from there closes the island only after `menuGrace`,
+    /// time enough to come back to what was chosen, rather than at once.
+    func menu(isUp: Bool) {
+        if isUp {
+            guard isExpanded, isHovering, !isShowingMenu else { return }
+            cancelCollapse()
+            isShowingMenu = true
+        } else {
+            guard isShowingMenu else { return }
+            isShowingMenu = false
+            menuLeftPointer = true
+            if isExpanded, !isHovering, !isEditingHome { scheduleCollapse(after: Self.menuGrace) }
+        }
     }
 
     func select(focus: String) {
@@ -794,7 +829,7 @@ final class IslandViewModel {
     private func scheduleCollapse(after delay: TimeInterval) {
         cancelCollapse()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.isHovering, !self.isEditingHome else { return }
+            guard let self, !self.isHovering, !self.isEditingHome, !self.isShowingMenu else { return }
             #if DEBUG
             if self.isPinnedOpen {
                 self.releaseRoom()

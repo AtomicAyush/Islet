@@ -115,14 +115,19 @@ struct IndicatorMark: View {
 }
 
 /// The indicators in the opened island's header. One with a card is a button that
-/// opens it; the rest are plain marks, spaced as in the compact row.
+/// opens it; the rest are plain marks, spaced as in the compact row. Those there is no
+/// room for are counted by a button at the end, which lists them (`HeaderIndicatorFit`).
 struct HeaderIndicators: View {
     let model: IslandViewModel
+    /// The room the strip has.
+    var room: CGFloat = .infinity
 
     var body: some View {
         let open = model.indicatorCardAnchor
+        let indicators = model.center.indicators
+        let fit = HeaderIndicatorFit(indicators, room: room)
         HStack(spacing: 0) {
-            ForEach(model.center.indicators) { indicator in
+            ForEach(indicators.filter { fit.shown.contains($0.id) }) { indicator in
                 Group {
                     if indicator.detail != nil {
                         IndicatorButton(indicator: indicator, isOpen: open == indicator.id) {
@@ -136,7 +141,78 @@ struct HeaderIndicators: View {
                 }
                 .transition(.scale.combined(with: .opacity))
             }
+            if !fit.overflow.isEmpty {
+                MoreIndicatorsMenu(model: model, fit: fit, isOpen: open.map(fit.overflow.contains) ?? false)
+                    // A card opened from the menu points at the count.
+                    .anchorPreference(key: IndicatorAnchors.self, value: .bounds) { anchor in
+                        Dictionary(uniqueKeysWithValues: indicators.filter {
+                            fit.overflow.contains($0.id) && $0.detail != nil
+                        }.map { ($0.id, anchor) })
+                    }
+                .transition(.scale.combined(with: .opacity))
+            }
         }
+    }
+}
+
+/// The count of the indicators the header has no room for, at the end of its strip: a
+/// menu of them, by what each says, where one with a card opens it, as a click on the
+/// indicator would, under the count. It lights while such a card is open, as an
+/// indicator's button does, and while its menu is up. It is coloured as an indicator's
+/// button is (`IndicatorButton`).
+struct MoreIndicatorsMenu: View {
+    let model: IslandViewModel
+    let items: [HeaderMenuItem]
+    let isOpen: Bool
+    @State private var isHovering = false
+    @State private var showsMenu = false
+
+    init(model: IslandViewModel, fit: HeaderIndicatorFit, isOpen: Bool) {
+        self.model = model
+        items = fit.menuItems(model.center.indicators)
+        self.isOpen = isOpen
+    }
+
+    /// Opens the card of the indicator `id`, or closes it, as a click on the indicator
+    /// would.
+    func choose(_ id: String) {
+        model.toggleIndicatorCard(id: id)
+    }
+
+    /// The menu's items.
+    var entries: some View {
+        ForEach(items) { item in
+            Button {
+                choose(item.id)
+            } label: {
+                Label(item.title, systemImage: item.symbol)
+            }
+            .disabled(!item.isEnabled)
+        }
+    }
+
+    var body: some View {
+        let open = isOpen || showsMenu
+        Menu {
+            entries
+        } label: {
+            Text("+\(items.count)")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(open || isHovering ? 0.75 : 0.45))
+                .frame(width: HeaderIndicatorFit.moreWidth, height: IndicatorCardLayout.buttonHeight)
+                .background(Capsule().fill(.white.opacity(open ? 0.16 : (isHovering ? 0.08 : 0))))
+                .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { isHovering = $0 }
+        .headerMenuState(isUp: model.isShowingMenu, isHovering: $isHovering, showsMenu: $showsMenu)
+        .help("More indicators")
+        .accessibilityLabel("More indicators")
+        .accessibilityValue("\(items.count)")
     }
 }
 

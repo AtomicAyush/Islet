@@ -345,6 +345,11 @@ struct HomeDoneButton: View {
     let action: () -> Void
     @State private var isHovering = false
 
+    /// How wide the button is drawn, taken from the button itself, once, so it stays
+    /// true to its word and padding whatever they become. The header leaves the
+    /// indicators the rest of its room.
+    @MainActor static let width: CGFloat = ceil(NSHostingView(rootView: HomeDoneButton {}.fixedSize()).fittingSize.width)
+
     var body: some View {
         Button(action: action) {
             Text("Done")

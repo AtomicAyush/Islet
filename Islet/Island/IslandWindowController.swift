@@ -12,6 +12,8 @@ final class IslandWindowController {
 
     private var layout: IslandLayout?
     private var monitors: [Any] = []
+    /// Told as a menu comes up in Islet or goes (`IslandViewModel.menu(isUp:)`).
+    private var menuObservers: [NSObjectProtocol] = []
     /// Listening for Escape, while the home page is being arranged.
     private var escapeMonitors: [Any] = []
     private var dragChangeCount = NSPasteboard(name: .drag).changeCount
@@ -59,6 +61,8 @@ final class IslandWindowController {
     func invalidate() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
+        menuObservers.forEach(NotificationCenter.default.removeObserver)
+        menuObservers.removeAll()
         listenForEscape(false)
         panel.orderOut(nil)
         panel.close()
@@ -131,6 +135,14 @@ final class IslandWindowController {
             return event
         }) {
             monitors.append(m)
+        }
+        // While a menu is up, the pointer's moves are its own and reach no monitor; one
+        // from the island holds it open meanwhile. Told on the posting thread, the main
+        // one, as the menu comes up, not after.
+        for (name, isUp) in [(NSMenu.didBeginTrackingNotification, true), (NSMenu.didEndTrackingNotification, false)] {
+            menuObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.model.menu(isUp: isUp) }
+            })
         }
         // Scrolls only reach the panel while the pointer is over the island.
         if let m = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] event in
