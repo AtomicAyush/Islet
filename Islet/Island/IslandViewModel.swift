@@ -46,6 +46,19 @@ final class IslandViewModel {
     /// controller; decides how many further activities have bubbles beside the island,
     /// and whether one folds into it.
     var menuBarRoomRight = CGFloat.infinity
+    /// How far left of the notch's centre the front app's menus end: infinity on a
+    /// display with no menu bar, and 0 until measured, or when nothing can tell (no
+    /// Accessibility, or the menus on another display). Set by the controller; decides
+    /// how many bubbles fit left of the island.
+    var menuBarRoomLeft: CGFloat = 0
+    /// How far right of the notch's centre the first of the front app's menus that
+    /// reach past it begins (`MenuBarRoom.Menus.roomRight`): infinity when none do, as
+    /// usually, or while the bubbles go right of the island only, when the menus are
+    /// not looked at. Set by the controller; the bubbles right of the island stop short
+    /// of such menus as they do of the status items.
+    var menusRoomRight = CGFloat.infinity
+    /// Which sides of the island the bubbles go on. Set by the manager from preferences.
+    var bubblePlacement = BubblePlacement.bothSides
 
     /// Something beside the island's own content that takes a click of its own: a
     /// further activity, in its bubble or folded into the island, or the bubble that
@@ -218,12 +231,21 @@ final class IslandViewModel {
         return Array(center.activities.dropFirst())
     }
 
-    /// The activities in detached bubbles, side by side right of the island, while it
-    /// is compact and they fit beside it. A banner in the island's place, and the
-    /// opened island, absorb them; a banner riding under the activity leaves them be,
-    /// but for those its row pushes too far (`IslandLayout.takesInBubble`).
+    /// The activities in detached bubbles beside the island, in order, while it is
+    /// compact and they fit beside it. A banner in the island's place, and the opened
+    /// island, absorb them; a banner riding under the activity leaves them be, but for
+    /// those its row pushes too far (`IslandLayout.takesInBubble`).
     var bubbleActivities: [any IslandActivity] {
-        Array(otherActivities.prefix(layout.bubblesShown))
+        bubbles.map(\.activity)
+    }
+
+    /// Each activity in a detached bubble, in order, with where its bubble is: which
+    /// side of the island, and its place in the row on that side, from 0 beside it.
+    var bubbles: [(activity: any IslandActivity, place: IslandLayout.BubblePlace)] {
+        let layout = self.layout
+        return otherActivities.prefix(layout.bubbleCount).enumerated().compactMap { index, activity in
+            layout.isBubbleShown(at: index) ? (activity, layout.bubblePlace(at: index)) : nil
+        }
     }
 
     /// The first activity with no bubble, folded into the island's leading wing,
@@ -473,6 +495,18 @@ final class IslandViewModel {
     func compactButtonClicked() {
         compactButton = .clicked
         cancelExpand()
+    }
+
+    /// A right-click on the compact island's own row brought up its menu. Shut, it
+    /// stays shut until the pointer has left it, as after a click on a button in the
+    /// compact row: the menu is what was wanted, and resting on the island meanwhile
+    /// must not open it. Only when there is a menu: a right-click on the idle notch or
+    /// a banner brings none up, and leaves hover to open the island as ever. A bubble's
+    /// menu leaves the island be, since resting on a bubble never opens it. The window
+    /// controller tells it only of right-clicks on the row, not a row riding under it.
+    func menuOpened() {
+        guard !isExpanded, isHovering, !compactChoices.isEmpty else { return }
+        compactButtonClicked()
     }
 
     /// The pointer is on the notch (or the strip standing in for it) while the island
@@ -866,6 +900,10 @@ struct IslandLayout: Equatable {
     /// growth moves them out by 5, and a hovered bubble swells by 2 more, and neither
     /// may be cut off.
     static let windowEdgeClearance: CGFloat = 7
+    /// How far short of the front app's menus the bubbles stop at rest: the 2 they keep
+    /// from the status items, and the 5 the island's hover growth moves them out by, so
+    /// they stay clear of the menu titles with the island hovered too.
+    static let menusClearance: CGFloat = 7
     /// The count of the activities with no room, where it rides on the folded icon or
     /// the last bubble: a small capsule at the circle's bottom trailing corner.
     static let badgeSize = CGSize(width: 15, height: 10)
@@ -928,19 +966,28 @@ struct IslandLayout: Equatable {
     /// island is at rest (see `make(for:)`). The one folded in, if any, is the next.
     var bubbleCount = 0
     /// How many of those bubbles are beside the island now: fewer than `bubbleCount`
-    /// while a passing row takes the last of them in.
+    /// while a passing row takes the outermost of them in.
     var bubblesShown = 0
+    /// How many of the bubbles are left of the island, the rest being right of it
+    /// (`bubblePlace(at:)`): none unless there is room there and both sides are wanted.
+    var leftBubbleCount = 0
+    /// How many of those are beside the island now.
+    var leftBubblesShown = 0
+    var rightBubbleCount: Int { bubbleCount - leftBubbleCount }
     /// How many further activities have neither a bubble nor the fold, which a small
     /// bubble after the others counts, or, with no room for it, the folded icon.
     var overflowCount = 0
     /// Whether the count of those left over has a bubble of its own. Without one, it
     /// rides on the folded icon, or, with nothing folded, on the last bubble.
     var showsOverflowBubble = false
+    /// The count's own bubble is left of the island, after the bubbles there, rather
+    /// than right of it (`overflowPlace`).
+    var overflowOnLeft = false
     /// The count rides on the folded icon.
     var badgesFolded: Bool { overflowCount > 0 && !showsOverflowBubble && foldsSecondary }
     /// The count rides on the last bubble, while that bubble is beside the island.
     var badgesLastBubble: Bool {
-        overflowCount > 0 && !showsOverflowBubble && !foldsSecondary && bubbleCount > 0 && bubblesShown == bubbleCount
+        overflowCount > 0 && !showsOverflowBubble && !foldsSecondary && bubbleCount > 0 && isBubbleShown(at: bubbleCount - 1)
     }
     /// A passing row (`IslandViewModel.rowIsPassing`) widens the island too far for
     /// some of the bubbles beside it, and the island takes them in until the row has
@@ -1014,91 +1061,163 @@ struct IslandLayout: Equatable {
         )
     }
 
-    /// How far past the last bubble's bottom trailing corner the count riding on it
-    /// sits: no further right than the bubble, which may end just short of the status
-    /// items, and a point below it.
+    /// How far past the last bubble's bottom outer corner the count riding on it sits:
+    /// no further out than the bubble, which may end just short of the status items (or,
+    /// left of the island, the menus), and a point below it.
     static let bubbleBadgeOffset = CGSize(width: 0, height: 1)
 
     /// Where the count riding on the last bubble is, relative to the notch's top
     /// centre (x rightwards, y downwards); null when it rides elsewhere or there is none.
+    /// It sits at the bubble's bottom corner away from the island: the trailing one
+    /// right of it, the leading one left of it.
     var bubbleBadgeRect: CGRect {
         guard badgesLastBubble else { return .null }
-        let center = bubbleCenterOffset(at: CGFloat(bubbleCount - 1))
-        let corner = CGPoint(
-            x: center.width + bubbleDiameter / 2 + Self.bubbleBadgeOffset.width,
-            y: center.height + bubbleDiameter / 2 + Self.bubbleBadgeOffset.height
-        )
+        let last = bubblePlace(at: bubbleCount - 1)
+        let center = bubbleCenterOffset(at: CGFloat(last.slot), side: last.side)
+        let outer = bubbleDiameter / 2 + Self.bubbleBadgeOffset.width
         return CGRect(
-            x: corner.x - Self.badgeSize.width, y: corner.y - Self.badgeSize.height,
+            x: last.side == .left ? center.width - outer : center.width + outer - Self.badgeSize.width,
+            y: center.height + bubbleDiameter / 2 + Self.bubbleBadgeOffset.height - Self.badgeSize.height,
             width: Self.badgeSize.width, height: Self.badgeSize.height
         )
     }
 
-    /// Where the centre of the bubble in `slot` sits relative to the notch's top
-    /// centre: the first beside the island, each next one a bubble and a gap further
-    /// right. A fractional slot is on its way between two.
-    func bubbleCenterOffset(at slot: CGFloat) -> CGSize {
-        CGSize(
-            width: size.width / 2 + Self.bubbleGap + bubbleDiameter / 2 + slot * (bubbleDiameter + Self.bubbleGap),
-            height: topInset + notch.height / 2
-        )
+    /// Which side of the island a bubble is on.
+    enum Side: Hashable {
+        case right, left
+    }
+
+    /// Where a bubble is: which side of the island, and its place in the row there,
+    /// from 0 beside the island.
+    struct BubblePlace: Equatable {
+        var side: Side
+        var slot: Int
+    }
+
+    /// The side each of `count` bubbles goes on, in order, with room for `right` of them
+    /// right of the island and `left` left of it: right, then left, then right again,
+    /// and once one side is full, the rest on the other. So the first always has the
+    /// place right of the island it has on its own, wherever there is room for it.
+    static func sides(count: Int, right: Int, left: Int) -> [Side] {
+        var onRight = 0, onLeft = 0
+        return (0..<count).map { index in
+            let goesRight = index.isMultiple(of: 2) ? onRight < right : onLeft >= left
+            if goesRight { onRight += 1 } else { onLeft += 1 }
+            return goesRight ? .right : .left
+        }
+    }
+
+    /// Where the bubble of the further activity at `index` (in order, from 0) is.
+    func bubblePlace(at index: Int) -> BubblePlace {
+        let sides = Self.sides(count: bubbleCount, right: rightBubbleCount, left: leftBubbleCount)
+        guard sides.indices.contains(index) else { return BubblePlace(side: .right, slot: index) }
+        let side = sides[index]
+        return BubblePlace(side: side, slot: sides[..<index].filter { $0 == side }.count)
+    }
+
+    /// Whether the bubble of the further activity at `index` is beside the island now:
+    /// a passing row takes in the outermost on each side first.
+    func isBubbleShown(at index: Int) -> Bool {
+        guard index >= 0, index < bubbleCount else { return false }
+        let place = bubblePlace(at: index)
+        return place.slot < (place.side == .left ? leftBubblesShown : bubblesShown - leftBubblesShown)
+    }
+
+    /// Where the bubble counting the activities left over is: after the bubbles on its side.
+    var overflowPlace: BubblePlace {
+        overflowOnLeft
+            ? BubblePlace(side: .left, slot: leftBubbleCount)
+            : BubblePlace(side: .right, slot: rightBubbleCount)
+    }
+
+    /// Where the centre of the bubble in `slot` on `side` sits relative to the notch's
+    /// top centre: the first beside the island, each next one a bubble and a gap further
+    /// out. A fractional slot is on its way between two.
+    func bubbleCenterOffset(at slot: CGFloat, side: Side = .right) -> CGSize {
+        let out = size.width / 2 + Self.bubbleGap + bubbleDiameter / 2 + slot * (bubbleDiameter + Self.bubbleGap)
+        return CGSize(width: side == .left ? -out : out, height: topInset + notch.height / 2)
     }
 
     /// Where the centre of the bubble counting the activities left over sits relative
-    /// to the notch's top centre: in the slot after the last of the others, its
-    /// smaller circle a gap from theirs.
-    func overflowCenterOffset(at slot: CGFloat) -> CGSize {
-        CGSize(
-            width: size.width / 2 + Self.bubbleGap + overflowDiameter / 2 + slot * (bubbleDiameter + Self.bubbleGap),
-            height: topInset + notch.height / 2
-        )
+    /// to the notch's top centre: in the slot after the last of the others on its side,
+    /// its smaller circle a gap from theirs.
+    func overflowCenterOffset(at slot: CGFloat, side: Side = .right) -> CGSize {
+        let out = size.width / 2 + Self.bubbleGap + overflowDiameter / 2 + slot * (bubbleDiameter + Self.bubbleGap)
+        return CGSize(width: side == .left ? -out : out, height: topInset + notch.height / 2)
     }
 
     /// Where the further activities go, given how far right of the island at rest the
     /// bubbles may reach (`room`) and how far with one folded in, which can widen it
-    /// (`roomFolded`). Every one of them has a bubble when there are no more than
-    /// `maxBubbles` and they all fit. Otherwise as many as fit (no more than
-    /// `maxBubbles`) have bubbles, and the first to miss out folds into the island,
-    /// so long as that costs none of those bubbles: the fold widens the island, and
-    /// moves them all out. Any left over are counted, in a bubble of their own after
-    /// the others if that fits too, or else on the folded icon, or, with nothing
-    /// folded, on the last bubble.
+    /// (`roomFolded`), and the same left of it (`leftRoom`, `leftRoomFolded`; none
+    /// unless both sides are wanted). Every one of them has a bubble when there are no
+    /// more than `maxBubbles` and they all fit, right, left, right and so on
+    /// (`sides(count:right:left:)`). Otherwise as many as fit on both sides together
+    /// (no more than `maxBubbles`) have bubbles, and the first to miss out folds into
+    /// the island, so long as that costs none of those bubbles, nor moves one to the
+    /// other side: the fold widens the island, and moves them all out. Any left over
+    /// are counted, in a bubble of their own after the others on the side whose turn is
+    /// next, or the other if it fits only there, or else on the folded icon, or, with
+    /// nothing folded, on the last bubble.
     ///
     /// So the fold never takes a bubble away: the activity after the island has the
-    /// bubble it would have were only the two of them running, whenever there is room.
+    /// bubble right of it that it would have were only the two of them running,
+    /// whenever there is room. And one further activity alone never goes left: with no
+    /// room right of the island it folds in, exactly as with bubbles right of it only.
     struct Bubbles: Equatable {
         var count = 0
         var folds = false
         var overflow = 0
         var overflowBubble = false
+        /// How many of the bubbles are left of the island.
+        var left = 0
+        /// The count's bubble is left of the island.
+        var overflowLeft = false
     }
 
     static func arrangeBubbles(
-        others: Int, room: CGFloat, roomFolded: CGFloat, diameter: CGFloat, overflowDiameter: CGFloat
+        others: Int, room: CGFloat, roomFolded: CGFloat, leftRoom: CGFloat = 0, leftRoomFolded: CGFloat = 0,
+        diameter: CGFloat, overflowDiameter: CGFloat
     ) -> Bubbles {
         let pitch = diameter + bubbleGap
         guard others > 0 else { return Bubbles() }
-        func fitting(_ most: Int, in room: CGFloat) -> Int {
-            var count = min(maxBubbles, most)
+        let leftRoom = others > 1 ? leftRoom : 0, leftRoomFolded = others > 1 ? leftRoomFolded : 0
+        func capacity(_ room: CGFloat) -> Int {
+            var count = maxBubbles
             while count > 0, CGFloat(count) * pitch > room { count -= 1 }
             return count
         }
-        func countFits(after count: Int, in room: CGFloat) -> Bool {
-            CGFloat(count) * pitch + bubbleGap + overflowDiameter <= room
+        /// How many of `most` have bubbles, and how many of those go left.
+        func fitting(_ most: Int, right: CGFloat, left: CGFloat) -> (count: Int, left: Int) {
+            let onRight = capacity(right), onLeft = capacity(left)
+            let count = min(maxBubbles, most, onRight + onLeft)
+            return (count, sides(count: count, right: onRight, left: onLeft).filter { $0 == .left }.count)
         }
-        let unfolded = fitting(others, in: room)
-        if unfolded == others { return Bubbles(count: others) }
-        let folded = fitting(others - 1, in: roomFolded)
-        if folded >= unfolded {
-            let overflow = others - 1 - folded
+        /// Which side the count's bubble goes on after `placed`, if either has room for it.
+        func countSide(after placed: (count: Int, left: Int), right: CGFloat, left: CGFloat) -> Side? {
+            func fits(after count: Int, in room: CGFloat) -> Bool {
+                CGFloat(count) * pitch + bubbleGap + overflowDiameter <= room
+            }
+            let fitsRight = fits(after: placed.count - placed.left, in: right)
+            let fitsLeft = fits(after: placed.left, in: left)
+            // The side whose turn it is, right after an even number of bubbles.
+            if placed.count.isMultiple(of: 2) { return fitsRight ? .right : fitsLeft ? .left : nil }
+            return fitsLeft ? .left : fitsRight ? .right : nil
+        }
+        let unfolded = fitting(others, right: room, left: leftRoom)
+        if unfolded.count == others { return Bubbles(count: others, left: unfolded.left) }
+        let folded = fitting(others - 1, right: roomFolded, left: leftRoomFolded)
+        if folded.count >= unfolded.count, folded.left == unfolded.left {
+            let overflow = others - 1 - folded.count
+            let side = overflow > 0 ? countSide(after: folded, right: roomFolded, left: leftRoomFolded) : nil
             return Bubbles(
-                count: folded, folds: true, overflow: overflow,
-                overflowBubble: overflow > 0 && countFits(after: folded, in: roomFolded)
+                count: folded.count, folds: true, overflow: overflow, overflowBubble: side != nil,
+                left: folded.left, overflowLeft: side == .left
             )
         }
+        let side = countSide(after: unfolded, right: room, left: leftRoom)
         return Bubbles(
-            count: unfolded, folds: false, overflow: others - unfolded,
-            overflowBubble: countFits(after: unfolded, in: room)
+            count: unfolded.count, folds: false, overflow: others - unfolded.count, overflowBubble: side != nil,
+            left: unfolded.left, overflowLeft: side == .left
         )
     }
 
@@ -1223,8 +1342,13 @@ struct IslandLayout: Equatable {
                 // the island takes those in until the row has gone, as a banner in the
                 // island's place does. Nor do the bubbles reach so near the window's edge
                 // that the island's hover growth could push one past it.
+                // Left of the island, the bubbles stop short of the front app's menus, as
+                // right of it they stop short of the status items, and of any menus that
+                // reach past the notch.
                 let fold = foldedInset + foldedDiameter + foldedSpacing
-                let limit = min(model.menuBarRoomRight - 2, canvas.width / 2 - windowEdgeClearance)
+                let edge = canvas.width / 2 - windowEdgeClearance
+                let limit = min(model.menuBarRoomRight - 2, model.menusRoomRight - menusClearance, edge)
+                let leftLimit = model.bubblePlacement == .bothSides ? min(model.menuBarRoomLeft - menusClearance, edge) : 0
                 func islandEnd(row: IslandAttachment?, folded: Bool) -> CGFloat {
                     notch.width / 2 + max(leading + (folded ? fold : 0), trailing, wing(for: row)) + ear
                 }
@@ -1235,23 +1359,33 @@ struct IslandLayout: Equatable {
                     others: others,
                     room: limit - islandEnd(row: resting, folded: false),
                     roomFolded: limit - islandEnd(row: resting, folded: true),
+                    leftRoom: leftLimit - islandEnd(row: resting, folded: false),
+                    leftRoomFolded: leftLimit - islandEnd(row: resting, folded: true),
                     diameter: layout.bubbleDiameter,
                     overflowDiameter: layout.overflowDiameter
                 )
                 if bubbles.folds { layout.foldedWidth = fold }
                 layout.bubbleCount = bubbles.count
                 layout.bubblesShown = bubbles.count
+                layout.leftBubbleCount = bubbles.left
+                layout.leftBubblesShown = bubbles.left
                 layout.overflowCount = bubbles.overflow
                 layout.showsOverflowBubble = bubbles.overflowBubble
+                layout.overflowOnLeft = bubbles.overflowLeft
                 if passing {
-                    let room = limit - islandEnd(row: attachment, folded: bubbles.folds)
+                    // On each side, the outermost bubbles the row pushes too far.
+                    let end = islandEnd(row: attachment, folded: bubbles.folds)
+                    let room = limit - end, leftRoom = leftLimit - end
                     let pitch = layout.bubbleDiameter + bubbleGap
-                    while layout.bubblesShown > 0, CGFloat(layout.bubblesShown) * pitch > room {
-                        layout.bubblesShown -= 1
-                    }
-                    let overflowEnd = CGFloat(bubbles.count) * pitch + bubbleGap + layout.overflowDiameter
+                    var right = layout.rightBubbleCount, left = layout.leftBubbleCount
+                    while right > 0, CGFloat(right) * pitch > room { right -= 1 }
+                    while left > 0, CGFloat(left) * pitch > leftRoom { left -= 1 }
+                    layout.bubblesShown = right + left
+                    layout.leftBubblesShown = left
+                    let count = layout.overflowPlace
+                    let overflowEnd = CGFloat(count.slot) * pitch + bubbleGap + layout.overflowDiameter
                     layout.takesInBubble = layout.bubblesShown < bubbles.count
-                        || (bubbles.overflowBubble && overflowEnd > room)
+                        || (bubbles.overflowBubble && overflowEnd > (count.side == .left ? leftRoom : room))
                 }
             }
             wings(leading: leading + layout.foldedWidth, trailing: trailing, grow: 5 * hover)

@@ -26,6 +26,7 @@ final class KeepAwakeFeature: Feature {
     /// Where the tile goes on the home page, until the person puts it somewhere else.
     static let tileOrder = 35
     var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 100) }
 
     /// What became of a session that was asked for.
     enum Outcome: Equatable {

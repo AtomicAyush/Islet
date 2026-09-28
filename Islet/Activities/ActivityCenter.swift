@@ -9,9 +9,22 @@ import Observation
 final class ActivityCenter {
     static let shared = ActivityCenter()
 
-    /// Ongoing activities, highest priority first; within a priority the highest rank
-    /// first, then the newest.
+    /// Ongoing activities, the one holding the island first and the rest in the order
+    /// of their bubbles (`precedes`). Until the person chooses otherwise: highest
+    /// priority first; within a priority the highest rank first, then the newest.
     private(set) var activities: [any IslandActivity] = []
+    /// The activity the person chose to hold the island ("Show in Island"), whatever
+    /// else is going on, until it ends, they choose another, or they let Islet choose
+    /// again. Only an urgent activity goes before it.
+    private(set) var pinnedID: String?
+    /// How the person ordered the live activities, which decides between them once
+    /// they have (`IslandArrangement`). Only a test replaces it.
+    @ObservationIgnored var islandArrangement = IslandArrangement() {
+        didSet {
+            follow(islandArrangement)
+            reorder()
+        }
+    }
     /// The transient alert on screen, if any.
     private(set) var banner: IslandBanner?
     /// Brief content riding under the compact island, if any.
@@ -127,7 +140,19 @@ final class ActivityCenter {
         }
     }
 
-    private init() {}
+    private init() {
+        follow(islandArrangement)
+    }
+
+    /// Takes the activities in `arrangement`'s order whenever it changes, and gives it
+    /// the island's own order to list until it is arranged.
+    private func follow(_ arrangement: IslandArrangement) {
+        arrangement.changed = { [weak self] in self?.reorder() }
+        arrangement.automaticOrder = { [weak self] in
+            guard let self else { return [] }
+            return activities.sorted(by: automaticallyPrecedes).map(\.id)
+        }
+    }
 
     var primary: (any IslandActivity)? { activities.first }
     var secondary: (any IslandActivity)? { activities.dropFirst().first }
@@ -144,11 +169,7 @@ final class ActivityCenter {
         if startedAt[activity.id] == nil { startedAt[activity.id] = Date() }
         var next = activities.filter { $0.id != activity.id }
         next.append(activity)
-        next.sort { a, b in
-            if a.priority != b.priority { return a.priority > b.priority }
-            if a.rank != b.rank { return a.rank > b.rank }
-            return (startedAt[a.id] ?? .distantPast) > (startedAt[b.id] ?? .distantPast)
-        }
+        next.sort(by: precedes)
         withAnimation(.islandMorph) {
             activities = next
             revision &+= 1
@@ -161,6 +182,8 @@ final class ActivityCenter {
         guard activities.contains(where: { $0.id == id }) else { return }
         let bannerRode = bannerRidesUnder
         startedAt[id] = nil
+        // The one chosen ending lets Islet choose again; the rest are in order already.
+        if pinnedID == id { pinnedID = nil }
         withAnimation(.islandMorph) {
             activities.removeAll { $0.id == id }
             // A standing row goes with its activity rather than wait to come back
@@ -173,6 +196,79 @@ final class ActivityCenter {
     }
 
     func isShowing(id: String) -> Bool { activities.contains { $0.id == id } }
+
+    // MARK: Choosing what holds the island
+
+    /// Whether `a` goes before `b`: holds the island rather than it, or has the bubble
+    /// nearer it.
+    ///
+    /// 1. An urgent activity goes first, whatever the person chose: a preview on screen
+    ///    for a moment, there to be looked at. Nothing else is modelled as one the
+    ///    island must show.
+    /// 2. Then the one the person chose to hold the island (`pinnedID`).
+    /// 3. Then, once the person has arranged the order (`IslandArrangement`), by
+    ///    their order, whatever the priorities; one they have not placed (an activity
+    ///    no feature lists) after every one they have.
+    /// 4. Otherwise, as ever: the higher priority, then the higher rank, then the newer.
+    ///
+    /// With nothing chosen and nothing arranged, only the first and last apply, and the
+    /// first is the last's own first step: the order is exactly the one of priority,
+    /// rank and age the island has always had.
+    private func precedes(_ a: any IslandActivity, _ b: any IslandActivity) -> Bool {
+        let aUrgent = a.priority == .urgent, bUrgent = b.priority == .urgent
+        if aUrgent != bUrgent { return aUrgent }
+        if !aUrgent, let pinnedID, (a.id == pinnedID) != (b.id == pinnedID) {
+            return a.id == pinnedID
+        }
+        if !aUrgent, islandArrangement.isArranged {
+            let aPlace = islandArrangement.place(of: a.id), bPlace = islandArrangement.place(of: b.id)
+            if aPlace != bPlace {
+                guard let aPlace else { return false }
+                guard let bPlace else { return true }
+                return aPlace < bPlace
+            }
+        }
+        return automaticallyPrecedes(a, b)
+    }
+
+    /// Whether `a` goes before `b` by priority, rank and age alone: the island's order
+    /// with nothing chosen or arranged.
+    private func automaticallyPrecedes(_ a: any IslandActivity, _ b: any IslandActivity) -> Bool {
+        if a.priority != b.priority { return a.priority > b.priority }
+        if a.rank != b.rank { return a.rank > b.rank }
+        return (startedAt[a.id] ?? .distantPast) > (startedAt[b.id] ?? .distantPast)
+    }
+
+    /// Makes activity `id` hold the island from now on ("Show in Island"), until it
+    /// ends, another is chosen, or `unpin()`. Returns whether it is running to choose.
+    @discardableResult
+    func pin(id: String) -> Bool {
+        guard isShowing(id: id) else { return false }
+        if pinnedID != id {
+            pinnedID = id
+            reorder()
+        }
+        return true
+    }
+
+    /// Lets the island go by the person's order, or priority, rank and age, again.
+    func unpin() {
+        guard pinnedID != nil else { return }
+        pinnedID = nil
+        reorder()
+    }
+
+    /// Takes the activities in the order `precedes` gives them now, after a choice or
+    /// the arrangement changed. A different one holding the island springs in as one
+    /// arriving does, and whatever rides under it follows it as it would then: a
+    /// standing row shows only under its own activity, and a banner rides under a
+    /// primary it is not news of.
+    private func reorder() {
+        let next = activities.sorted(by: precedes)
+        guard next.map(\.id) != activities.map(\.id) else { return }
+        withAnimation(.islandMorph) { activities = next }
+        settleBannerClock()
+    }
 
     // MARK: Banners
 

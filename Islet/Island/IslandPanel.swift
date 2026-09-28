@@ -59,4 +59,12 @@ final class IslandHostingView<Content: View>: NSHostingView<Content> {
     required init?(coder: NSCoder) { fatalError() }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// VoiceOver's actions on the island as a whole, asked for afresh each time
+    /// (`IslandViewModel.compactAccessibilityActions`). The window controller sets it.
+    var islandActions: () -> [NSAccessibilityCustomAction] = { [] }
+
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        (super.accessibilityCustomActions() ?? []) + islandActions()
+    }
 }

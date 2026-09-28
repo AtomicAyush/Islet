@@ -37,6 +37,24 @@ enum HomeLayout: String, CaseIterable, Identifiable {
     }
 }
 
+/// Which sides of the island further activities' bubbles go on.
+enum BubblePlacement: String, CaseIterable, Identifiable {
+    /// Right of the island, then left, then right again, in order, each side taking as
+    /// many as it has room for.
+    case bothSides
+    /// Right of the island only.
+    case rightOnly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .bothSides: "Both sides"
+        case .rightOnly: "Right side only"
+        }
+    }
+}
+
 /// UserDefaults keys and their defaults. Views bind to these with `@AppStorage`;
 /// everything else reads them through the accessors below so there is one spelling
 /// of each key.
@@ -45,10 +63,13 @@ enum Prefs {
         static let expandOnHover = "expandOnHover"
         static let hoverDelay = "hoverDelay"
         static let homeLayout = "homeLayout"
+        static let bubblePlacement = "bubblePlacement"
         /// The home page's tiles in the person's order (`HomeTileOrder.placed`).
         static let homeTileOrder = "homeTileOrder"
         /// The home page's tiles the person hid.
         static let hiddenHomeTiles = "hiddenHomeTiles"
+        /// Live activities in the person's order for the island (`IslandArrangement`).
+        static let islandOrder = "islandOrder"
         static let haptics = "haptics"
         static let displays = "displays"
         static let hideInFullScreen = "hideInFullScreen"
@@ -65,6 +86,7 @@ enum Prefs {
             Key.expandOnHover: true,
             Key.hoverDelay: 0.25,
             Key.homeLayout: HomeLayout.scroll.rawValue,
+            Key.bubblePlacement: BubblePlacement.bothSides.rawValue,
             Key.haptics: true,
             Key.displays: DisplayChoice.notched.rawValue,
             Key.hideInFullScreen: true,
@@ -92,6 +114,10 @@ enum Prefs {
 
     static var homeLayout: HomeLayout {
         HomeLayout(rawValue: store.string(forKey: Key.homeLayout) ?? "") ?? .scroll
+    }
+
+    static var bubblePlacement: BubblePlacement {
+        BubblePlacement(rawValue: store.string(forKey: Key.bubblePlacement) ?? "") ?? .bothSides
     }
 
     static var displays: DisplayChoice {

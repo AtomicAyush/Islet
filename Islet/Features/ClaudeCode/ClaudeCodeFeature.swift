@@ -26,6 +26,7 @@ final class ClaudeCodeFeature: Feature {
     let title = "Claude Code"
     let symbol = "sparkle"
     let summary = "Claude Code sessions beside the notch while they work, wait for you or work in the background."
+    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 70) }
 
     /// How long a preview's made-up sessions show.
     static let previewLength: TimeInterval = 12

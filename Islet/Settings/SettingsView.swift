@@ -36,9 +36,12 @@ private struct GeneralSettings: View {
                 GeneralRow.hover
                 GeneralRow.haptics
                 GeneralRow.homeLayout
+                GeneralRow.bubblePlacement
             }
 
             HomeTilesSection(arrangement: ActivityCenter.shared.homeArrangement)
+
+            IslandOrderSection(arrangement: ActivityCenter.shared.islandArrangement)
 
             Section("Displays") {
                 GeneralRow.displays

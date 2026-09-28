@@ -1,7 +1,9 @@
 import SwiftUI
 
 /// How strongly an activity claims the island. The highest one is shown compact
-/// around the notch; the others get detached bubbles beside it, as many as fit.
+/// around the notch; the others get detached bubbles beside it, as many as fit. The
+/// activity the person chose, and the order they arranged, go before every priority
+/// but urgent (`ActivityCenter.activities`).
 enum ActivityPriority: Int, Comparable {
     case background = 0
     case normal = 1

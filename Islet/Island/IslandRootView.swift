@@ -166,6 +166,7 @@ private struct IslandSurface: View {
                     isCountHovered: model.hoveredSecondary == .overflow,
                     open: { model.expand(focus: $0) }
                 )
+                .compactIslandChoices()
             }
 
         case .banner:
@@ -282,6 +283,7 @@ private struct CompactRow: View {
                         .secondaryHover(isFoldedHovered)
                         .accessibilityElement(children: .ignore)
                         .activityAccessibility(folded) { open(folded.id) }
+                        .islandChoices(forActivity: folded.id, menu: false)
                         .overlay(alignment: .bottomTrailing) {
                             if layout.badgesFolded {
                                 OverflowBadge(count: layout.overflowCount, counted: counted, isHovered: isCountHovered) {
@@ -394,10 +396,10 @@ struct IndicatorDots: View {
 }
 
 /// The detached bubbles the iPhone uses for further live activities, side by side
-/// right of the island, and after them the count of any with no room. Each keeps what
-/// it last showed, so it can merge back into its neighbour or the island after its
-/// activity has already gone, and keeps its place while it does, so the others slide
-/// into theirs rather than jump.
+/// right of the island and, where there is room, left of it too, and after them the
+/// count of any with no room. Each keeps what it last showed, so it can merge back
+/// into its neighbour or the island after its activity has already gone, and keeps its
+/// place while it does, so the others slide into theirs rather than jump.
 private struct BubbleLayer: View {
     let model: IslandViewModel
     let layout: IslandLayout
@@ -407,13 +409,13 @@ private struct BubbleLayer: View {
 
     var body: some View {
         let wanted = self.wanted
-        let targets = Set(wanted.map(\.target))
+        let keys = Set(wanted.map(\.key))
         /// The island each bubble sits beside. One no longer wanted keeps to the island
         /// it was drawn beside, from the moment it is no longer wanted: before it is
         /// marked as leaving, the island may already have opened, and an opened island
         /// has no room for bubbles at all.
         func beside(_ bubble: ShownBubble) -> IslandLayout {
-            bubble.leftFrom ?? (targets.contains(bubble.target) ? layout : drawnBeside ?? layout)
+            bubble.leftFrom ?? (keys.contains(bubble.id) ? layout : drawnBeside ?? layout)
         }
         return ZStack(alignment: .top) {
             // Every bubble's neck under every bubble, so one budding off its neighbour
@@ -451,17 +453,19 @@ private struct BubbleLayer: View {
     /// carrying the count of those left over when that rides on it, then the count's
     /// own bubble, if it has one.
     private var wanted: [Wanted] {
-        let activities = model.bubbleActivities
+        let bubbles = model.bubbles
         let counted = layout.overflowCount > 0 ? model.countedActivities.map(\.name) : []
-        var wanted = activities.enumerated().map { slot, activity in
-            let badged = layout.badgesLastBubble && slot == activities.count - 1
+        var wanted = bubbles.enumerated().map { index, bubble in
+            let badged = layout.badgesLastBubble && index == bubbles.count - 1
             return Wanted(
-                target: .activity(activity.id), activity: activity,
+                target: .activity(bubble.activity.id), activity: bubble.activity, place: bubble.place,
                 count: badged ? layout.overflowCount : 0, counted: badged ? counted : []
             )
         }
         if model.showsOverflowBubble {
-            wanted.append(Wanted(target: .overflow, activity: nil, count: layout.overflowCount, counted: counted))
+            wanted.append(Wanted(
+                target: .overflow, activity: nil, place: layout.overflowPlace, count: layout.overflowCount, counted: counted
+            ))
         }
         return wanted
     }
@@ -472,27 +476,31 @@ private struct BubbleLayer: View {
     /// from, and sets off a moment later, so there is a first frame to spring from; one
     /// no longer wanted merges back and is let go once it has.
     ///
-    /// The first bubble buds off the island and merges back into it. Any other buds
-    /// off the bubble before it, or merges back into that one, when that one stays
-    /// where it is; when it is on its way somewhere else, or the island's width changes
-    /// and moves them all, its old place would be left behind as a blob of nothing,
-    /// and the island is too far off to reach without crossing the others. So there
-    /// the bubble grows or shrinks where it stands instead, and a neighbour sliding
-    /// over it as it shrinks takes it in.
+    /// The first bubble on each side buds off the island and merges back into it. Any
+    /// other buds off the bubble before it on its side, or merges back into that one,
+    /// when that one stays where it is; when it is on its way somewhere else, or the
+    /// island's width changes and moves them all, its old place would be left behind as
+    /// a blob of nothing, and the island is too far off to reach without crossing the
+    /// others. So there the bubble grows or shrinks where it stands instead, and a
+    /// neighbour sliding over it as it shrinks takes it in.
+    ///
+    /// A bubble is drawn on one side only: one whose activity moves to the other side
+    /// merges back there, and buds off afresh on its new side.
     ///
     /// Those merging back keep to their places beside the island as it was, not as it
     /// is now: opened, it is far wider, and they would be flung out to its new edge.
     private func update(to wanted: [Wanted], from previous: IslandLayout, to current: IslandLayout) {
-        let targets = wanted.map(\.target)
-        // Budding off the island, or merging into it, is from and to its rounded right
-        // end as the narrower of the two islands has it, which stays inside the island
+        let places = Dictionary(wanted.map { ($0.key, $0.place.slot) }, uniquingKeysWith: { first, _ in first })
+        // Budding off the island, or merging into it, is from and to its rounded end
+        // as the narrower of the two islands has it, which stays inside the island
         // whether it grows or shrinks meanwhile.
         let island = previous.size.width <= current.size.width ? previous : current
         let steady = previous.size.width == current.size.width
         var next = bubbles
         var isNew = false
-        for (slot, want) in wanted.enumerated() {
-            if let i = next.firstIndex(where: { $0.target == want.target }) {
+        for want in wanted {
+            let slot = want.place.slot
+            if let i = next.firstIndex(where: { $0.id == want.key }) {
                 if let activity = want.activity { next[i].activity = activity }
                 next[i].count = want.count
                 next[i].counted = want.counted
@@ -502,26 +510,27 @@ private struct BubbleLayer: View {
             } else {
                 // Out of the island, as the first always is; out of the bubble before
                 // it, when that one is settled in its place; otherwise where it stands.
-                let before = slot > 0 ? next.first { $0.target == targets[slot - 1] } : nil
+                let before = slot > 0 ? next.first { $0.side == want.place.side && places[$0.id] == slot - 1 } : nil
                 let settled = steady && before.map {
                     !$0.isLeaving && $0.progress == 1 && $0.slot == CGFloat(slot - 1)
                 } ?? false
                 next.append(ShownBubble(
-                    target: want.target, activity: want.activity, count: want.count, counted: want.counted,
-                    slot: CGFloat(slot), progress: 0, isLeaving: false,
+                    target: want.target, side: want.place.side, activity: want.activity, count: want.count,
+                    counted: want.counted, slot: CGFloat(slot), progress: 0, isLeaving: false,
                     origin: slot == 0 ? .island : settled ? .neighbour : .place, island: island
                 ))
                 isNew = true
             }
         }
         // One let go again before it set off has nothing to merge back.
-        next.removeAll { !targets.contains($0.target) && !$0.hasSetOff }
-        for i in next.indices where !targets.contains(next[i].target) && !next[i].isLeaving {
+        next.removeAll { places[$0.id] == nil && !$0.hasSetOff }
+        for i in next.indices where places[next[i].id] == nil && !next[i].isLeaving {
             // Back into the island, as the first always goes; into the bubble before
             // it, when that one stays where it is; otherwise where it stands.
             let slot = next[i].slot
+            let side = next[i].side
             let stays = steady && next.contains {
-                !$0.isOverflow && $0.slot == slot - 1 && targets.firstIndex(of: $0.target).map(CGFloat.init) == slot - 1
+                !$0.isOverflow && $0.side == side && $0.slot == slot - 1 && places[$0.id].map(CGFloat.init) == slot - 1
             }
             next[i].origin = slot < 0.5 ? .island : stays ? .neighbour : .place
             next[i].isLeaving = true
@@ -533,36 +542,45 @@ private struct BubbleLayer: View {
         // the last to the first, so one budding off its neighbour, or merging back into
         // it, passes under it rather than over its content.
         func place(_ bubble: ShownBubble) -> CGFloat {
-            targets.firstIndex(of: bubble.target).map(CGFloat.init) ?? bubble.slot
+            places[bubble.id].map(CGFloat.init) ?? bubble.slot
         }
         bubbles = next.sorted { a, b in
             a.isLeaving != b.isLeaving ? a.isLeaving : place(a) > place(b)
         }
         if isNew {
-            DispatchQueue.main.async { settle(wanted: targets) }
+            DispatchQueue.main.async { settle(wanted: places) }
         } else {
-            settle(wanted: targets)
+            settle(wanted: places)
         }
     }
 
     /// Springs each bubble wanted to its place and out to its full size, and merges the
     /// others back, letting each go once it has, unless it was wanted again meanwhile.
-    private func settle(wanted targets: [IslandViewModel.SecondaryTarget]) {
+    private func settle(wanted places: [ShownBubble.Key: Int]) {
         withAnimation(.islandMorph) {
             for i in bubbles.indices {
-                guard let slot = targets.firstIndex(of: bubbles[i].target), !bubbles[i].isLeaving else { continue }
+                guard let slot = places[bubbles[i].id], !bubbles[i].isLeaving else { continue }
                 bubbles[i].slot = CGFloat(slot)
                 bubbles[i].progress = 1
                 bubbles[i].hasSetOff = true
             }
         }
-        let departures = bubbles.filter(\.isLeaving).map { ($0.target, $0.departure) }
-        guard !departures.isEmpty else { return }
-        withAnimation(.islandClose) {
-            for i in bubbles.indices where bubbles[i].isLeaving { bubbles[i].progress = 0 }
-        } completion: {
-            bubbles.removeAll { bubble in
-                bubble.isLeaving && departures.contains { $0.0 == bubble.target && $0.1 == bubble.departure }
+        // One changing sides goes back in at the pace its new bubble comes out on the
+        // other side, so that it is never gone from both meanwhile.
+        let wantedAgain = Set(places.keys.map(\.target))
+        for changesSides in [false, true] {
+            let departures = bubbles
+                .filter { $0.isLeaving && wantedAgain.contains($0.target) == changesSides }
+                .map { ($0.id, $0.departure) }
+            guard !departures.isEmpty else { continue }
+            withAnimation(changesSides ? .islandMorph : .islandClose) {
+                for i in bubbles.indices where departures.contains(where: { $0.0 == bubbles[i].id }) {
+                    bubbles[i].progress = 0
+                }
+            } completion: {
+                bubbles.removeAll { bubble in
+                    bubble.isLeaving && departures.contains { $0.0 == bubble.id && $0.1 == bubble.departure }
+                }
             }
         }
     }
@@ -570,11 +588,14 @@ private struct BubbleLayer: View {
     private struct Wanted: Equatable {
         let target: IslandViewModel.SecondaryTarget
         let activity: (any IslandActivity)?
+        let place: IslandLayout.BubblePlace
         let count: Int
         let counted: [String]
 
+        var key: ShownBubble.Key { ShownBubble.Key(target: target, side: place.side) }
+
         static func == (a: Wanted, b: Wanted) -> Bool {
-            a.target == b.target && a.count == b.count && a.counted == b.counted
+            a.target == b.target && a.place == b.place && a.count == b.count && a.counted == b.counted
         }
     }
 }
@@ -583,20 +604,22 @@ private struct BubbleLayer: View {
 /// it sits, and how far it has budded off.
 private struct ShownBubble: Identifiable {
     let target: IslandViewModel.SecondaryTarget
+    /// The side of the island it is on, for as long as it is drawn.
+    let side: IslandLayout.Side
     var activity: (any IslandActivity)?
     /// The number the count's bubble shows; on an activity's bubble, the count of those
     /// left over riding on it, or 0.
     var count: Int
     /// The names of the activities that count stands for, for VoiceOver.
     var counted: [String]
-    /// Its place in the row beside the island, from 0 beside it.
+    /// Its place in the row on its side of the island, from 0 beside it.
     var slot: CGFloat
     /// 0 inside what it buds from, 1 settled in its place.
     var progress: CGFloat
     var isLeaving: Bool
     /// What it buds off, or merges back into.
     var origin: Origin
-    /// The island whose rounded right end it buds off or merges into, when it does.
+    /// The island whose rounded end on its side it buds off or merges into, when it does.
     var island: IslandLayout?
     /// Counts its merges back, so letting go after one cannot take it from a later one.
     var departure = 0
@@ -605,11 +628,18 @@ private struct ShownBubble: Identifiable {
     /// Merging back, the island it keeps its place beside, as it was when it began to.
     var leftFrom: IslandLayout?
 
-    var id: IslandViewModel.SecondaryTarget { target }
+    /// A target has one bubble on each side at most: one merging back where it was
+    /// while another buds off on its new side.
+    struct Key: Hashable {
+        let target: IslandViewModel.SecondaryTarget
+        let side: IslandLayout.Side
+    }
+
+    var id: Key { Key(target: target, side: side) }
     var isOverflow: Bool { target == .overflow }
 
     enum Origin {
-        /// The island's rounded right end.
+        /// The island's rounded end on its side.
         case island
         /// The bubble before it.
         case neighbour
@@ -619,7 +649,7 @@ private struct ShownBubble: Identifiable {
 }
 
 /// Where a bubble is drawn at a point in its budding off, and what it buds from: the
-/// island's rounded right end, or the bubble before it.
+/// island's rounded end on its side, or the bubble before it.
 private struct BubbleGeometry {
     let d: CGFloat
     let target: CGSize
@@ -634,22 +664,26 @@ private struct BubbleGeometry {
     let isMoving: Bool
 
     init(progress: CGFloat, slot: CGFloat, layout: IslandLayout, bubble: ShownBubble, reduceMotion: Bool) {
+        let side = bubble.side
         d = bubble.isOverflow ? layout.overflowDiameter : layout.bubbleDiameter
-        target = bubble.isOverflow ? layout.overflowCenterOffset(at: slot) : layout.bubbleCenterOffset(at: slot)
+        target = bubble.isOverflow
+            ? layout.overflowCenterOffset(at: slot, side: side) : layout.bubbleCenterOffset(at: slot, side: side)
+        // Away from the island: rightwards on its right, leftwards on its left.
+        let outwards: CGFloat = side == .left ? -1 : 1
         let tucked: CGFloat
         switch bubble.origin {
         case .neighbour:
-            anchorX = layout.bubbleCenterOffset(at: slot - 1).width
+            anchorX = layout.bubbleCenterOffset(at: slot - 1, side: side).width
             anchorRadius = layout.bubbleDiameter / 2
             tucked = anchorX
         case .island:
-            // The island's rounded right end, relative to the notch's centre.
+            // The island's rounded end on the bubble's side, relative to the notch's centre.
             let island = bubble.island ?? layout
-            let islandRight = island.size.width / 2 - island.earRadius
+            let islandEnd = island.size.width / 2 - island.earRadius
             let cap = island.notch.height / 2 - 1
-            anchorX = islandRight - cap
+            anchorX = outwards * (islandEnd - cap)
             anchorRadius = cap
-            tucked = islandRight - d / 2
+            tucked = outwards * (islandEnd - d / 2)
         case .place:
             anchorX = target.width
             anchorRadius = 0
@@ -746,14 +780,19 @@ private struct BubbleDroplet: View, Animatable {
                 .onTapGesture { onTap(bubble.target) }
                 .accessibilityElement(children: .ignore)
                 .modifier(BubbleAccessibility(bubble: bubble) { onTap(bubble.target) })
-                .overlay(alignment: .bottomTrailing) {
-                    // Faded in and out as the count comes to this bubble and leaves it.
+                .islandChoices(forActivity: bubble.isLeaving ? nil : bubble.activity?.id)
+                .overlay(alignment: bubble.side == .left ? .bottomLeading : .bottomTrailing) {
+                    // Faded in and out as the count comes to this bubble and leaves it, at
+                    // its bottom corner away from the island.
                     ZStack {
                         if !bubble.isOverflow, bubble.count > 0 {
                             OverflowBadge(count: bubble.count, counted: bubble.counted, isHovered: isCountHovered) {
                                 onTap(.overflow)
                             }
-                            .offset(IslandLayout.bubbleBadgeOffset)
+                            .offset(
+                                x: bubble.side == .left ? -IslandLayout.bubbleBadgeOffset.width : IslandLayout.bubbleBadgeOffset.width,
+                                y: IslandLayout.bubbleBadgeOffset.height
+                            )
                             .contentShape(Rectangle())
                             .onTapGesture { onTap(.overflow) }
                             .opacity(fade * g.presence)
@@ -905,6 +944,7 @@ private struct ExpandedHeader: View {
                     TabButton(symbol: activity.symbol, isSelected: focus == activity.id) {
                         model.select(focus: activity.id)
                     }
+                    .islandChoices(forActivity: activity.id)
                 }
                 if !fit.overflow.isEmpty {
                     MoreActivitiesMenu(model: model, fit: fit)
@@ -1025,13 +1065,20 @@ struct MoreActivitiesMenu: View {
         model.select(focus: id)
     }
 
-    /// The menu's items.
-    var entries: some View {
+    /// The menu's items, then the same Show in Island choice a tab's right-click
+    /// offers, for the activities that have no tab of their own to right-click.
+    @ViewBuilder var entries: some View {
         ForEach(items) { item in
             Button {
                 choose(item.id)
             } label: {
                 Label(item.title, systemImage: item.symbol)
+            }
+        }
+        Divider()
+        Menu("Show in Island") {
+            ForEach(items) { item in
+                Button(item.title) { model.choose(.show(item.id)) }
             }
         }
     }

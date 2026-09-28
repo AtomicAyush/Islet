@@ -422,17 +422,32 @@ the gap stays exactly over the camera.
 
 **The others get bubbles.** As on the iPhone, when several things are running the
 most important one keeps the island and each of the others buds off into a circle of its own,
-side by side to its right in order of importance, as many as the menu bar leaves room for (four
-at most). Each is drawn through a blur and an alpha threshold while it is close to the island or
-the bubble before it, so a neck of black joins them, stretches and snaps as the bubble springs
-out — and forms again when it merges back; the others slide along to make room or close the gap.
-Where the menu bar's icons leave no room for the next bubble, that activity folds into the
+in the island's order (below): the first to its right, the next to its left, and so on in turn,
+each side taking as many as the menu bar leaves room for (four at most in all), and once one side
+is full the rest go on the other. A single other activity only ever goes right. On the left they
+stop short of the front app's menus, which Islet finds through Accessibility and looks at again
+as you switch app; without it, or with the menus reaching the notch, they all go right, short of
+any menus that run on past it. Settings → General → Bubble placement keeps them to the right
+only. Each is drawn through a blur and an alpha threshold while it is close to the
+island or the bubble before it, so a neck of black joins them, stretches and snaps as the bubble
+springs out — and forms again when it merges back; the others slide along to make room or close
+the gap. Where neither side leaves room for the next bubble, that activity folds into the
 island instead, as a small circle at its left end, so long as that costs none of the bubbles
 beside it. Any still left over are counted: a small "+2" bubble after the others, or, with no
 room for that, a little "+2" on the folded circle or the last bubble. Clicking a bubble opens the
 island on that activity, and clicking the count opens the home page, with a tab for each. macOS 27
 draws the whole menu bar as one window, so there Islet finds the icons through Accessibility
 when it has it, and otherwise folds rather than risk covering them.
+
+**Choose what holds the island.** Until you say otherwise, what matters most goes first: a
+timer, then a meeting about to start, music, a shortcut or a download, then things in the
+background, the newest first among equals. Right-click a bubble, the circle folded into the
+island or an activity's tab in the opened island and choose Show in Island to keep that activity
+in the island until it ends; right-click the island and choose Let Islet Choose to go back.
+VoiceOver has the same as actions. Settings → General → Island Order lists the activities of the
+features that are on, in the order the island takes them; drag one to another place and that
+order decides from then on, for the bubbles too, and Reset goes back to Islet's own. Only a
+chosen activity, or a preview on screen for a moment, goes before it.
 
 **Rest the pointer on it to open it.** The island stretches sideways a beat before it drops,
 with a small squash and rebound, and its content arrives out of a blur. There is a tab for
@@ -493,6 +508,8 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://open?focus=timer` | Opens it on a particular activity (or `home`) |
 | `islet://open?edit=1` | Opens it on the home page, arranging its tiles |
 | `islet://close` | Closes it |
+| `islet://island/pin?id=timer` | Keeps an activity that is running in the island, as Show in Island does (ids as for `focus=`) |
+| `islet://island/unpin` | Lets Islet choose what the island shows again |
 | `islet://timer/start?minutes=5` | Starts a timer (`seconds=` works too) |
 | `islet://timer/pause`, `/resume`, `/cancel` | |
 | `islet://keepAwake/start?minutes=60` | Keeps the Mac awake for an hour (`hours=`, `seconds=` too, up to a day); with no length, until turned off |

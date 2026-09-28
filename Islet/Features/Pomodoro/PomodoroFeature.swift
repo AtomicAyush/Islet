@@ -142,6 +142,7 @@ final class PomodoroFeature: Feature {
     }
 
     var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 60) }
 
     func settingsView() -> AnyView? {
         AnyView(PomodoroSettingsView())

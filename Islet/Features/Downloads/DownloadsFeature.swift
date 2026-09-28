@@ -16,6 +16,7 @@ final class DownloadsFeature: Feature {
     let title = "Downloads"
     let symbol = "arrow.down.circle.fill"
     let summary = "Downloads as they arrive beside the notch, and the file in a card when one finishes."
+    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 50) }
 
     static let bannerID = "downloads.finished"
     /// Long enough to reach for the file, from when the card goes up or the pointer

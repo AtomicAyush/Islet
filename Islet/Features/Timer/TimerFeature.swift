@@ -16,6 +16,7 @@ final class TimerFeature: Feature {
     /// Where the tile goes on the home page, until the person puts it somewhere else.
     static let tileOrder = 30
     var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 10) }
 
     private let model = TimerModel()
     private lazy var activity = TimerActivity(model: model)

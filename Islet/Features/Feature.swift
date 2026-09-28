@@ -40,6 +40,10 @@ protocol Feature: AnyObject {
     /// `HomeWidget` is published under: listed to arrange (in Settings, and hidden ones
     /// in the island) whether or not it is showing.
     var homeTile: HomeTileInfo? { get }
+    /// The live activity the feature puts in the island, if it has one, with the id its
+    /// `IslandActivity` is published under: listed in Settings to put in the order the
+    /// island takes them in, whether or not it is running.
+    var islandActivity: IslandActivityInfo? { get }
 }
 
 extension Feature {
@@ -49,6 +53,7 @@ extension Feature {
     var previews: [FeaturePreview] { [] }
     func handle(_ url: URL) -> Bool { false }
     var homeTile: HomeTileInfo? { nil }
+    var islandActivity: IslandActivityInfo? { nil }
 }
 
 extension HomeTileInfo {
@@ -142,5 +147,9 @@ final class FeatureRegistry {
         let arrangement = ActivityCenter.shared.homeArrangement
         let tiles = features.filter { running.contains($0.id) }.compactMap(\.homeTile)
         if arrangement.tiles != tiles { arrangement.tiles = tiles }
+        // And the island's order from their live activities, likewise.
+        let order = ActivityCenter.shared.islandArrangement
+        let activities = features.filter { running.contains($0.id) }.compactMap(\.islandActivity)
+        if order.activities != activities { order.activities = activities }
     }
 }

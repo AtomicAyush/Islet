@@ -16,6 +16,9 @@ final class IslandManager {
     /// Re-measures the menu bar while there is more than one activity: status items
     /// come and go without telling anyone.
     private var roomTimer: Timer?
+    /// Watches which app's menus the menu bar shows, which the bubbles left of the
+    /// island stop short of.
+    private var menuBarOwnerObservation: NSKeyValueObservation?
 
     private init() {}
 
@@ -57,6 +60,13 @@ final class IslandManager {
                     MainActor.assumeIsolated { self?.measureMenuBars() }
                 }
             })
+        }
+        // The menu bar showing another app's menus: each island keeps clear of those at
+        // once, as last found, and looks at them again (`measureMenus`).
+        menuBarOwnerObservation = NSWorkspace.shared.observe(\.menuBarOwningApplication) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.controllers.values.forEach { $0.measureMenus() } }
+            }
         }
         // A change of Space at once ends any wait on the notch of an island hidden for
         // a full-screen app. Whether an island open over the app closes waits until the
@@ -156,6 +166,13 @@ final class IslandManager {
         for controller in controllers.values where controller.model.opensFromNotchInFullScreen != fromNotch {
             controller.model.opensFromNotchInFullScreen = fromNotch
         }
+        // Back to both sides, the menus are looked at afresh; right side only, what was
+        // found of them is forgotten (`IslandWindowController.measureMenus`).
+        let placement = Prefs.bubblePlacement
+        for controller in controllers.values where controller.model.bubblePlacement != placement {
+            withAnimation(.islandMorph) { controller.model.bubblePlacement = placement }
+            controller.measureMenus()
+        }
         applyFullScreen()
     }
 
@@ -197,7 +214,17 @@ final class IslandManager {
         for controller in controllers.values {
             let suppressed = hide && fullScreen.isFullScreen(on: controller.screen)
             if controller.model.isSuppressed != suppressed {
+                // Back from full screen, the island shows keeping clear of the menus of
+                // whichever app is in front now, as last found, and looks at them again
+                // once the menu bar has come back.
+                if !suppressed { controller.followMenuBarOwner() }
                 withAnimation(.islandMorph) { controller.model.isSuppressed = suppressed }
+                if !suppressed {
+                    // Where the status items are may have changed meanwhile too.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak controller] in
+                        MainActor.assumeIsolated { controller?.measureMenuBarRoom() }
+                    }
+                }
             }
         }
     }

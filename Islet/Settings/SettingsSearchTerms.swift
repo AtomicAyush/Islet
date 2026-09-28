@@ -31,6 +31,19 @@ extension GeneralRow {
                 labels: HomeLayout.allCases.map(\.title),
                 keywords: ["home layout", "home page", "pages", "scroll", "tiles"]
             )
+        case .bubblePlacement:
+            SettingsSearchTerms(
+                labels: BubblePlacement.allCases.map(\.title) + [
+                    "Right of the island, then left, in turn, as the menu bar has room. On the left they keep clear of the app's menus, which needs Accessibility.",
+                ],
+                keywords: ["bubbles", "left side", "right side", "split", "both sides", "menus", "live activities"]
+            )
+        case .islandOrder:
+            SettingsSearchTerms(
+                labels: ["Show in Island", "Keep in Island", "Let Islet Choose"],
+                keywords: ["order", "priority", "pin", "pinned", "main island", "primary", "first", "bubbles",
+                           "which activity", "choose", "arrange", "reorder", "live activities"]
+            )
         case .displays:
             SettingsSearchTerms(
                 labels: DisplayChoice.allCases.map(\.title),

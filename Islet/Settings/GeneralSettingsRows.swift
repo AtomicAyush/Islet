@@ -7,7 +7,8 @@ import SwiftUI
 /// the tab is found only once it is a row here.
 enum GeneralRow: String, CaseIterable, Identifiable, View {
     case openAtLogin, menuBarIcon, quit
-    case hover, haptics, homeLayout
+    case hover, haptics, homeLayout, bubblePlacement
+    case islandOrder
     case displays, idlePill, fullScreen
 
     /// Also the row's scroll target in the tab.
@@ -22,6 +23,8 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .hover: "Open when the pointer rests on it"
         case .haptics: "Trackpad feedback"
         case .homeLayout: "Home tiles that don't fit"
+        case .bubblePlacement: "Bubble placement"
+        case .islandOrder: "Island order"
         case .displays: "Show the island on"
         case .idlePill: "Keep a resting island on displays without a notch"
         case .fullScreen: "Hide while an app is full screen"
@@ -32,7 +35,8 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
     var section: String? {
         switch self {
         case .openAtLogin, .menuBarIcon, .quit: nil
-        case .hover, .haptics, .homeLayout: "Island"
+        case .hover, .haptics, .homeLayout, .bubblePlacement: "Island"
+        case .islandOrder: "Island Order"
         case .displays, .idlePill, .fullScreen: "Displays"
         }
     }
@@ -45,6 +49,8 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .hover: HoverRows(id: id)
         case .haptics: HapticsRow(id: id)
         case .homeLayout: HomeLayoutRow(id: id)
+        case .bubblePlacement: BubblePlacementRow(id: id)
+        case .islandOrder: IslandOrderList(id: id, arrangement: ActivityCenter.shared.islandArrangement)
         case .displays: DisplaysRow(id: id)
         case .idlePill: IdlePillRow(id: id)
         case .fullScreen: FullScreenRows(id: id)
@@ -156,6 +162,27 @@ private struct HomeLayoutRow: View {
         Picker(GeneralRow.homeLayout.title, selection: $homeLayout) {
             ForEach(HomeLayout.allCases) { layout in
                 Text(layout.title).tag(layout.rawValue)
+            }
+        }
+        .settingsSearchTarget(id)
+    }
+}
+
+/// Where further activities' bubbles go beside the island. Left of it they keep clear
+/// of the front app's menus, which only Accessibility can say where they end.
+private struct BubblePlacementRow: View {
+    let id: String
+    @AppStorage(Prefs.Key.bubblePlacement) private var placement = BubblePlacement.bothSides.rawValue
+
+    var body: some View {
+        Picker(selection: $placement) {
+            ForEach(BubblePlacement.allCases) { placement in
+                Text(placement.title).tag(placement.rawValue)
+            }
+        } label: {
+            Text(GeneralRow.bubblePlacement.title)
+            if placement == BubblePlacement.bothSides.rawValue {
+                Text("Right of the island, then left, in turn, as the menu bar has room. On the left they keep clear of the app's menus, which needs Accessibility.")
             }
         }
         .settingsSearchTarget(id)

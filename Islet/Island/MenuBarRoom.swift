@@ -1,8 +1,9 @@
 import AppKit
 
-/// Where the menu bar's status items begin beside the island. On a MacBook they crowd
-/// up against the notch, and the bubbles would land on top of them; as many as fit in
-/// the gap go there, and the island folds the next activity in instead.
+/// Where the menu bar's status items begin beside the island, and where the front app's
+/// menus are, mostly on its other side. On a MacBook they crowd up against the notch,
+/// and the bubbles would land on top of them; as many as fit in the gaps go there, and
+/// the island folds the next activity in instead.
 enum MenuBarRoom {
     /// What a look along one display's menu bar found right of an edge.
     enum Finding: Equatable {
@@ -22,6 +23,40 @@ enum MenuBarRoom {
             case .clear: .infinity
             case .unknown: 0
             }
+        }
+    }
+
+    /// What a look at the front app's menus (the Apple menu, its name, File and on)
+    /// found along one display's menu bar (`findMenus`).
+    struct Menus: Equatable {
+        /// Their frames on the display's menu bar, in top-left global coordinates:
+        /// none when nothing could tell, or with no menu bar.
+        var frames: [CGRect]
+        /// Whether the display has a menu bar at all.
+        var hasMenuBar = true
+
+        /// Nothing could tell where they are.
+        static let unknown = Menus(frames: [])
+        /// The display has no menu bar, so no menus to keep clear of.
+        static let noMenuBar = Menus(frames: [], hasMenuBar: false)
+
+        /// How far left of `center` the bubbles may reach before they meet the menus:
+        /// to where the last of them ends. Not knowing counts as no room, and menus
+        /// that run on past the notch, or a right-to-left menu bar's, end right of
+        /// the island and leave none. With no menu bar, all the room there is.
+        func roomLeft(of center: CGFloat) -> CGFloat {
+            guard hasMenuBar else { return .infinity }
+            guard let end = frames.map(\.maxX).max() else { return 0 }
+            return center - end
+        }
+
+        /// How far right of `center` the bubbles may reach before they meet a menu:
+        /// to where the first of those reaching past it begins, as when an app's menus
+        /// are too many for the notch's left and go on past it, or a right-to-left
+        /// menu bar's; less than nothing for one across `center` itself. With none
+        /// there, or no telling, the status items alone decide the room right.
+        func roomRight(of center: CGFloat) -> CGFloat {
+            frames.filter { $0.maxX > center }.map(\.minX).min().map { $0 - center } ?? .infinity
         }
     }
 
@@ -118,6 +153,94 @@ enum MenuBarRoom {
     private static func firstItem(among frames: [CGRect], rightOf edge: CGFloat) -> Finding {
         guard let x = frames.map(\.minX).filter({ $0 >= edge }).min() else { return .clear }
         return .item(at: x)
+    }
+
+    /// What an island knows of the front app's menus on its display: which app's the
+    /// room beside it was last set from, and what was last found of each app's, by
+    /// process, so an app coming to the front has its menus kept clear of at once,
+    /// while they are looked at again.
+    struct MenusMemory {
+        /// The app whose menus the room beside the island was last set from.
+        private(set) var owner: pid_t?
+        private var byOwner: [pid_t: Menus] = [:]
+        /// Counts looks at the menus, so one that finishes late, or that looked at an
+        /// app no longer in front, is not taken.
+        private var generation = 0
+
+        /// The menu bar shows `owner`'s menus now. When that is another app than
+        /// before, returns what to keep clear of meanwhile: its menus as last found,
+        /// or, for an app not looked at yet, no telling, so no bubble goes left of the
+        /// island until they have been. `nil` for the same app as before.
+        mutating func follow(_ owner: pid_t?) -> Menus? {
+            guard owner != self.owner else { return nil }
+            self.owner = owner
+            generation &+= 1
+            return owner.flatMap { byOwner[$0] } ?? .unknown
+        }
+
+        /// A look at the menus of the app in front is starting; returns its number,
+        /// for `take`.
+        mutating func begin() -> Int {
+            generation &+= 1
+            return generation
+        }
+
+        /// Look number `look` at `owner`'s menus found `found`: returns it, to keep clear
+        /// of, unless another look has begun since or another app is in front by now.
+        mutating func take(_ found: Menus, of owner: pid_t?, look: Int) -> Menus? {
+            guard look == generation, owner == self.owner else { return nil }
+            if let owner { byOwner[owner] = found }
+            return found
+        }
+
+        /// Forgets every app's menus, and any look under way.
+        mutating func forget() {
+            owner = nil
+            byOwner = [:]
+            generation &+= 1
+        }
+    }
+
+    // MARK: Menus
+
+    /// Where the front app's menus are on the given display, for the bubbles either side
+    /// of the island: `owner` is the app whose menus the menu bar shows
+    /// (`menuBarOwner()`), Islet's own included. Read through Accessibility, only if
+    /// Islet already has it, as for the status items. A display with no menu bar has no
+    /// menus to keep clear of. Otherwise nothing found is no telling: no Accessibility,
+    /// no owner, or no menus on this display's menu bar, as when they are on another
+    /// display's. Asks one app, which takes a few milliseconds, or up to half a second
+    /// if it is busy, so it is best called off the main thread.
+    static func findMenus(
+        on display: CGDirectDisplayID, owner: pid_t?,
+        trusted: @autoclosure () -> Bool = AXIsProcessTrusted(),
+        menus: (pid_t) -> [CGRect] = { MenuBarRoom.menus(of: $0) }
+    ) -> Menus {
+        guard hasMenuBar(display) else { return .noMenuBar }
+        guard let owner, trusted() else { return .unknown }
+        return menusOnMenuBar(of: CGDisplayBounds(display), among: menus(owner))
+    }
+
+    /// Those of the menus with these frames that are on the menu bar of a display with
+    /// these bounds, all in top-left global coordinates.
+    static func menusOnMenuBar(of screen: CGRect, among frames: [CGRect]) -> Menus {
+        Menus(frames: frames.filter { isOnMenuBar($0, of: screen) })
+    }
+
+    /// An app's menus (`MenuBarAccessibility.menus(of:)`). Islet's own are asked about
+    /// on the main thread, as its status item is, for the same reason (see
+    /// `MenuExtras.ownExtras`); that takes next to no time.
+    static func menus(of pid: pid_t) -> [CGRect] {
+        guard pid == ProcessInfo.processInfo.processIdentifier, !Thread.isMainThread else {
+            return MenuBarAccessibility.menus(of: pid)
+        }
+        return DispatchQueue.main.sync { MenuBarAccessibility.menus(of: pid) }
+    }
+
+    /// The app whose menus the menu bar shows, for `findMenus`: `nil` for nobody.
+    @MainActor
+    static func menuBarOwner() -> pid_t? {
+        NSWorkspace.shared.menuBarOwningApplication?.processIdentifier
     }
 }
 

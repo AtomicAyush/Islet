@@ -22,6 +22,7 @@ final class ShortcutsFeature: Feature {
     /// Where the tile goes on the home page, until the person puts it somewhere else.
     static let tileOrder = 47
     var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
+    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 40) }
 
     /// A shortcut run from Islet may take a while (a download, a dialog waiting for an
     /// answer); one still going after ten minutes is stopped, so it cannot run on

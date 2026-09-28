@@ -6,6 +6,8 @@ import AppKit
 ///     islet://open?focus=timer     open it on a particular activity, or "home"
 ///     islet://open?edit=1          open it on the home page, arranging its tiles
 ///     islet://close
+///     islet://island/pin?id=timer  keep an activity that is running in the island
+///     islet://island/unpin         let Islet choose what the island shows again
 ///     islet://settings?tab=activities
 ///     islet://preview?feature=battery&index=0
 ///     islet://<feature>/…          handed to that feature, e.g. islet://timer/start?minutes=5
@@ -64,6 +66,8 @@ enum URLRouter {
             island?.isPinnedOpen = false
             #endif
             island?.collapse()
+        case "island":
+            choose(url.path(), query: query, in: ActivityCenter.shared)
         case "settings":
             if let tab = query["tab"] {
                 SettingsWindowController.shared.show(tab: tab)
@@ -80,6 +84,25 @@ enum URLRouter {
         #endif
         default:
             _ = feature(named: host)?.handle(url)
+        }
+    }
+
+    /// `islet://island/…`: `pin?id=<activity>` puts that activity in the island and
+    /// keeps it there, as Show in Island does; `unpin` lets Islet choose again. Returns
+    /// whether the URL was understood and, for a pin, the activity is running.
+    @discardableResult
+    static func choose(_ path: String, query: [String: String], in center: ActivityCenter) -> Bool {
+        switch path.lowercased() {
+        case "/pin":
+            guard let id = query["id"],
+                  let activity = center.activities.first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame })
+            else { return false }
+            return center.pin(id: activity.id)
+        case "/unpin":
+            center.unpin()
+            return true
+        default:
+            return false
         }
     }
 

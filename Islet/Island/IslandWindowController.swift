@@ -37,6 +37,11 @@ final class IslandWindowController {
     private var swipeOverList = false
     /// Counts menu bar measurements, so one that finishes late cannot overwrite a newer one.
     private var roomGeneration = 0
+    /// What was last found of each app's menus on this display, and which app's the
+    /// room either side of the island was last set from (`measureMenus`).
+    private var menus = MenuBarRoom.MenusMemory()
+    /// Looks at the menus while something is left of the island (`watchMenus`).
+    private var menusTimer: Timer?
 
     init(screen: NSScreen) {
         self.screen = screen
@@ -46,9 +51,11 @@ final class IslandWindowController {
 
         let root = IslandRootView(model: model) { [weak self] layout in
             self?.layout = layout
+            self?.watchMenus()
             self?.updateHitTesting(pointerMoved: false)
         }
         let host = IslandHostingView(rootView: root)
+        host.islandActions = { [weak model] in model?.compactAccessibilityActions ?? [] }
         // The canvas is a fixed size; don't let SwiftUI's content resize the panel.
         host.sizingOptions = []
         panel.contentView = host
@@ -59,6 +66,8 @@ final class IslandWindowController {
     }
 
     func invalidate() {
+        menusTimer?.invalidate()
+        menusTimer = nil
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
         menuObservers.forEach(NotificationCenter.default.removeObserver)
@@ -88,7 +97,9 @@ final class IslandWindowController {
     /// asking every app through Accessibility, when it comes to that, longer. When
     /// nothing can tell where the items are, there is no room, and the first further
     /// activity folds into the island. The moment it was asked for goes along, so an
-    /// Accessibility read from before whatever prompted it is not reused.
+    /// Accessibility read from before whatever prompted it is not reused. The front
+    /// app's menus are looked at alongside (`measureMenus`), and each look is taken as
+    /// it comes in, so a slow app holds up neither.
     func measureMenuBarRoom() {
         guard let display = screen.displayID else { return }
         let metrics = model.metrics
@@ -99,12 +110,91 @@ final class IslandWindowController {
             let finding = MenuBarRoom.find(rightOf: metrics.notchRect.maxX, on: display, askedAt: asked)
             await self?.apply(menuBarRoom: finding.roomRight(of: metrics.notchMidX), generation: generation)
         }
+        measureMenus()
     }
 
     private func apply(menuBarRoom room: CGFloat, generation: Int) {
         guard generation == roomGeneration, room != model.menuBarRoomRight else { return }
         withAnimation(.islandMorph) { model.menuBarRoomRight = room }
     }
+
+    // MARK: The front app's menus
+
+    /// Looks at the front app's menus on this display, while the bubbles may go on both
+    /// sides of the island: those left of it stop short of the menus, and those right of
+    /// it short of any menus that reach past the notch. Read off the main thread, as the
+    /// status items are. Should the menu bar show another app's menus by now, those last
+    /// found of that app's are kept clear of meanwhile (`followMenuBarOwner`).
+    ///
+    /// The menus are left be while the island is hidden for a full-screen app: the menu
+    /// bar is tucked away then. With bubbles right of the island only, they are not
+    /// looked at, and what was found of them is forgotten, so going back to both sides
+    /// waits for a fresh look.
+    func measureMenus() {
+        guard model.bubblePlacement == .bothSides else {
+            menus.forget()
+            show(.unknown)
+            return
+        }
+        followMenuBarOwner()
+        guard !model.isSuppressed, let display = screen.displayID else { return }
+        let owner = menus.owner
+        let look = menus.begin()
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let found = MenuBarRoom.findMenus(on: display, owner: owner)
+            await self?.apply(menus: found, of: owner, look: look)
+        }
+    }
+
+    /// Keeps clear of the menus of the app whose menus the menu bar shows now, as last
+    /// found, should that be another app than before: at once, rather than after the
+    /// next look, so a bubble never sits on an app's menus for as long as a look takes.
+    /// For an app not looked at yet, no bubble goes left of the island until it has
+    /// been. Called as the menu bar changes hands, and as the island comes back from
+    /// hiding for a full-screen app.
+    func followMenuBarOwner() {
+        guard model.bubblePlacement == .bothSides,
+              let meanwhile = menus.follow(MenuBarRoom.menuBarOwner())
+        else { return }
+        show(meanwhile)
+    }
+
+    private func apply(menus found: MenuBarRoom.Menus, of owner: pid_t?, look: Int) {
+        guard let taken = menus.take(found, of: owner, look: look) else { return }
+        show(taken)
+    }
+
+    /// Hands the model the room either side of the island that `found` leaves.
+    private func show(_ found: MenuBarRoom.Menus) {
+        let center = model.metrics.notchMidX
+        let left = model.bubblePlacement == .bothSides ? found.roomLeft(of: center) : 0
+        let right = model.bubblePlacement == .bothSides ? found.roomRight(of: center) : .infinity
+        guard left != model.menuBarRoomLeft || right != model.menusRoomRight else { return }
+        withAnimation(.islandMorph) {
+            model.menuBarRoomLeft = left
+            model.menusRoomRight = right
+        }
+    }
+
+    /// Looks at the menus again every few seconds while something is left of the
+    /// island: an app can change its menus without telling anyone, and a bubble must
+    /// not stay on them for long. Called with each new layout.
+    private func watchMenus() {
+        let left = layout.map { $0.leftBubbleCount > 0 || ($0.showsOverflowBubble && $0.overflowOnLeft) } ?? false
+        if !left {
+            menusTimer?.invalidate()
+            menusTimer = nil
+        } else if menusTimer == nil {
+            menusTimer = Timer.scheduledTimer(withTimeInterval: Self.menusInterval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.measureMenus() }
+            }
+            menusTimer?.tolerance = 1
+        }
+    }
+
+    /// How often the menus are looked at while something is left of the island. A look
+    /// asks one app, and takes a few milliseconds.
+    static let menusInterval: TimeInterval = 4
 
     private static func frame(for metrics: NotchMetrics) -> CGRect {
         let size = IslandLayout.canvas
@@ -130,7 +220,7 @@ final class IslandWindowController {
         }) {
             monitors.append(m)
         }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: moves.union([.leftMouseUp, .leftMouseDown]), handler: { [weak self] event in
+        if let m = NSEvent.addLocalMonitorForEvents(matching: moves.union(downs).union(.leftMouseUp), handler: { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event, isLocal: true) }
             return event
         }) {
@@ -270,6 +360,14 @@ final class IslandWindowController {
             // Local events include Islet's other windows (Settings); only the panel counts.
             pressBeganInside = event.window === panel
             model.dragStartedOnIsland = pressBeganInside
+        case .rightMouseDown where isLocal:
+            // A right-click on the compact island's row brings up its menu
+            // (`IslandChoice`), which the island opening under it would take away.
+            // Settings' are not the island's, and a row riding under it has no menu.
+            if event.window === panel, let layout,
+               Self.compactRowRect(for: layout, model: model).contains(NSEvent.mouseLocation) {
+                model.menuOpened()
+            }
         case .leftMouseDown, .rightMouseDown:
             // A global press: this click was not on the island, though it may have
             // landed on the strip standing in for a hidden one.
@@ -380,12 +478,16 @@ final class IslandWindowController {
             return (false, folded.map { .activity($0.id) })
         }
         if islandRect(for: layout, model: model).contains(point) { return (true, nil) }
-        for (slot, activity) in others.prefix(layout.bubblesShown).enumerated()
-        where circle(at: layout.bubbleCenterOffset(at: CGFloat(slot)), diameter: layout.bubbleDiameter, model: model).contains(point) {
-            return (false, .activity(activity.id))
+        for (index, activity) in others.prefix(layout.bubbleCount).enumerated() where layout.isBubbleShown(at: index) {
+            let place = layout.bubblePlace(at: index)
+            let center = layout.bubbleCenterOffset(at: CGFloat(place.slot), side: place.side)
+            if circle(at: center, diameter: layout.bubbleDiameter, model: model).contains(point) {
+                return (false, .activity(activity.id))
+            }
         }
+        let count = layout.overflowPlace
         if model.showsOverflowBubble,
-           circle(at: layout.overflowCenterOffset(at: CGFloat(layout.bubbleCount)), diameter: layout.overflowDiameter, model: model)
+           circle(at: layout.overflowCenterOffset(at: CGFloat(count.slot), side: count.side), diameter: layout.overflowDiameter, model: model)
             .contains(point) {
             return (false, .overflow)
         }
@@ -396,6 +498,14 @@ final class IslandWindowController {
     private static func islandOrigin(for layout: IslandLayout, model: IslandViewModel) -> CGPoint {
         let metrics = model.metrics
         return CGPoint(x: metrics.notchMidX - layout.size.width / 2, y: metrics.screenFrame.maxY - layout.topInset)
+    }
+
+    /// The compact island's own row, on screen, without any row riding under it: where
+    /// a right-click brings up the compact island's menu.
+    static func compactRowRect(for layout: IslandLayout, model: IslandViewModel) -> CGRect {
+        guard case .compact = model.mode else { return .null }
+        let origin = islandOrigin(for: layout, model: model)
+        return CGRect(x: origin.x, y: origin.y - layout.notch.height, width: layout.size.width, height: layout.notch.height)
     }
 
     private static func islandRect(for layout: IslandLayout, model: IslandViewModel) -> CGRect {
@@ -443,7 +553,7 @@ final class IslandWindowController {
             rects.append(CGRect(x: origin.x + folded.minX, y: origin.y - folded.maxY, width: folded.width, height: folded.height))
         }
         let last = layout.bubbleBadgeRect
-        if !last.isNull, model.bubbleActivities.count == layout.bubbleCount {
+        if !last.isNull, model.bubbleActivities.count == layout.bubblesShown {
             let metrics = model.metrics
             rects.append(CGRect(
                 x: metrics.notchMidX + last.minX, y: metrics.screenFrame.maxY - last.maxY,

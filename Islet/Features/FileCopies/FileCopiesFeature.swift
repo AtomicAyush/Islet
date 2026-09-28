@@ -21,6 +21,7 @@ final class FileCopiesFeature: Feature {
     let title = "File Copies"
     let symbol = "doc.on.doc.fill"
     let summary = "Big copies in Finder beside the notch, filling a ring as they go, with Stop when opened."
+    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 80) }
 
     /// The activity waits this long after the last copy goes before it does, so a copy
     /// following straight on from another does not make it blink.
