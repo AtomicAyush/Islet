@@ -227,11 +227,11 @@ shortcut is picked.
 
 **Presentation Mode.** While you share or record your screen, are on a call, or play a slideshow
 in Keynote or PowerPoint, the island holds back what would show your own things to everyone
-watching: banners from scripts and Claude Code, what a shortcut hands back, screenshots and
-finished downloads, which Focus comes on, a new song and the line being sung. The home page
+watching: banners from scripts, Claude Code and ChatGPT, what a shortcut hands back, screenshots
+and finished downloads, which Focus comes on, a new song and the line being sung. The home page
 keeps its tiles where they are, but the clipboard, the shelf, the calendar, the Focus and the
 music say only "Hidden", and the island opens on home rather than on the calendar, the music,
-downloads or Claude Code, whose tabs still open them. A tile you hid yourself stays gone rather
+downloads, Claude Code or ChatGPT, whose tabs still open them. A tile you hid stays gone rather
 than saying "Hidden", and one held back can still be moved or hidden while you edit the page. On
 a call the calendar's Join camera stays beside the notch and still joins it: it says only which
 service the call is on, while the event's title waits on the calendar's page. A banner that
@@ -272,7 +272,7 @@ shows its own indicator in the menu bar while a shortcut runs, whoever started i
 included), and has no setting to hide it; it goes a few seconds after the shortcut ends.
 
 **Show in Islet.** Banners of your own, from anything that can open a URL or run a shortcut:
-a build finishing, tests passing or failing, Claude Code done with a long task. A symbol and a
+a build finishing, tests passing or failing, Claude Code or ChatGPT done at last. A symbol and a
 title beside the notch, with a subtitle on the right, or a card with a few lines under the
 title, in the colour you choose. They are text only, with nothing to click, and kept to a pace
 you can read; see [Banners from scripts](#banners-from-scripts).
@@ -316,10 +316,32 @@ while the work goes on, only what has been added since it last looked, and never
 Where they are missing, or not as expected, a workflow shows as before, by its name and what it
 was started to do.
 
+**ChatGPT.** While a chat in the ChatGPT app, or a thread in Codex, works on a reply, a speech
+bubble breathes left of the camera and the turn's time counts up right of it. While it waits for
+your permission the bubble turns orange with a hand at its corner, and while it has asked you
+something, with a question mark there instead, never to be taken for Claude Code's, and the time
+counts how long it has waited; once the reply is done and only the agents it sent off are at
+work, how many beside a spinner. In the bubble beside music, a ring round the speech bubble
+fills as the turn's plan gets done. Opened, there is a row for each chat: its project (or the
+start of what you asked, for a plain chat outside a project), what it is doing ("Running swift",
+"Editing Store.swift and 2 more") and for how long, what you asked, the turn's plan as a
+checklist ("3 of 7 done"), and each agent it has sent off, by the task it was given, with what
+it is doing and how many steps it has taken. A plain chat that uses no tools shows for the few
+seconds of its reply. Click a chat to bring forward the app it runs in — the ChatGPT app, open
+at that chat, or the terminal or editor Codex runs in. Like Claude Code, it sits in the bubble
+beside music or a timer, behind the Sound Mixer unless a chat is waiting for you. ChatGPT tells
+Islet all this through Codex's hooks, with the script in `Scripts/` (see
+[ChatGPT hooks](#chatgpt-hooks)); nothing shows until the hooks are added and you have trusted
+them in ChatGPT. The hooks say nothing when a turn fails or you decline a permission, so Islet
+looks further: a turn the thread's rollout file says has ended is over, a chat whose Codex has
+quit is over, and so is a turn quiet for ten minutes (an hour while a tool runs, for a long
+build). Its banners, a reply done, a permission or a question, show only while the app it runs
+in is not in front.
+
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
-bubble beside the island, unless a Claude Code session is waiting for you. macOS has no
-per-app volume, so Islet makes one with Core Audio process taps (macOS 14.2 or later): the
+bubble beside the island, unless a Claude Code or ChatGPT session is waiting for you. macOS has
+no per-app volume, so Islet makes one with Core Audio process taps (macOS 14.2 or later): the
 first time you move a slider, macOS asks to let Islet record system audio, which is how it
 passes the app's sound through at the level you set.
 
@@ -596,7 +618,7 @@ open "islet://timer/start?minutes=25"
 | `style` | `compact`, beside the notch, or `card` |
 | `sound` | One of the Mac's alert sounds (`Glass`, `Ping`, `Basso` and the rest of /System/Library/Sounds); silent without |
 | `interruption` | `passive` lets a Focus that asks for quiet hold it back, as it does a song change |
-| `activity` | `claudeCode`: the banner is news of the Claude Code activity, so while that holds the island, one beside the notch takes its place rather than going in a row under it; anything else is ignored |
+| `activity` | `claudeCode` or `chatGPT`: the banner is news of the Claude Code or ChatGPT activity, so while that holds the island, one beside the notch takes its place rather than going in a row under it; anything else is ignored |
 
 Spaces go in as `%20` (a `+` stays a plus), and a `#` as `%23`, since a bare one ends the
 query. Titles are cut at 60 characters and subtitles at 120, and a colour that would not show
@@ -625,7 +647,8 @@ if Show in Islet is turned off.
 A Stop hook in `~/.claude/settings.json` whose command is
 `open -g 'islet://banner?title=Claude%20finished&symbol=checkmark.circle.fill&tint=green'`
 flashes the island whenever Claude Code finishes, after every reply, short ones too. The hook
-script in [Claude Code hooks](#claude-code-hooks) does that and more.
+script in [Claude Code hooks](#claude-code-hooks) does that and more, and the one in
+[ChatGPT hooks](#chatgpt-hooks) does the same for ChatGPT.
 
 And a test run can say how it went:
 
@@ -710,6 +733,77 @@ alone), and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing them. Its
 what each session's file holds. The workflows the earlier script kept in
 `~/.claude/hooks/islet-workflows` are moved over at each session's next event, and the folder
 goes once they have all been, or are a day old.
+
+### ChatGPT hooks
+
+`Scripts/chatgpt-hook.sh` is a hook script for Codex, which the ChatGPT app runs on. It puts up
+banners — a reply finished (a card with its start), ChatGPT waiting for permission or asking a
+question — while the app it runs in is not in front, and keeps a small file for each chat in
+`~/Library/Application Support/Islet/ChatGPT/Sessions`, which the ChatGPT activity follows. Copy
+it into Codex's hooks folder:
+
+```bash
+mkdir -p ~/.codex/hooks
+cp Scripts/chatgpt-hook.sh ~/.codex/hooks/islet-notify.sh
+```
+
+and add these hooks to `~/.codex/hooks.json` (Settings → Activities → ChatGPT copies them too).
+If the file is there already, add each event's entry at the end of that event's list, so the
+hooks you have already trusted stay trusted:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" start" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" prompt" }] }],
+    "PreToolUse": [{ "hooks": [{ "type": "command", "timeout": 10, "async": true,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" tool-start" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" permission" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "timeout": 10, "async": true,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" tool-end" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" stop" }] }],
+    "Interrupt": [{ "hooks": [{ "type": "command", "timeout": 3,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" interrupt" }] }],
+    "SubagentStart": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" agent-start" }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" agent-stop" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "timeout": 3,
+      "command": "bash \"$HOME/.codex/hooks/islet-notify.sh\" end" }] }]
+  }
+}
+```
+
+Codex runs no new or changed hook until you trust it: in the ChatGPT app, in Settings → Hooks
+(Reload hooks, then Trust beside each of Islet's; the composer's Review hooks does the same), or
+with `/hooks` in Codex. Trust all would trust every other new or changed hook too, not only
+Islet's. Islet never edits `~/.codex` and never trusts anything for you; until you have,
+Settings says it has not heard from ChatGPT yet. If the ChatGPT app offers to import your setup
+from Claude Code, leave its hooks out: Islet's Claude Code hooks would then run for every chat
+too, which would show each chat twice and put up each banner twice.
+
+The ChatGPT app runs these hooks, and so does the `codex` it bundles; the Homebrew `codex` 0.44
+has none. Codex's `notify` setting is left alone. Other apps that use `~/.codex`, such as
+ChatGPT for Chrome, run the same hooks, and their chats show too.
+
+Each hook hands the script its kind of event. SessionStart and SessionEnd make and delete the
+chat's file, UserPromptSubmit marks it working, PreToolUse and PostToolUse say which tool is
+under way and carry the turn's plan, PermissionRequest and a question put to you mark it
+waiting, Stop and Interrupt mark it done, and SubagentStart and SubagentStop follow its agents.
+The two tool events run in the background, since they come with every tool; one arriving late or
+out of order never undoes a later event. The script keeps no command, patch, question, tool
+input or output, agent's reply or model, only the program a command runs and the first file a
+patch changes; nor a plain chat's folder, which ChatGPT names after its prompt. Codex waits for
+most of the hooks, so the script is quick, prints nothing and always succeeds. It needs `jq`,
+part of macOS from 15 on (`brew install jq` before that). It keeps the last 200 or so events
+other than tools' in `.hook-log.jsonl` beside the chats' files, a prompt and a reply by their
+length alone, and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing them. Its header
+lists what each chat's file holds. A new version of the script is installed by copying it over
+the old one; the hooks' lines never change, since a changed hook has to be trusted again.
 
 ## Layout of the code
 

@@ -247,6 +247,16 @@ extension ClaudeCodeFeature {
     }
 }
 
+extension ChatGPTFeature {
+    var searchTerms: SettingsSearchTerms {
+        SettingsSearchTerms(
+            labels: ["Show what you asked", "Hooks", "Last heard from ChatGPT"],
+            keywords: ["chatgpt", "codex", "openai", "gpt", "hooks.json", "hooks", "trust", "approve", "agents",
+                       "subagents", "plan", "chats", "prompt", "coding"]
+        )
+    }
+}
+
 extension DropZoneFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(

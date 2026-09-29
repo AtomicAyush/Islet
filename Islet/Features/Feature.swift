@@ -97,6 +97,7 @@ final class FeatureRegistry {
         ShortcutsFeature(),
         BannerFeature(),
         ClaudeCodeFeature(),
+        ChatGPTFeature(),
         DropZoneFeature(),
         DownloadsFeature(),
         FileCopiesFeature(),
