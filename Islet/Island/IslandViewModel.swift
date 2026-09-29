@@ -1133,6 +1133,13 @@ struct IslandLayout: Equatable {
     /// always does, the resting pill included.
     var wearsColour = true
 
+    /// How much room a ring round the island has inside its edge before it would reach
+    /// what the island shows. Opened, and in a card banner, content keeps 16 points or
+    /// more from the edge; in a row beside the notch, it comes within a few.
+    var ringRoom: IslandRingRoom {
+        bodyHeight > 0 ? IslandRingRoom(band: 3.5, glow: 6) : IslandRingRoom(band: 2, glow: 2)
+    }
+
     /// Default width either side of the notch for compact content.
     static func defaultSide(for notch: CGSize) -> CGFloat { notch.height + 12 }
 

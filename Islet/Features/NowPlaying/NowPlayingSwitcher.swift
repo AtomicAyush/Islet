@@ -89,11 +89,18 @@ private struct PlayingBars: View {
     let size: CGFloat
     /// The player on show: its bars follow its music when they can.
     let follows: Bool
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         WaveformBars(playing: true, tint: .accent(.nowPlaying), bars: 3, barWidth: 1.5, spacing: 1, follows: follows)
             .frame(width: 6.5, height: size * 0.36)
             .frame(width: size * 0.62, height: size * 0.62)
-            .background(Circle().fill(.islandBackground))
+            .background {
+                if theme.isMulticolour {
+                    IslandPaint(style: theme.paintStyle).clipShape(Circle())
+                } else {
+                    Circle().fill(.islandBackground)
+                }
+            }
     }
 }

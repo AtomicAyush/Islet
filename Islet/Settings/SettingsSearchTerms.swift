@@ -22,12 +22,18 @@ extension GeneralRow {
         case .appearance:
             SettingsSearchTerms(
                 labels: ["Island colour", "Accent", "Feature colours", "Mono", "Custom island colour", "Custom accent",
-                         "Back to black and feature colours", "Reset"]
-                    + IslandColourPreset.allCases.map(\.name) + AccentChoice.presets.map(\.name),
+                         "Back to black and feature colours", "Reset", "Fill", "Solid", "Gradient", "Rotating", "Palette",
+                         "Tone", "Deep", "Bright", "Direction", "Down", "Across", "Diagonal", "Speed", "Slow", "Medium",
+                         "Fast", "Drawn as", "Ring", "Steady", "Ring colour", "Island's colours", "Thickness", "Thin",
+                         "Regular", "Bold", "Glow", "Brightness", "Hold still while the screen is shared or recorded"]
+                    + IslandColourPreset.allCases.map(\.name) + AccentChoice.presets.map(\.name)
+                    + IslandPalettePreset.allCases.map(\.name),
                 keywords: ["appearance", "colour", "color", "colours", "colors", "theme", "tint", "accent colour",
                            "accent color", "highlight", "light", "dark", "dark mode", "light mode", "background",
                            "notch", "notch colour", "notch color", "colour scheme", "color scheme", "customise",
-                           "customize"]
+                           "customize", "rgb", "led", "leds", "light strip", "rainbow", "border", "outline", "edge",
+                           "halo", "neon", "ring light", "animated", "animation", "cycle", "colour cycle",
+                           "color cycle", "fade", "rotate", "rotation", "chase", "ombre", "reduce motion"]
             )
         case .hover:
             SettingsSearchTerms(

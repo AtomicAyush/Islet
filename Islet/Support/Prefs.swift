@@ -80,6 +80,12 @@ enum Prefs {
         static let islandColour = "islandColour"
         /// Appearance › Accent: "feature", "mono" or "#RRGGBB".
         static let accentColour = "accentColour"
+        /// Appearance › Fill (`IslandFill`).
+        static let islandFill = "islandFill"
+        /// Appearance › Ring (`IslandRing`): "off" or the ring.
+        static let islandRing = "islandRing"
+        /// Appearance › Motion: colours hold still while the screen is shared or recorded.
+        static let holdMotionWhenCaptured = "holdMotionWhenCaptured"
 
         static func featureEnabled(_ id: String) -> String { "feature.\(id).enabled" }
     }
@@ -99,6 +105,9 @@ enum Prefs {
             Key.idlePillOnPlainDisplays: false,
             Key.islandColour: IslandTheme.standardIslandPref,
             Key.accentColour: IslandTheme.standardAccentPref,
+            Key.islandFill: IslandFill.standardPref,
+            Key.islandRing: IslandRing.offPref,
+            Key.holdMotionWhenCaptured: true,
         ]
         for feature in features {
             defaults[Key.featureEnabled(feature.id)] = feature.enabledByDefault
@@ -131,7 +140,8 @@ enum Prefs {
     static var islandTheme: IslandTheme {
         IslandTheme.cached(
             islandPref: store.string(forKey: Key.islandColour) ?? IslandTheme.standardIslandPref,
-            accentPref: store.string(forKey: Key.accentColour) ?? IslandTheme.standardAccentPref
+            accentPref: store.string(forKey: Key.accentColour) ?? IslandTheme.standardAccentPref,
+            fillPref: store.string(forKey: Key.islandFill) ?? IslandFill.standardPref
         )
     }
 

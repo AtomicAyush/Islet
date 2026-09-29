@@ -27,9 +27,12 @@ struct SettingsView: View {
 struct SettingsIslandTheme: ViewModifier {
     @AppStorage(Prefs.Key.islandColour) private var islandColour = IslandTheme.standardIslandPref
     @AppStorage(Prefs.Key.accentColour) private var accentColour = IslandTheme.standardAccentPref
+    @AppStorage(Prefs.Key.islandFill) private var islandFill = IslandFill.standardPref
 
     func body(content: Content) -> some View {
-        content.environment(\.islandTheme, IslandTheme.cached(islandPref: islandColour, accentPref: accentColour))
+        content.environment(
+            \.islandTheme, IslandTheme.cached(islandPref: islandColour, accentPref: accentColour, fillPref: islandFill)
+        )
     }
 }
 

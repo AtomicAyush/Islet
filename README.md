@@ -553,6 +553,24 @@ colour. A light island has a hairline edge, so it still shows against a light me
 file's icon lies on a faint plate there, so a white page still shows. Black with Feature colours
 looks exactly as the island always has.
 
+**Colours that move.** The island's fill can also be a gradient, down from the camera housing,
+across or corner to corner, or colours fading slowly one into the next, round and round. Both
+take a palette (Rainbow, Sunset, Ocean, Aurora, Ember, Night, Pastel, or two to six colours of
+your own) and a tone: Deep, under white words, or Bright, under black ones. The words never
+change colour as the fill moves, so every colour the fill passes through is darkened or
+lightened until full ink reads at 7:1 on it, and the island keeps the room a plain one has for
+cards, secondary words and colours that mean something; Settings shows the colours as they are
+drawn and names those that were moved. A ring of colour can run round the island's edge like a
+strip of lights, over any fill — a black island with a rainbow ring, say — either steady in one
+colour or with colours travelling round it, with a thickness, a glow and a brightness. It runs
+round the bubbles beside the island too, and under a notch it runs down from the menu bar,
+round the island and back up; at rest the island is the notch and has none. Only colours move,
+never brightness, and slowly: the quickest fill takes 3 seconds from one colour to the next and
+the quickest ring 5 seconds a lap. Core Animation moves them, so Islet itself does nothing while
+they do, and they hold still whenever nothing shows them, the screen sleeps or locks, the
+screen is shared or recorded (unless you say otherwise), and with Reduce Motion or Low Power
+Mode on. The ring never reaches under what the island shows, and never draws outside it.
+
 ## Building
 
 Requires macOS 14 or later and Xcode 16 or later.
@@ -819,7 +837,8 @@ the old one; the hooks' lines never change, since a changed hook has to be trust
   rest follow.
 - `Islet/Home/` — the opened island's home page: its tiles, its pages, and arranging them.
 - `Islet/Support/` — views and helpers shared by every feature, and the island's colours:
-  `IslandTheme`, the `.island…` styles, `SystemHue` and `FeatureTint`.
+  `IslandTheme`, the `.island…` styles, `SystemHue` and `FeatureTint`; the fills and ring in
+  `IslandLook`, and the one clock their motion keeps time by in `IslandMotion`.
 - `Islet/Settings/` — the Settings window and its search. The search finds a feature by its
   title and summary with nothing more; the other words it goes by, its settings' labels and
   other names for it, are in `SettingsSearchTerms.swift` beside every other feature's. A

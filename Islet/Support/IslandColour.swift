@@ -173,6 +173,61 @@ enum Contrast {
         return colour.mixed(toward: ink, hi)
     }
 
+    // MARK: Over several colours
+
+    // A fill of several colours (a gradient, or colours fading one into the next) is
+    // judged against every colour it draws. Each form below is its one-colour namesake
+    // for a single colour, so a solid island works out exactly what it always has.
+
+    /// The least opacity of `ink` that reaches `floor` on every one of `surfaces`.
+    static func minAlpha(_ ink: RGB, on surfaces: [RGB], floor: Double) -> Double {
+        if surfaces.count == 1 { return minAlpha(ink, on: surfaces[0], floor: floor) }
+        return surfaces.map { minAlpha(ink, on: $0, floor: floor) }.max() ?? 1
+    }
+
+    /// The strongest wash of `ink` that leaves full ink at 4.5:1 over every one of `bases`.
+    static func maxSurfaceAlpha(_ ink: RGB, over bases: [RGB]) -> Double {
+        if bases.count == 1 { return maxSurfaceAlpha(ink, over: bases[0]) }
+        return bases.map { maxSurfaceAlpha(ink, over: $0) }.min() ?? 0
+    }
+
+    /// `colour` moved toward `ink` only as far as it needs to reach `floor` against every
+    /// one of `surfaces`. An opaque colour's contrast depends on luminance alone, so only
+    /// the darkest and the lightest of them can decide it.
+    static func fitted(_ colour: RGB, floor: Double, on surfaces: [RGB], ink: RGB) -> RGB {
+        if surfaces.count == 1 { return fitted(colour, floor: floor, on: surfaces[0], ink: ink) }
+        let ends = extremes(of: surfaces)
+        func passes(_ c: RGB) -> Bool { ends.allSatisfy { RGB.contrast(c, $0) >= floor } }
+        guard !passes(colour) else { return colour }
+        var lo = 0.0, hi = 1.0
+        for _ in 0..<steps {
+            let mid = (lo + hi) / 2
+            if passes(colour.mixed(toward: ink, mid)) { hi = mid } else { lo = mid }
+        }
+        return colour.mixed(toward: ink, hi)
+    }
+
+    /// The darkest and the lightest of `colours`.
+    static func extremes(of colours: [RGB]) -> [RGB] {
+        guard let darkest = colours.min(by: { $0.luminance < $1.luminance }),
+              let lightest = colours.max(by: { $0.luminance < $1.luminance }) else { return [] }
+        return [darkest, lightest]
+    }
+
+    /// `colour` unchanged if `ink` already reaches `target` on it; otherwise moved away
+    /// from the ink, toward black under white words or white under black ones, only as far
+    /// as it needs. How a multi-colour fill's colours are deepened or brightened.
+    static func fittedAway(_ colour: RGB, from ink: RGB, to target: Double) -> RGB {
+        guard RGB.contrast(ink, colour) < target else { return colour }
+        let away: RGB = ink == .white ? .black : .white
+        var lo = 0.0, hi = 1.0
+        for _ in 0..<steps {
+            let mid = (lo + hi) / 2
+            if RGB.contrast(ink, colour.mixed(toward: away, mid)) >= target { hi = mid } else { lo = mid }
+        }
+        return colour.mixed(toward: away, hi)
+    }
+
     /// Words on a filled button or badge: black or white, whichever is clearer. If
     /// neither reaches 4.5:1, the fill is moved away from the label until it does; the
     /// label stays pure black or white.

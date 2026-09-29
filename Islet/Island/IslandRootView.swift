@@ -17,27 +17,37 @@ struct IslandRootView: View {
     @AppStorage(Prefs.Key.expandOnHover) private var expandOnHover = true
     @AppStorage(Prefs.Key.islandColour) private var islandColour = IslandTheme.standardIslandPref
     @AppStorage(Prefs.Key.accentColour) private var accentColour = IslandTheme.standardAccentPref
+    @AppStorage(Prefs.Key.islandFill) private var islandFill = IslandFill.standardPref
+    @AppStorage(Prefs.Key.islandRing) private var islandRing = IslandRing.offPref
     /// The island has had nothing to show for `IslandLayout.colourHold`: back at the
     /// notch's size, it is black again.
     @State private var isSettled = true
     /// Counts down the hold once the island has nothing to show.
     @State private var hold: Task<Void, Never>?
+    /// The bubbles drawn beside the island (`BubbleLayer`), kept here so a ring round
+    /// the island can part where one buds off it or merges back.
+    @State private var bubbles: [ShownBubble] = []
+    @State private var drawnBeside: IslandLayout?
 
     var body: some View {
         let layout = model.layout
         // Worked out here, once per change of preference; everything inside reads it
         // from the environment rather than from UserDefaults.
-        let theme = IslandTheme.cached(islandPref: islandColour, accentPref: accentColour)
+        let theme = IslandTheme.cached(islandPref: islandColour, accentPref: accentColour, fillPref: islandFill)
+        let ring = IslandRing(pref: islandRing)
         let isColoured = layout.wearsColour || !isSettled
         let paint = isColoured ? theme : theme.resting
 
         ZStack(alignment: .top) {
-            BubbleLayer(model: model, layout: layout)
+            BubbleLayer(model: model, layout: layout, bubbles: $bubbles, drawnBeside: $drawnBeside)
 
             IslandSurface(
                 model: model,
                 layout: layout,
-                isBlack: theme.island == .black,
+                isBlack: theme.isBlack,
+                fill: theme.isMulticolour ? theme.paintStyle : nil,
+                ring: ring,
+                buds: ring == nil ? [] : BubbleLayer.buds(bubbles, model: model, layout: layout, drawnBeside: drawnBeside),
                 // Into the colour at once; back to black, once settled, gently.
                 paintAnimation: isColoured ? nil : .easeOut(duration: 0.2)
             )
@@ -50,6 +60,7 @@ struct IslandRootView: View {
         .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
         .ignoresSafeArea()
         .environment(\.islandTheme, paint)
+        .environment(\.islandRing, ring)
         .environment(\.island, model)
         // Controls the system draws (a spinner, a text selection) follow the ink of
         // what they are drawn on; the window's own, such as a menu, the chosen colour's.
@@ -104,6 +115,13 @@ private struct IslandSurface: View {
     /// The island's chosen colour is black. Any other has the black notch plate at its
     /// top, under a notch, and casts its shadow as a whole.
     let isBlack: Bool
+    /// A fill of several colours, painted over the island's colour while it wears it.
+    let fill: IslandPaintStyle?
+    /// The ring round the island's edge, if there is one, shown while it wears its
+    /// colours.
+    let ring: IslandRing?
+    /// The bubbles budding off the island or merging back, where its ring parts.
+    let buds: [Bud]
     /// How the fill moves to a new colour: at once, or not at all with the island's
     /// springs, which would take it through every shade between black and the colour.
     let paintAnimation: Animation?
@@ -126,6 +144,49 @@ private struct IslandSurface: View {
                 Rectangle()
                     .fill(paint.background)
                     .animation(paintAnimation, value: paint.background)
+                if let fill {
+                    // Faded out over black, as the island's colour is, when it settles
+                    // back into the notch. Only the fade takes `paintAnimation`; its size
+                    // keeps the island's springs.
+                    IslandPaint(style: fill, isShown: layout.isDrawn && paint.isMulticolour)
+                        .animation(paintAnimation) { $0.opacity(paint.isMulticolour ? 1 : 0) }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+
+            // Under the content, which never reaches into its band (`ringRoom`). It goes
+            // as the island shrinks back into the notch, where it would only outline it.
+            if let ring {
+                IslandRingView(
+                    ring: ring, edge: IslandEdge(shape: shape), room: layout.ringRoom,
+                    isShown: layout.isDrawn && layout.wearsColour
+                )
+                // Within the island's own fill, edge pixels included, so it never
+                // widens what the island draws, and with it where clicks are caught.
+                // Where a bubble buds off or merges back, it parts over the bubble and
+                // its neck, whose own ring carries it round them (`BubbleNeck`).
+                .mask {
+                    shape.overlay(alignment: .top) {
+                        ZStack(alignment: .top) {
+                            ForEach(buds) { bud in
+                                BudShape(
+                                    progress: bud.bubble.progress, slot: bud.bubble.slot, layout: bud.layout,
+                                    bubble: bud.bubble, inset: ring.depth(within: layout.ringRoom), place: .canvas
+                                )
+                            }
+                        }
+                        .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
+                        .offset(y: -layout.topInset)
+                        .blendMode(.destinationOut)
+                    }
+                    .compositingGroup()
+                }
+                // Only the fade is timed here: its edge and mask keep the island's own
+                // springs, so it stays on the edge as the island leaves or returns to rest.
+                .animation(layout.wearsColour ? nil : .easeOut(duration: 0.2)) {
+                    $0.opacity(layout.wearsColour ? 1 : 0)
+                }
             }
 
             content
@@ -188,7 +249,8 @@ private struct IslandSurface: View {
         // hangs from a clear view the island's size, since a frame round the plate
         // itself would grow to the plate and clip nothing.
         .overlay(alignment: .top) {
-            if !isBlack, model.metrics.hasNotch {
+            // Over a ring as well, which would otherwise run under the housing.
+            if !isBlack || ring != nil, model.metrics.hasNotch {
                 Color.clear
                     .overlay(alignment: .top) { NotchPlate(notch: layout.notch) }
                     .clipShape(shape)
@@ -459,6 +521,7 @@ private struct OverflowBadge: View {
     var isOutside = false
     let open: () -> Void
     @Environment(\.islandTheme) private var paint
+    @Environment(\.islandRing) private var ring
 
     var body: some View {
         let pill = IslandBackdrop.surface(isHovered ? 0.27 : 0.16)
@@ -470,7 +533,25 @@ private struct OverflowBadge: View {
             .frame(minWidth: IslandLayout.badgeSize.width)
             .frame(height: IslandLayout.badgeSize.height)
             .background(Capsule().fill(paint.colour(of: pill).color))
-            .background(Capsule().stroke(paint.background, lineWidth: 1.5))
+            .background {
+                // With a ring round the island, the ring's colours, so the count reads as
+                // part of it.
+                if paint.isMulticolour || ring != nil {
+                    // Both reach past the capsule to the stroke's outer edge.
+                    ZStack {
+                        IslandPaint(style: paint.paintStyle)
+                            .padding(-1)
+                        if let ring {
+                            IslandRingView(ring: ring, edge: Capsule(), room: .small)
+                                .padding(-0.75)
+                        }
+                    }
+                    .mask(Capsule().stroke(lineWidth: 1.5))
+                    .allowsHitTesting(false)
+                } else {
+                    Capsule().stroke(paint.background, lineWidth: 1.5)
+                }
+            }
             // The hairline on the ring's outer edge: see `IslandSurface`.
             .overlay {
                 if isOutside, paint.isLight {
@@ -540,19 +621,36 @@ struct IndicatorDots: View {
 private struct BubbleLayer: View {
     let model: IslandViewModel
     let layout: IslandLayout
-    @State private var bubbles: [ShownBubble] = []
+    @Binding var bubbles: [ShownBubble]
     /// The island the bubbles were last brought in line with.
-    @State private var drawnBeside: IslandLayout?
+    @Binding var drawnBeside: IslandLayout?
+
+    /// The island each bubble sits beside. One no longer wanted keeps to the island it
+    /// was drawn beside, from the moment it is no longer wanted: before it is marked as
+    /// leaving, the island may already have opened, and an opened island has no room
+    /// for bubbles at all.
+    private static func beside(
+        _ bubble: ShownBubble, wanted keys: Set<ShownBubble.Key>, layout: IslandLayout, drawnBeside: IslandLayout?
+    ) -> IslandLayout {
+        bubble.leftFrom ?? (keys.contains(bubble.id) ? layout : drawnBeside ?? layout)
+    }
+
+    /// The bubbles that bud off the island's rounded ends and merge back into them,
+    /// each with the island it sits beside.
+    static func buds(
+        _ bubbles: [ShownBubble], model: IslandViewModel, layout: IslandLayout, drawnBeside: IslandLayout?
+    ) -> [Bud] {
+        let keys = Set(wanted(model: model, layout: layout).map(\.key))
+        return bubbles.filter { $0.origin == .island }.map {
+            Bud(bubble: $0, layout: beside($0, wanted: keys, layout: layout, drawnBeside: drawnBeside))
+        }
+    }
 
     var body: some View {
         let wanted = self.wanted
         let keys = Set(wanted.map(\.key))
-        /// The island each bubble sits beside. One no longer wanted keeps to the island
-        /// it was drawn beside, from the moment it is no longer wanted: before it is
-        /// marked as leaving, the island may already have opened, and an opened island
-        /// has no room for bubbles at all.
         func beside(_ bubble: ShownBubble) -> IslandLayout {
-            bubble.leftFrom ?? (keys.contains(bubble.id) ? layout : drawnBeside ?? layout)
+            Self.beside(bubble, wanted: keys, layout: layout, drawnBeside: drawnBeside)
         }
         return ZStack(alignment: .top) {
             // Every bubble's neck under every bubble, so one budding off its neighbour
@@ -563,6 +661,10 @@ private struct BubbleLayer: View {
             ForEach(bubbles) { bubble in
                 BubbleDroplet(
                     progress: bubble.progress, slot: bubble.slot, layout: beside(bubble), bubble: bubble,
+                    // Those budding off it, where its ring parts.
+                    buds: bubbles.filter {
+                        $0.origin == .neighbour && $0.side == bubble.side && $0.slot == bubble.slot + 1
+                    }.map { Bud(bubble: $0, layout: beside($0)) },
                     isHovered: model.hoveredSecondary == bubble.target,
                     isCountHovered: model.hoveredSecondary == .overflow
                 ) { target in
@@ -589,7 +691,9 @@ private struct BubbleLayer: View {
     /// What goes beside the island now, in order: each activity's bubble, the last
     /// carrying the count of those left over when that rides on it, then the count's
     /// own bubble, if it has one.
-    private var wanted: [Wanted] {
+    private var wanted: [Wanted] { Self.wanted(model: model, layout: layout) }
+
+    private static func wanted(model: IslandViewModel, layout: IslandLayout) -> [Wanted] {
         let bubbles = model.bubbles
         let counted = layout.overflowCount > 0 ? model.countedActivities.map(\.name) : []
         var wanted = bubbles.enumerated().map { index, bubble in
@@ -834,6 +938,91 @@ private struct BubbleGeometry {
         // Nor has one growing where it stands anything to be joined to.
         isMoving = !reduceMotion && !inPlace && progress > 0.001 && abs(progress - 1) > 0.001
     }
+
+    /// The bubble's radius as drawn.
+    var radius: CGFloat { d / 2 * scale }
+
+    /// Draws the bubble joined to what it buds from, as `BubbleNeck` does, with both
+    /// circles `inset` smaller: 0 for its outline, a ring's depth for what lies inside
+    /// that ring. `origin` is where the context's own origin is, measured from the
+    /// notch's centre at the top of the canvas, and `unit` how many of the context's
+    /// points make one of the canvas's.
+    func drawJoined(in context: GraphicsContext, origin: CGPoint, unit: CGFloat = 1, inset: CGFloat = 0) {
+        context.drawLayer { joined in
+            joined.addFilter(.alphaThreshold(min: 0.5, color: .black))
+            joined.addFilter(.blur(radius: 4 * unit))
+            joined.drawLayer { circles in
+                for (centre, r) in [(anchorX, anchorRadius), (x, radius)] where r > inset {
+                    let r = (r - inset) * unit
+                    let c = CGPoint(x: (centre - origin.x) * unit, y: (target.height - origin.y) * unit)
+                    circles.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(.black))
+                }
+            }
+        }
+    }
+}
+
+/// A bubble budding off the island or another bubble, or merging back, where the ring
+/// round what it buds from parts. Drawn as a mask, so black.
+struct Bud: Identifiable {
+    fileprivate let bubble: ShownBubble
+    /// The island it sits beside.
+    let layout: IslandLayout
+
+    fileprivate init(bubble: ShownBubble, layout: IslandLayout) {
+        self.bubble = bubble
+        self.layout = layout
+    }
+
+    var id: some Hashable { bubble.id }
+}
+
+/// What lies inside the ring round a bubble joined to what it buds from (`BubbleNeck`),
+/// for the ring round what it buds from to part over, drawn only while it moves. On the
+/// island's canvas, or in the frame of the bubble it buds from, scaled as that is.
+private struct BudShape: View, Animatable {
+    var progress: CGFloat
+    var slot: CGFloat
+    let layout: IslandLayout
+    let bubble: ShownBubble
+    /// How deep the ring that parts is.
+    let inset: CGFloat
+    let place: Place
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    enum Place {
+        /// The island's canvas, from the notch's centre at its top.
+        case canvas
+        /// A bubble's own frame, `size` across, centred at `centre` and drawn at `scale`.
+        case bubble(centre: CGPoint, size: CGFloat, scale: CGFloat)
+    }
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(progress, slot) }
+        set { (progress, slot) = (newValue.first, newValue.second) }
+    }
+
+    var body: some View {
+        let g = BubbleGeometry(progress: progress, slot: slot, layout: layout, bubble: bubble, reduceMotion: reduceMotion)
+        if g.isMoving {
+            switch place {
+            case .canvas:
+                // As wide as the neck (`BubbleNeck`).
+                let lo = (min(g.anchorX - g.anchorRadius, g.x - g.radius) - 12).rounded(.down)
+                let hi = (max(g.anchorX + g.anchorRadius, g.x + g.radius) + 12).rounded(.up)
+                Canvas { context, _ in
+                    g.drawJoined(in: context, origin: CGPoint(x: lo, y: 0), inset: inset)
+                }
+                .frame(width: hi - lo, height: layout.topInset + layout.notch.height + 12)
+                .offset(x: (lo + hi) / 2)
+            case .bubble(let centre, let size, let scale):
+                Canvas { context, _ in
+                    let origin = CGPoint(x: centre.x - size / 2 * scale, y: centre.y - size / 2 * scale)
+                    g.drawJoined(in: context, origin: origin, unit: 1 / scale, inset: inset)
+                }
+            }
+        }
+    }
 }
 
 /// The "liquid" joining a bubble to what it buds from while it moves. Both are drawn
@@ -846,6 +1035,7 @@ private struct BubbleNeck: View, Animatable {
     let layout: IslandLayout
     let bubble: ShownBubble
     @Environment(\.islandTheme) private var paint
+    @Environment(\.islandRing) private var ring
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -861,8 +1051,10 @@ private struct BubbleNeck: View, Animatable {
             let r = g.d / 2 * g.scale
             let lo = (min(g.anchorX - g.anchorRadius, g.x - r) - 12).rounded(.down)
             let hi = (max(g.anchorX + g.anchorRadius, g.x + r) + 12).rounded(.up)
+            let style = paint.isMulticolour ? paint.bubblePaintStyle(onLeft: bubble.side == .left) : nil
+            // Through a fill of several colours, only the neck's shape counts.
             let fill = paint.background
-            Canvas { context, _ in
+            let neck = Canvas { context, _ in
                 context.addFilter(.alphaThreshold(min: 0.5, color: fill))
                 context.addFilter(.blur(radius: 4))
                 context.drawLayer { layer in
@@ -877,7 +1069,43 @@ private struct BubbleNeck: View, Animatable {
                     )
                 }
             }
+            Group {
+                if let style {
+                    // A fill of several colours, through the neck's shape.
+                    IslandPaint(style: style).mask { neck }
+                } else {
+                    neck
+                }
+            }
             .frame(width: hi - lo, height: layout.topInset + layout.notch.height + 12)
+            .overlay {
+                if let ring {
+                    // The ring round the neck, as deep as a bubble's, and round none of
+                    // the bubble itself, which has its own. Its colours are laid out
+                    // over twice the island, centred on it, so round a ring of the
+                    // island's they are the island ring's own where the two meet;
+                    // inside the island, the island covers it.
+                    let depth = min(ring.thickness.width, IslandRingRoom.small.band)
+                    IslandRingColours(ring: ring)
+                        .frame(width: 2 * layout.size.width, height: 2 * layout.size.height)
+                        .position(x: -lo, y: layout.topInset + layout.size.height / 2)
+                        .mask {
+                            Canvas { context, _ in
+                                let origin = CGPoint(x: lo, y: 0)
+                                g.drawJoined(in: context, origin: origin)
+                                var cut = context
+                                cut.blendMode = .destinationOut
+                                g.drawJoined(in: cut, origin: origin, inset: depth)
+                                let r = g.radius
+                                cut.fill(
+                                    Path(ellipseIn: CGRect(x: g.x - lo - r, y: g.target.height - r, width: 2 * r, height: 2 * r)),
+                                    with: .color(.black)
+                                )
+                            }
+                        }
+                        .opacity(ring.brightness)
+                }
+            }
             .offset(x: (lo + hi) / 2)
             .allowsHitTesting(false)
         }
@@ -892,12 +1120,15 @@ private struct BubbleDroplet: View, Animatable {
     var slot: CGFloat
     let layout: IslandLayout
     let bubble: ShownBubble
+    /// The bubbles budding off this one, or merging back into it.
+    let buds: [Bud]
     /// The pointer is on the bubble: it swells a little and lifts, to say it opens.
     let isHovered: Bool
     /// The pointer is on the count, wherever it is.
     let isCountHovered: Bool
     let onTap: (IslandViewModel.SecondaryTarget) -> Void
     @Environment(\.islandTheme) private var paint
+    @Environment(\.islandRing) private var ring
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -910,13 +1141,54 @@ private struct BubbleDroplet: View, Animatable {
         let d = g.d
         let fade = Double(min(1, max(0, (progress - 0.35) / 0.5)))
         let fill = paint.background
+        let style = paint.isMulticolour ? paint.bubblePaintStyle(onLeft: bubble.side == .left) : nil
         if progress > 0.001 {
             content
                 .frame(width: d, height: d)
-                .background(Circle().fill(fill))
+                // Clear over a ring, which runs under the content.
+                .background(Circle().fill(style == nil && ring == nil ? fill : .clear))
                 .clipShape(Circle())
                 .opacity(fade)
-                .background(Circle().fill(fill))
+                .background {
+                    ZStack {
+                        if let style {
+                            IslandPaint(style: style).clipShape(Circle())
+                        } else {
+                            Circle().fill(fill)
+                        }
+                        // Round the bubble in step with the island's. Joined to what it
+                        // buds from, it is there from the start, with the neck's, and
+                        // parts where the neck joins it or another bubble buds off it;
+                        // growing where it stands, it arrives with the content.
+                        if let ring {
+                            let depth = IslandRingRoom.small.band + IslandRingRoom.small.glow
+                            let frame = BudShape.Place.bubble(
+                                centre: CGPoint(x: g.x, y: g.target.height), size: d, scale: g.scale
+                            )
+                            IslandRingView(ring: ring, edge: Circle(), room: .small)
+                                .clipShape(Circle())
+                                .mask {
+                                    Rectangle().overlay {
+                                        ZStack {
+                                            BudShape(
+                                                progress: progress, slot: slot, layout: layout, bubble: bubble,
+                                                inset: depth, place: frame
+                                            )
+                                            ForEach(buds) { bud in
+                                                BudShape(
+                                                    progress: bud.bubble.progress, slot: bud.bubble.slot,
+                                                    layout: bud.layout, bubble: bud.bubble, inset: depth, place: frame
+                                                )
+                                            }
+                                        }
+                                        .blendMode(.destinationOut)
+                                    }
+                                    .compositingGroup()
+                                }
+                                .opacity(bubble.origin == .place ? fade : 1)
+                        }
+                    }
+                }
                 // The island's hairline, on a light island: see `IslandSurface`.
                 .overlay {
                     if paint.isLight { Circle().strokeBorder(.islandDecorative(0.16), lineWidth: 0.5) }

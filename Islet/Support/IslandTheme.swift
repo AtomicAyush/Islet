@@ -95,11 +95,26 @@ enum IslandBackdrop: Hashable, Sendable {
 /// contrast floor needs (4.5:1 for words, 3:1 for symbols and rings). On the black
 /// island with Feature colours, the default, every role returns exactly what the island
 /// drew before themes, so it looks the same to the pixel.
+///
+/// A fill of several colours keeps one ink for all of them, so its words never change
+/// colour as it moves: every colour it draws is deepened or brightened until full ink
+/// reaches 7:1 on it (`deepContrast`), and every floor and cap is worked out against all
+/// of them, the hardest deciding.
 struct IslandTheme: Sendable, Equatable {
-    /// The island's colour, used exactly as chosen.
+    /// The colour contrast is judged against: the island's colour, used exactly as
+    /// chosen, or for a fill of several colours the one the ink stands out least on.
     let island: RGB
     let accent: AccentChoice
-    /// White or black, whichever stands out more on the island.
+    /// Solid, a gradient, or colours fading one into the next.
+    let fill: IslandFill
+    /// The colours handed to the gradient or the animation: the island's colour alone
+    /// for a solid fill; otherwise each chosen colour's way to the next, cut into
+    /// `piecesPerColour`, every piece fitted away from the ink.
+    let stops: [RGB]
+    /// Every colour drawn: the stops, and what is drawn between each two.
+    let samples: [RGB]
+    /// White or black, whichever stands out more on the island; for a fill of several
+    /// colours, the one its tone asks for.
     let ink: RGB
     /// A light island, drawn on in black.
     let isLight: Bool
@@ -113,20 +128,92 @@ struct IslandTheme: Sendable, Equatable {
     let graphicFloor: Double
     private let memo = Memo()
 
-    init(island: RGB, accent: AccentChoice) {
-        self.island = island
+    /// What full ink reaches on every colour of a fill of several. Held to 4.5:1 alone,
+    /// a bright palette would leave the island mid-toned: no room for cards, every
+    /// secondary word at full ink, and the meaningful colours all but black.
+    static let deepContrast = 7.0
+    /// Pieces each chosen colour's way to the next is cut into.
+    static let piecesPerColour = 12
+    /// Colours judged between two neighbouring pieces, as the gradient or the animation
+    /// draws them.
+    static let samplesPerPiece = 4
+
+    init(island: RGB, accent: AccentChoice, fill: IslandFill = .solid) {
         self.accent = accent
-        ink = Contrast.ink(on: island)
+        self.fill = fill
+        if let palette = fill.palette {
+            let cyclic = fill.isRotating
+            let path = Self.path(through: palette.colours, cyclic: cyclic)
+            let ink = Self.ink(for: path, tone: fill.tone ?? .auto, preset: palette.preset)
+            let stops = path.map { Contrast.fittedAway($0, from: ink, to: Self.deepContrast) }
+            let samples = Self.between(stops, cyclic: cyclic)
+            self.ink = ink
+            self.stops = stops
+            self.samples = samples
+            self.island = samples.min { RGB.contrast(ink, $0) < RGB.contrast(ink, $1) } ?? island
+        } else {
+            self.island = island
+            ink = Contrast.ink(on: island)
+            stops = [island]
+            samples = [island]
+        }
         isLight = ink == .black
-        isDefault = island == .black && accent == .featureColours
-        maxSurfaceAlpha = Contrast.maxSurfaceAlpha(ink, over: island)
-        textFloor = Contrast.minAlpha(ink, on: island, floor: Contrast.text)
-        graphicFloor = Contrast.minAlpha(ink, on: island, floor: Contrast.graphic)
+        isDefault = fill == .solid && island == .black && accent == .featureColours
+        maxSurfaceAlpha = Contrast.maxSurfaceAlpha(ink, over: samples)
+        textFloor = Contrast.minAlpha(ink, on: samples, floor: Contrast.text)
+        graphicFloor = Contrast.minAlpha(ink, on: samples, floor: Contrast.graphic)
     }
 
     static func == (a: IslandTheme, b: IslandTheme) -> Bool {
-        a.island == b.island && a.accent == b.accent
+        a.island == b.island && a.accent == b.accent && a.fill == b.fill
     }
+
+    /// Each colour's way to the next, cut into `piecesPerColour` and mixed in sRGB, as a
+    /// gradient and Core Animation mix them; back round to the first when `cyclic`.
+    static func path(through colours: [RGB], cyclic: Bool) -> [RGB] {
+        let next = Array(colours.dropFirst()) + (cyclic ? [colours[0]] : [])
+        var path = zip(colours, next).flatMap { a, b in
+            (0..<piecesPerColour).map { a.mixed(toward: b, Double($0) / Double(piecesPerColour)) }
+        }
+        if !cyclic, let last = colours.last { path.append(last) }
+        return path
+    }
+
+    /// `stops` and what is drawn between each two, `samplesPerPiece` to a piece.
+    static func between(_ stops: [RGB], cyclic: Bool) -> [RGB] {
+        let sequence = stops + (cyclic ? [stops[0]] : [])
+        var samples = zip(sequence, sequence.dropFirst()).flatMap { a, b in
+            (0..<samplesPerPiece).map { a.mixed(toward: b, Double($0) / Double(samplesPerPiece)) }
+        }
+        if let last = sequence.last { samples.append(last) }
+        return samples
+    }
+
+    /// White for a deep fill, black for a bright one; for `auto`, a preset's own tone, or
+    /// the ink that needs the colours changed least to reach `deepContrast`.
+    static func ink(for colours: [RGB], tone: IslandTone, preset: IslandPalettePreset?) -> RGB {
+        switch tone {
+        case .deep: return .white
+        case .bright: return .black
+        case .auto:
+            if let preset { return preset.tone == .deep ? .white : .black }
+            func shortfall(_ ink: RGB) -> Double {
+                colours.reduce(0) { $0 + max(0, 1 - min(1, RGB.contrast(ink, $1) / deepContrast)) }
+            }
+            return shortfall(.white) <= shortfall(.black) ? .white : .black
+        }
+    }
+
+    /// A chosen colour of the fill as it is drawn.
+    func drawn(fillColour colour: RGB) -> RGB {
+        fill == .solid ? colour : Contrast.fittedAway(colour, from: ink, to: Self.deepContrast)
+    }
+
+    /// The tone a fill of several colours is drawn in, `auto` resolved.
+    var tone: IslandTone { isLight ? .bright : .deep }
+
+    /// A fill of more than one colour.
+    var isMulticolour: Bool { fill != .solid }
 
     /// The black island with Feature colours: exactly the island before themes.
     static let standard = IslandTheme(island: .black, accent: .featureColours)
@@ -137,12 +224,12 @@ struct IslandTheme: Sendable, Equatable {
     /// The same accent on black: what the resting island wears on a display with a
     /// notch, where it stands in for the notch itself.
     var resting: IslandTheme {
-        island == .black ? self : IslandTheme.cached(island: .black, accent: accent)
+        isBlack ? self : IslandTheme.cached(island: .black, accent: accent)
     }
 
     /// The black island, whatever the accent: where colours are drawn as they always
     /// were before they are fitted.
-    var isBlack: Bool { island == .black }
+    var isBlack: Bool { island == .black && fill == .solid }
 
     var colorScheme: ColorScheme { isLight ? .light : .dark }
 
@@ -158,7 +245,21 @@ struct IslandTheme: Sendable, Equatable {
 
     // MARK: Backdrops
 
-    /// The opaque colour an element on `backdrop` sits on.
+    /// Every opaque colour an element on `backdrop` sits on: `colour(of:)` for a solid
+    /// island; for a fill of several colours, the backdrop over each colour it draws.
+    func colours(of backdrop: IslandBackdrop) -> [RGB] {
+        guard fill != .solid else { return [colour(of: backdrop)] }
+        switch backdrop {
+        case .island: return samples
+        case .surface(let alpha), .track(let alpha):
+            let wash = surfaceAlpha(alpha)
+            return samples.map { ink.composited(wash, over: $0) }
+        case .fill(let fill): return [fill]
+        }
+    }
+
+    /// The opaque colour an element on `backdrop` sits on; for a fill of several colours,
+    /// the one over the colour the ink stands out least on.
     func colour(of backdrop: IslandBackdrop) -> RGB {
         switch backdrop {
         case .island: island
@@ -211,7 +312,7 @@ struct IslandTheme: Sendable, Equatable {
         if backdrop == .island { return minimum == Contrast.text ? textFloor : graphicFloor }
         let surface = colour(of: backdrop)
         return memo.value(for: .alpha(surface, minimum)) {
-            Contrast.minAlpha(ink, on: surface, floor: minimum)
+            Contrast.minAlpha(ink, on: colours(of: backdrop), floor: minimum)
         }
     }
 
@@ -269,7 +370,7 @@ struct IslandTheme: Sendable, Equatable {
         }
         let surface = self.colour(of: backdrop)
         return memo.colour(for: .fit(colour, minimum, surface)) {
-            let fit = Contrast.fitted(colour, floor: minimum, on: surface, ink: ink)
+            let fit = Contrast.fitted(colour, floor: minimum, on: colours(of: backdrop), ink: ink)
             let losesHue = minimum >= Contrast.text && colour.chroma >= Contrast.leastChroma
                 && fit.chroma < Contrast.leastChroma && fit.chroma < colour.chroma / 2
             return losesHue ? ink : fit
@@ -296,33 +397,78 @@ struct IslandTheme: Sendable, Equatable {
     /// close to stand out on it as it is, so that it is drawn darker or lighter there. On
     /// a display without a notch the resting island wears its colour.
     var islandClash: SystemHue? {
-        SystemHue.guarded.first { island.couldBeTaken(for: $0.dark) && fitted($0.dark) != $0.dark }
+        SystemHue.guarded.first { hue in
+            stops.contains { $0.couldBeTaken(for: hue.dark) } && fitted(hue.dark) != hue.dark
+        }
+    }
+
+    // MARK: Paint
+
+    /// How the island is painted.
+    var paintStyle: IslandPaintStyle {
+        switch fill {
+        case .solid: .solid(island)
+        case .gradient(_, _, let direction): .gradient(stops, direction)
+        case .rotating(let palette, _, let speed):
+            .rotating(stops, period: speed.secondsPerColour * Double(palette.colours.count))
+        }
+    }
+
+    /// How a bubble beside the island is painted: as the island, where the island's
+    /// colours are the same all the way across; otherwise in the colour at the island's
+    /// end on the bubble's side.
+    func bubblePaintStyle(onLeft: Bool) -> IslandPaintStyle {
+        switch fill {
+        case .gradient(_, _, let direction) where direction != .down:
+            .solid((onLeft ? stops.first : stops.last) ?? island)
+        default: paintStyle
+        }
+    }
+
+    /// The strongest wash of any of `colours` over the island that leaves full ink at
+    /// 4.5:1 on every colour it draws: how bright a ring's glow may fall inward.
+    func glowCap(for colours: [RGB]) -> Double {
+        memo.value(for: .glow(colours)) {
+            let under = stride(from: 0, to: samples.count, by: max(1, samples.count / 48)).map { samples[$0] }
+            func reads(_ alpha: Double) -> Bool {
+                colours.allSatisfy { c in under.allSatisfy { RGB.contrast(ink, c.composited(alpha, over: $0)) >= Contrast.text } }
+            }
+            guard reads(0) else { return 0 }
+            var lo = 0.0, hi = 1.0
+            for _ in 0..<Contrast.steps {
+                let mid = (lo + hi) / 2
+                if reads(mid) { lo = mid } else { hi = mid }
+            }
+            return lo
+        }
     }
 
     // MARK: Cache
 
     /// Themes by preference value. A colour picker drag writes many values, so the
     /// cache is emptied when it fills up.
-    static func cached(island: RGB, accent: AccentChoice) -> IslandTheme {
-        if island == .black, accent == .featureColours { return .standard }
+    static func cached(island: RGB, accent: AccentChoice, fill: IslandFill = .solid) -> IslandTheme {
+        if island == .black, accent == .featureColours, fill == .solid { return .standard }
         return themes.withLock { cache in
-            let key = ThemeKey(island: island, accent: accent)
+            let key = ThemeKey(island: island, accent: accent, fill: fill)
             if let theme = cache[key] { return theme }
             if cache.count >= 16 { cache.removeAll() }
-            let theme = IslandTheme(island: island, accent: accent)
+            let theme = IslandTheme(island: island, accent: accent, fill: fill)
             cache[key] = theme
             return theme
         }
     }
 
-    /// From the stored preferences: "#RRGGBB" for the island, and the accent's value.
-    static func cached(islandPref: String, accentPref: String) -> IslandTheme {
-        cached(island: RGB(hex: islandPref) ?? .black, accent: AccentChoice(pref: accentPref))
+    /// From the stored preferences: "#RRGGBB" for the island, the accent's value, and
+    /// the fill's.
+    static func cached(islandPref: String, accentPref: String, fillPref: String = IslandFill.standardPref) -> IslandTheme {
+        cached(island: RGB(hex: islandPref) ?? .black, accent: AccentChoice(pref: accentPref), fill: IslandFill(pref: fillPref))
     }
 
     private struct ThemeKey: Hashable {
         let island: RGB
         let accent: AccentChoice
+        let fill: IslandFill
     }
 
     private static let themes = Locked([ThemeKey: IslandTheme]())
@@ -335,6 +481,7 @@ private final class Memo: Sendable {
     enum Key: Hashable {
         case alpha(RGB, Double)
         case fit(RGB, Double, RGB)
+        case glow([RGB])
     }
 
     private let values = Locked([Key: Double]())
@@ -386,5 +533,22 @@ extension EnvironmentValues {
     var islandTheme: IslandTheme {
         get { self[IslandThemeKey.self] }
         set { self[IslandThemeKey.self] = newValue }
+    }
+}
+
+/// How an island, a bubble or a count's ring is painted.
+enum IslandPaintStyle: Hashable, Sendable {
+    case solid(RGB)
+    /// A still gradient through the colours.
+    case gradient([RGB], IslandGradientDirection)
+    /// The colours in turn, fading from each to the next, round and round every `period`
+    /// seconds.
+    case rotating([RGB], period: Double)
+}
+
+extension IslandFill {
+    var isRotating: Bool {
+        if case .rotating = self { return true }
+        return false
     }
 }

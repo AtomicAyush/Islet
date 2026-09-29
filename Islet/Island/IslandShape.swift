@@ -26,6 +26,18 @@ struct IslandShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
+        outline(in: rect, isOpen: false)
+    }
+
+    /// The island's visible edge, for the ring round it (`IslandRingView`). Under a notch
+    /// it is open along the top of the screen: it starts at the tip of the left ear, runs
+    /// down it, round the island and up to the tip of the right ear, and nothing runs
+    /// along the screen's edge. Floating, it is the whole outline.
+    func edge(in rect: CGRect) -> Path {
+        outline(in: rect, isOpen: true)
+    }
+
+    private func outline(in rect: CGRect, isOpen: Bool) -> Path {
         let w = rect.width
         let h = rect.height
         guard w > 0, h > 0 else { return Path() }
@@ -83,6 +95,7 @@ struct IslandShape: Shape {
                 control1: CGPoint(x: right, y: rect.minY + ear * (1 - k)),
                 control2: CGPoint(x: rect.maxX - ear * k, y: rect.minY)
             )
+            if isOpen { return p }
         } else {
             p.addLine(to: CGPoint(x: right, y: rect.minY + top))
             // Convex top-right corner.
@@ -94,5 +107,21 @@ struct IslandShape: Shape {
         }
         p.closeSubpath()
         return p
+    }
+}
+
+/// `IslandShape`'s edge (`edge(in:)`), open at the top under a notch, as a shape to
+/// stroke: with the same radii, animated alike, so it stays on the island's outline
+/// through every change of shape.
+struct IslandEdge: Shape {
+    var shape: IslandShape
+
+    var animatableData: IslandShape.AnimatableData {
+        get { shape.animatableData }
+        set { shape.animatableData = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        shape.edge(in: rect)
     }
 }
