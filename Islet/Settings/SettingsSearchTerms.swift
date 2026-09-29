@@ -255,7 +255,8 @@ extension DownloadsFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
             labels: ["Show finished downloads", "Follows downloads into"],
-            keywords: ["safari", "chrome", "firefox", "browser", "progress", "download folder"]
+            keywords: ["safari", "chrome", "firefox", "browser", "progress", "download folder", "delete", "remove", "trash",
+                       "upload"]
         )
     }
 }

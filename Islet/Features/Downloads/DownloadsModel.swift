@@ -29,6 +29,8 @@ struct DownloadItem: Identifiable, Equatable {
 struct FinishedDownload: Equatable {
     var url: URL
     var size: Int64?
+    /// The file a preview hands over, made up by Islet: Delete leaves it be.
+    var isSample = false
 
     var name: String { url.lastPathComponent }
 }

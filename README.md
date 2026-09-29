@@ -334,17 +334,25 @@ Downloads folder, the file's icon sits left of the camera and a ring fills right
 spinner while the server hasn't said how big the file is), with a count when several are under
 way. Opened, it says how much has come, how fast, and how long is left. When one finishes, a
 card holds the file for a few seconds, and for as long as the pointer rests on it: drag it
-straight to where it's needed, open it, or show it in Finder. Browsers tell Finder how a
-download is going by publishing its progress, which is how Finder draws the bar under the
-file's icon, and Islet listens the same way; a browser that publishes nothing (Firefox) is
-followed by the size of its partial file. Browsers also tell the Dock when a download finishes,
-so one too quick to see still gets its card. Nothing runs while nothing is downloading: a
-download that stops for a minute (paused, or waiting for you to keep a file Chrome has warned
-about) leaves the island, and comes back the moment it moves again. Islet only watches: it
-can't pause or cancel another app's download, and one that fails or is cancelled just goes.
-Safari's own download folder is followed too when it is set to another; a download another
-browser saves elsewhere shows only once it has finished. The first time, macOS asks whether
-Islet may see your Downloads folder.
+straight to where it's needed, open it, show it in Finder, or delete it. Drag the file out
+(into an upload field, say) and the card stays until you delete or close it, for up to ten
+minutes, stepping aside while another card, a new download or anything else that starts
+meanwhile (a timer, a call) needs the island, and coming back after; nothing is deleted when
+you let go, as the browser may still be reading the file. Delete asks first, its button turning
+into Delete and Cancel for a few seconds, then deletes the file for good: it isn't put in the
+Trash. It deletes only the card's own file, and only while it is still the file that finished,
+so one moved, replaced or changed since is kept, and the card says so. A folder (an app, or an
+archive Safari has opened) has no Delete, and nor does a download still under way. Browsers
+tell Finder how a download is going by publishing its progress, which is how Finder draws the
+bar under the file's icon, and Islet listens the same way; a browser that publishes nothing
+(Firefox) is followed by the size of its partial file. Browsers also tell the Dock when a
+download finishes, so one too quick to see still gets its card. Nothing runs while nothing is
+downloading: a download that stops for a minute (paused, or waiting for you to keep a file
+Chrome has warned about) leaves the island, and comes back the moment it moves again. Islet
+only watches: it can't pause or cancel another app's download, and one that fails or is
+cancelled just goes. Safari's own download folder is followed too when it is set to another; a
+download another browser saves elsewhere shows only once it has finished. The first time, macOS
+asks whether Islet may see your Downloads folder.
 
 **File Copies.** While Finder copies something big (to an external drive, a network share,
 another folder), moves it to another disk or duplicates it, what it is copying sits left of the

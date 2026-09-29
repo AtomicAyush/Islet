@@ -93,7 +93,7 @@ enum DownloadsSamples {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let url = folder.appendingPathComponent(guideName)
             if !FileManager.default.fileExists(atPath: url.path), !drawGuide(to: url) { return nil }
-            return FinishedDownload(url: url, size: guideSize)
+            return FinishedDownload(url: url, size: guideSize, isSample: true)
         }.value
     }
 

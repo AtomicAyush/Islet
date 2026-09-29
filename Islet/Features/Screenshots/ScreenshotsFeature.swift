@@ -146,7 +146,7 @@ final class ScreenshotsFeature: Feature {
                 // A preview's sample is not the person's to delete: the card goes as a
                 // screenshot's would, and the sample stays.
                 if !shot.isSample {
-                    guard let stamp = shot.file, ScreenshotFileStamp.read(shot.url) == stamp else {
+                    guard let stamp = shot.file, FileStamp.read(shot.url) == stamp else {
                         return card.keep("Copied · file changed, so kept")
                     }
                     guard files.delete(shot.url) else { return card.keep("Copied · couldn't delete the file") }
@@ -281,7 +281,7 @@ extension ScreenshotFileActions {
             },
             reveal: { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
             trash: { ScreenshotFiles.trash($0) },
-            delete: { ScreenshotFiles.delete($0) }
+            delete: { FileStamp.delete($0) }
         )
     }
 }

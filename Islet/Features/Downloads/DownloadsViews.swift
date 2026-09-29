@@ -173,13 +173,74 @@ enum DownloadedCardLayout {
     /// Room for a file name of twenty-odd characters beside the three buttons before it
     /// truncates, in its middle, where names differ least.
     static let width: CGFloat = 440
+    /// As much room for the name beside Delete as well.
+    static let deleteWidth: CGFloat = width + 42
     static let height: CGFloat = 64
     /// The clear space either side of the page in a document icon 44 points wide.
     static let iconInset: CGFloat = 6
 }
 
-/// A download has finished: the file, to drag straight to where it is needed, open, or
-/// find in Finder.
+/// What Delete did, for the card to say before it goes.
+enum DownloadDeleteResult: Equatable {
+    case deleted
+    /// Nothing is where the file was: moved or deleted meanwhile.
+    case missing
+    /// Something is there, but not the file the card was made for, so it is kept.
+    case changed
+    case failed
+
+    var note: String {
+        switch self {
+        case .deleted: "Deleted"
+        case .missing: "No longer there"
+        case .changed: "File changed, so kept"
+        case .failed: "Couldn't delete"
+        }
+    }
+}
+
+/// Delete's two steps: the first click only asks, and the file goes on a click on the
+/// Delete that asking puts up. The question lapses after a few seconds, or once the
+/// pointer leaves the card; with VoiceOver on it has longer, for the card to be read.
+@MainActor
+@Observable
+final class DeleteConfirmation {
+    static let lapse: TimeInterval = 4
+    static let spokenLapse: TimeInterval = 30
+
+    private(set) var isAsking = false
+    @ObservationIgnored private var lapsing: Task<Void, Never>?
+
+    static func lapse(voiceOver: Bool) -> TimeInterval { voiceOver ? spokenLapse : lapse }
+
+    /// Asks, for `seconds`, or for as long as suits whether VoiceOver is on.
+    func ask(for seconds: TimeInterval? = nil) {
+        let seconds = seconds ?? Self.lapse(voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+        isAsking = true
+        lapsing?.cancel()
+        lapsing = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            self?.cancel()
+        }
+    }
+
+    func cancel() {
+        lapsing?.cancel()
+        lapsing = nil
+        isAsking = false
+    }
+
+    /// The answer: whether the question was still up, which it no longer is.
+    func confirm() -> Bool {
+        guard isAsking else { return false }
+        cancel()
+        return true
+    }
+}
+
+/// A download has finished: the file, to drag straight to where it is needed, open, find
+/// in Finder or delete.
 struct DownloadedCard: View {
     let file: FinishedDownload
     /// The pointer arrived (`true`) or left: the card stays while it is on it.
@@ -187,14 +248,22 @@ struct DownloadedCard: View {
     let open: () -> Void
     let reveal: () -> Void
     let dismiss: () -> Void
+    /// Deletes the file for good, once asked twice; `nil` where the card has no Delete:
+    /// for a folder, or a file that could not be read.
+    var delete: (() -> DownloadDeleteResult)? = nil
+    /// The file's drag began, or ended.
+    var dragged: (FileDragSource.Phase) -> Void = { _ in }
+    /// The file has been dragged out, and the card stays for it to be deleted.
+    var isKept = false
+    @State private var confirmation = DeleteConfirmation()
+    /// What Delete did, said in place of the size until the card goes.
+    @State private var result: DownloadDeleteResult?
 
     var body: some View {
         HStack(spacing: 12) {
             FileIcon(url: file.url, size: 44)
-                .contentShape(Rectangle())
-                .onDrag { FileDrag.provider(for: file.url) }
-                .onTapGesture(perform: open)
-                .help("Drag the file where you need it")
+                .overlay(FileDragSource(url: file.url, help: "Drag the file where you need it", tapped: open, dragged: dragged))
+                .allowsHitTesting(result == nil)
                 // A document's icon is a page with clear space either side; this puts
                 // the page, rather than the space, as far from the card's edge as the
                 // close button is from the other.
@@ -206,35 +275,82 @@ struct DownloadedCard: View {
                     .foregroundStyle(.islandPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(subtitle)
+                Text(result?.note ?? subtitle)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.islandText(0.55))
+                    .foregroundStyle(noteStyle)
                     .lineLimit(1)
             }
 
             Spacer(minLength: 4)
 
-            Button(action: open) {
-                Text("Open")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 14)
-                    .frame(height: 30)
-                    .islandWashed(.accent(.downloads, minimum: Contrast.text), wash: 0.2, in: Capsule())
-                    .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
+            if result == nil {
+                if confirmation.isAsking {
+                    // Cancel where the bin was, so a double click on it only asks.
+                    word("Delete", .hue(.destructive, minimum: Contrast.text), action: confirmDelete)
+                        .help("Deletes the file for good. It isn't put in the Trash, so it can't be got back.")
+                        .accessibilityLabel("Delete for good")
+                    word("Cancel", .text(1)) { confirmation.cancel() }
+                } else {
+                    word("Open", .accent(.downloads, minimum: Contrast.text), action: open)
 
-            RoundButton(symbol: "magnifyingglass", diameter: 30, action: reveal)
-                .help("Show in Finder")
-                .accessibilityLabel("Show in Finder")
+                    RoundButton(symbol: "magnifyingglass", diameter: 30, action: reveal)
+                        .help("Show in Finder")
+                        .accessibilityLabel("Show in Finder")
+                    if delete != nil {
+                        RoundButton(symbol: "trash", tint: .hue(.destructive), diameter: 30, action: ask)
+                            .help("Delete")
+                            .accessibilityLabel("Delete")
+                            .accessibilityHint("Asks first, then deletes the file for good.")
+                    }
+                }
+            }
             RoundButton(symbol: "xmark", diameter: 30, action: dismiss)
                 .accessibilityLabel("Close")
         }
         .frame(maxHeight: .infinity)
-        .onHover(perform: hover)
+        .onHover { hovering in
+            if !hovering { confirmation.cancel() }
+            hover(hovering)
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: confirmation.isAsking)
+    }
+
+    private func word(_ title: String, _ ink: IslandInk, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 14)
+                .frame(height: 30)
+                .islandWashed(ink, wash: 0.2, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func ask() {
+        confirmation.ask()
+        AccessibilityNotification.Announcement("Delete \(file.name) for good? Choose Delete to confirm, or Cancel.").post()
+    }
+
+    private func confirmDelete() {
+        guard let delete, confirmation.confirm() else { return }
+        let done = delete()
+        result = done
+        AccessibilityNotification.Announcement(done.note).post()
+    }
+
+    private var noteStyle: IslandStyle {
+        switch result {
+        case nil: .islandText(0.55)
+        case .deleted?: .islandHueText(.success)
+        case .missing?, .changed?: .islandHueText(.warning)
+        case .failed?: .islandHueText(.failure)
+        }
     }
 
     private var subtitle: String {
+        if confirmation.isAsking { return "Delete for good?" }
+        if isKept { return "Stays here to delete later" }
         guard let size = file.size, size > 0 else { return "Downloaded" }
         return "Downloaded · \(DownloadNames.bytes(size))"
     }
@@ -251,7 +367,7 @@ struct DownloadsSettingsView: View {
     var body: some View {
         Toggle(isOn: $showFinished) {
             Text("Show finished downloads")
-            Text("The file in a card for a few seconds, to drag where it's needed, open, or show in Finder.")
+            Text("The file in a card for a few seconds, to drag where it's needed, open, show in Finder or delete. Drag the file out and the card stays, for up to ten minutes, so it can be deleted once it's uploaded. Delete asks first, then deletes the file for good: it isn't put in the Trash.")
         }
         LabeledContent {
             Text(folders.map(DownloadFolders.abbreviated).joined(separator: "\n"))
