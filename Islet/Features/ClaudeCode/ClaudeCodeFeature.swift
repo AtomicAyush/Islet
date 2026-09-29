@@ -234,30 +234,51 @@ enum ClaudeHostApps {
 
 /// The hooks Claude Code needs in `~/.claude/settings.json`, as Settings copies them and
 /// the README shows them: each event runs the hook script, installed as
-/// `~/.claude/hooks/islet-notify.sh`, with its kind.
+/// `~/.claude/hooks/islet-notify.sh`, with its kind. A tool's use, which comes after
+/// every tool call, runs it without Claude Code waiting (`async`). A copy of the script
+/// from before the permission hooks would keep in its log all they hand it, commands
+/// and their output too, so while one is installed they are left out of the copy.
 enum ClaudeCodeHooks {
     static let script = "$HOME/.claude/hooks/islet-notify.sh"
-    static let events: [(event: String, kind: String)] = [
-        ("SessionStart", "start"),
-        ("UserPromptSubmit", "prompt"),
-        ("Notification", "notification"),
-        ("Stop", "stop"),
-        ("SubagentStop", "subagent"),
-        ("TaskCompleted", "task"),
-        ("SessionEnd", "end"),
+    static let events: [(event: String, kind: String, async: Bool)] = [
+        ("SessionStart", "start", false),
+        ("UserPromptSubmit", "prompt", false),
+        ("PermissionRequest", "permission", false),
+        ("Notification", "notification", false),
+        ("PostToolUse", "tool", true),
+        ("PostToolUseFailure", "tool", true),
+        ("Stop", "stop", false),
+        ("SubagentStop", "subagent", false),
+        ("TaskCompleted", "task", false),
+        ("SessionEnd", "end", false),
     ]
 
+    /// The kinds an older copy of the script does not know.
+    static let newerKinds: Set<String> = ["permission", "tool"]
+
     /// Two lines an event, short enough to read in the README.
-    static var settingsJSON: String {
-        let entries = events.map { event, kind in
-            #"    "\#(event)": [{ "hooks": [{ "type": "command", "timeout": 10,"# + "\n"
-                + #"      "command": "bash \"\#(script)\" \#(kind)" }] }]"#
+    static var settingsJSON: String { settingsJSON(olderScript: false) }
+
+    /// The hooks, less those `olderScript` does not know.
+    static func settingsJSON(olderScript: Bool) -> String {
+        let known = events.filter { !olderScript || !newerKinds.contains($0.kind) }
+        let entries = known.map { event, kind, async in
+            #"    "\#(event)": [{ "hooks": [{ "type": "command", "timeout": 10,"# + (async ? #" "async": true,"# : "")
+                + "\n" + #"      "command": "bash \"\#(script)\" \#(kind)" }] }]"#
         }
         return "{\n  \"hooks\": {\n" + entries.joined(separator: ",\n") + "\n  }\n}\n"
     }
 
+    /// Whether the script installed is a copy from before the permission hooks; false
+    /// where there is none, or it cannot be read.
+    static var installedScriptIsOlder: Bool {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/hooks/islet-notify.sh")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        return !text.contains("PermissionRequest")
+    }
+
     static func copy(to pasteboard: NSPasteboard = .general) {
         pasteboard.clearContents()
-        pasteboard.setString(settingsJSON, forType: .string)
+        pasteboard.setString(settingsJSON(olderScript: installedScriptIsOlder), forType: .string)
     }
 }

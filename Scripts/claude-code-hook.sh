@@ -20,6 +20,9 @@
 #   subagent      SubagentStop
 #   task          TaskCompleted
 #   end           SessionEnd
+#   permission    PermissionRequest
+#   tool          PostToolUse
+#   tool          PostToolUseFailure
 # ISLET_NOTIFY_DRY=1 prints the banners instead of showing them, the activity they are
 # news of last.
 #
@@ -27,7 +30,8 @@
 #   version         1
 #   sessionId       Claude Code's session id, as in the file's name
 #   project         the git repository's folder name, or its folder's; "" for Claude's
-#                   scratch folders, which have no name worth showing
+#                   scratch folders, the home folder and "/", which have no name worth
+#                   showing
 #   cwd             the folder the session is working in, as of its latest event
 #   transcriptPath  the session's transcript, which Claude Code writes as it goes:
 #                   Islet reads a session gone quiet on it as over
@@ -45,8 +49,9 @@
 #   turnStarted     when the latest prompt was sent; null before the first
 #   updated         the latest event
 #   prompt          the latest prompt's first line, plain, at most 120 characters
-#   reply           the start of the last reply, plain, at most 160 characters, while
-#                   idle; "" otherwise
+#   turnEnded       when the latest turn ended (Stop); null while it is under way
+#   reply           the start of the last reply, plain, at most 160 characters, once
+#                   the turn is over; "" while it is under way
 #   workflows       the background workflows the latest event listed, with when each
 #                   was first seen: [{id, name, description, status, firstSeen}]
 #   tasks           the session's other background tasks the latest event listed, the
@@ -59,21 +64,49 @@
 #                   afresh or resumed, not compacted, starts with none. Islet reads how
 #                   far the workflows and agents have got from the files Claude Code
 #                   keeps for them
+#   pending         the permissions asked and not yet seen answered, oldest first:
+#                   [{toolUseId, agentId, tool, at, input, command}]. agentId is the
+#                   agent that asked, "" for the session's own; toolUseId is "" where
+#                   Claude Code does not say (it does not yet); input is a fingerprint
+#                   of what the tool was asked to do, and command, for Bash, one of the
+#                   command alone: the first 16 hex digits of its SHA-256, never the
+#                   command itself, which lets Islet see it running
+#   answered        when a permission asked was last seen answered; null before
+#
+# A permission asked is noted when asked, and the session marked as needing it only
+# by the Notification Claude Code sends a few seconds later if it is still unanswered,
+# so one answered at once never shows. Claude Code says nothing when it is answered;
+# the first of these does: the tool's use, allowed, ending or failing; its agent
+# stopping, or for the session's own, the turn ending or a prompt sent; or the agent
+# carrying on with a tool started after the asking, which is all a denial leaves. Once
+# none is left the session is working again, or idle if its turn has ended. Without the
+# PermissionRequest hook nothing is noted, and the Notification's mark lasts the turn.
 #
 # It has to be quick, and must never fail the hook: Claude Code waits for it before
 # sending a prompt, and adds anything it prints then to the prompt. So nothing is
-# printed (but a dry run's banners), and it always exits 0.
+# printed (but a dry run's banners), and it always exits 0; a PermissionRequest hook
+# that prints nothing leaves the asking to Claude Code. A tool's use comes after every
+# tool call of every agent, so for a session with nothing asked it ends at once.
 export LC_ALL=en_US.UTF-8
 kind="$1"
 input="$(cat)"
 [ -z "$ISLET_NOTIFY_DRY" ] && exec >/dev/null
+dir="${ISLET_CLAUDE_STATE_DIR:-$HOME/Library/Application Support/Islet/Claude Code/Sessions}"
+# A tool's use in a session with nothing asked ends here: its file's one line says so.
+if [ "$kind" = tool ]; then
+  [[ "$input" =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"/]+)\" ]] || exit 0
+  IFS= read -r line < "$dir/${BASH_REMATCH[1]}.json" 2>/dev/null
+  [[ "$line" == *'"pending":[{'* ]] || exit 0
+fi
 
 # Every field used below, read in one go, each as `jq -r` would print it.
 session="" cwd="" transcript="" stop_active="" message="" wants="" said="" task_name=""
-logged=""
+logged="" agent="" tool="" tool_use="" duration="" given="" command="" clock=""
 eval "$(printf '%s' "$input" | jq -r '
   def text: (if type == "string" then . else tojson end) | sub("\n+$"; "");
   def field(f): (try (f // "") catch "") | text;
+  # When the hook ran, before it waits its turn for the session file below.
+  @sh "clock=\(now)",
   @sh "session=\(field(.session_id))",
   @sh "cwd=\(field(.cwd))",
   @sh "transcript=\(field(.transcript_path))",
@@ -82,20 +115,41 @@ eval "$(printf '%s' "$input" | jq -r '
   @sh "wants=\(field(.notification_type // .type))",
   @sh "said=\(field(.message // .title))",
   @sh "task_name=\(field(.task_subject // .task_description // .description // .name))",
-  @sh "logged=\((try (. as $in | del(.background_tasks, .prompt)
+  @sh "agent=\(field(.agent_id))",
+  @sh "tool=\(field(.tool_name))",
+  @sh "tool_use=\(field(.tool_use_id))",
+  @sh "duration=\(try (.duration_ms | numbers | floor | tostring) catch "")",
+  # What a tool was asked to do, keys in order, and a Bash command as it is: the two
+  # fingerprints of a permission asked, and of a tool used to match it by.
+  (if .tool_input != null then
+     @sh "given=\(try (.tool_input | walk(if type == "object" then to_entries | sort_by(.key) | from_entries
+                                          else . end) | tojson) catch "")",
+     @sh "command=\(try (if .tool_name == "Bash" then .tool_input.command | strings else "" end) catch "")"
+   else empty end),
+  @sh "logged=\((try (. as $in | del(.background_tasks, .prompt, .tool_input, .tool_response, .permission_suggestions)
     + (if $in | has("prompt") then {prompt_chars: ($in.prompt | tostring | length)} else {} end)
     | tojson) catch "") | text)"
 ' 2>/dev/null)"
 
-# Keeps the last 200 events other than subagents stopping (one per agent inside a
-# workflow, too many to be useful), to see what each event carries. A prompt is kept
-# by its length alone: what you ask may hold things not meant for a log.
+# Keeps the last 200 events other than agents stopping and tools used (one per agent
+# inside a workflow, or per tool call, too many to be useful), to see what each event
+# carries. A prompt is kept by its length alone: what you ask may hold things not meant
+# for a log.
 log="$HOME/.claude/hooks/islet-hook-log.jsonl"
 note() { # kind json
   printf '%s\t%s\t%s\n' "$(date '+%F %T')" "$1" "$2" >> "$log"
   tail -n 200 "$log" > "$log.tmp" 2>/dev/null && mv "$log.tmp" "$log"
 }
-[ "$kind" != subagent ] && note "$kind" "$logged"
+[ "$kind" != subagent ] && [ "$kind" != tool ] && note "$kind" "$logged"
+# The first 16 hex digits of the SHA-256 of $1, or "" for "".
+fingerprint() {
+  [ -z "$1" ] && return
+  local sum
+  sum="$(printf '%s' "$1" | /usr/bin/openssl dgst -sha256 -r 2>/dev/null || printf '%s' "$1" | shasum -a 256)"
+  printf '%s' "${sum:0:16}"
+}
+given="$(fingerprint "$given")"
+command="$(fingerprint "$command")"
 
 enc() { printf '%s' "$1" | jq -sRr @uri; }
 # One line of plain text: list markers, markdown marks, extra spaces and newlines
@@ -110,12 +164,15 @@ plain() {
 }
 # The project: the git repository the session works in, or else its folder. The
 # event's own folder, not CLAUDE_PROJECT_DIR, which is wherever the session was
-# first started. Claude's scratch folders have no project name worth showing.
+# first started. Claude's scratch folders have no project name worth showing, nor
+# have the home folder and "/", nor a repository of either (of settings, say).
 [ -z "$cwd" ] && cwd="$CLAUDE_PROJECT_DIR"
 project=""
-case "$cwd" in
-  ""|*"/Library/Application Support/Claude/"*|/private/tmp/claude-*|/tmp/claude-*) ;;
-  *) top="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"; project="$(basename "${top:-$cwd}")" ;;
+case "${cwd%/}" in
+  ""|"${HOME%/}"|*"/Library/Application Support/Claude/"*|/private/tmp/claude-*|/tmp/claude-*) ;;
+  *) top="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"
+     case "${top%/}" in ""|"${HOME%/}"|"$(cd "$HOME" 2>/dev/null && pwd -P)") top="$cwd" ;; esac
+     project="$(basename "$top")" ;;
 esac
 # "Title · Islet", or the title alone where there is no project.
 titled() { printf '%s' "$1${project:+ · $project}"; }
@@ -166,7 +223,6 @@ esac
 # reads what the last one wrote.
 [ -z "$session" ] && exit 0
 case "$session" in */*|.*) exit 0 ;; esac
-dir="${ISLET_CLAUDE_STATE_DIR:-$HOME/Library/Application Support/Islet/Claude Code/Sessions}"
 [ -d "$dir" ] || mkdir -p "$dir" 2>/dev/null || exit 0
 file="$dir/$session.json"
 lock="$dir/.$session.lock"
@@ -249,6 +305,20 @@ fi
 # tells a session's hooks it has sat waiting for a prompt (idle_prompt) only once its
 # turn is over, so a session still marked working a minute into its turn, left so by
 # an interruption that sent no Stop, is marked done.
+#
+# The permissions asked, as the header says, each timed by when its hook ran, not when
+# it got the file, as is a tool's start: a hook kept waiting behind others must not
+# make a tool used before an asking look started after it. A tool used matches the
+# latest request with its id, or failing that, the same agent's asking for the same tool
+# to do the same thing, and clears that agent's requests asked more than a second before
+# it: those asked alongside it come within moments, and one asked earlier had been
+# answered by the time it was asked, denied or answered at once and noted after its
+# tool was used. A tool that matches none, started a couple of seconds or more after an
+# asking, clears that agent's requests the same way, a denial leaving nothing else.
+# A Notification that permission is needed, with nothing left asked and a request
+# answered moments before, came for that one, late. The end of a turn clears the
+# session's own requests; if the Notification that asked was for an agent's request,
+# still there (asked a few seconds before it), the session still needs permission.
 program='
   def clip($n): if length <= $n then . else (.[0:$n - 1] | sub(" [^ ]*$"; "")) + "…" end;
   def plain($n):
@@ -318,14 +388,51 @@ program='
         | $t + {firstSeen: ($o.firstSeen // $now)}]
      end) as $workflows
   | ($p.state // "idle") as $old
+  | ($p.pending // [] | if type == "array" then map(objects) else [] end) as $wasPending
+  | (try ($clock | tonumber) catch $now) as $ran
+  # When a request was asked.
+  | def asked: .at // $now | if type == "number" then . else $now end;
+    (if $duration == "" then null else $ran - ($duration | tonumber) / 1000 end) as $toolStarted
+  | (if $kind == "permission" then
+       $wasPending + [{toolUseId: $toolUse, agentId: $agent, tool: $tool, at: $ran, input: $given,
+                       command: $command}] | .[-20:]
+     elif $kind == "tool" then
+       ($wasPending | map((.toolUseId // "") as $id
+          | if $id != "" then $id == $toolUse
+            else (.agentId // "") == $agent and .tool == $tool
+                 and ((.input // "") != "" and .input == $given or (.command // "") != "" and .command == $command)
+            end) | rindex(true)) as $used
+       | (if $used != null then ($wasPending[$used] | asked) - 1
+          elif $toolStarted != null then $toolStarted - 2
+          else null end) as $before
+       | [$wasPending | to_entries[]
+          | select(.key != $used)
+          | .value
+          | select((.agentId // "") != $agent or $before == null or asked >= $before)]
+     elif $kind == "subagent" then
+       (if $agent == "" then $wasPending else [$wasPending[] | select((.agentId // "") != $agent)] end)
+     elif $kind == "stop" or $kind == "prompt" then [$wasPending[] | select((.agentId // "") != "")]
+     elif $kind == "start" and (try $in.source catch null) != "compact" then []
+     else $wasPending end) as $pending
+  | ($kind != "permission" and ($pending | length) < ($wasPending | length)) as $answered
+  | (if $kind == "stop" then $now elif $kind == "prompt" then null
+     elif $kind == "start" and (try $in.source catch null) != "compact" then null
+     else $p.turnEnded end) as $turnEnded
+  | ($kind == "stop" and $old == "needsPermission"
+     and any($pending[]; asked <= ($p.since // 0 | if type == "number" then . else 0 end) - 3)) as $stillAsking
   | ((try $in.notification_type catch null) // (try $in.type catch null) // "") as $wants
+  | ($kind == "notification" and $wants == "permission_prompt" and ($pending | length) == 0
+     and $now - ($p.answered // 0 | if type == "number" then . else 0 end) < 10) as $late
   | ($kind == "notification" and ($wants == "permission_prompt" or $wants == "agent_needs_input"
-      or $wants == "elicitation_dialog" or $wants == "elicitation_url_dialog")) as $asks
+      or $wants == "elicitation_dialog" or $wants == "elicitation_url_dialog") and ($late | not)) as $asks
   | (if $kind == "prompt" then "working"
-     elif $kind == "stop" then "idle"
+     elif $kind == "stop" then (if $stillAsking then $old else "idle" end)
      elif $kind == "start" then (if (try $in.source catch null) == "compact" then $old else "idle" end)
+     elif ($kind == "tool" or $kind == "subagent") and $answered and ($pending | length) == 0
+          and $old == "needsPermission" then (if $turnEnded == null then "working" else "idle" end)
      elif $kind == "notification" then
-       (if $wants == "permission_prompt" then "needsPermission"
+       (if $late then $old
+        elif $wants == "permission_prompt" then "needsPermission"
         elif $asks then "waitingForInput"
         elif ($wants == "elicitation_complete" or $wants == "elicitation_response")
               and $old == "waitingForInput" then "working"
@@ -346,25 +453,42 @@ program='
                    elif $age != "" then ($now - ($age | tonumber) | floor)
                    else null end),
       state: $state,
-      since: (if $asks or $kind == "prompt" or $state != $old or $p.since == null then $now else $p.since end),
+      # Past the reply just ended, which answers nothing an agent asked.
+      since: (if $asks or $kind == "prompt" or $state != $old or $p.since == null or $stillAsking then $now
+              else $p.since end),
       turnStarted: (if $kind == "prompt" then $now else $p.turnStarted end),
+      turnEnded: $turnEnded,
       updated: $now,
+      # Past any tags Claude Code or a host put before what the person wrote
+      # (<system-reminder>…</system-reminder>, say: their names have a - or _, which
+      # HTML tags lack), and any line such a tag alone. A prompt of tags alone was not
+      # written by the person (Claude Code sends a <task-notification> when a background
+      # agent finishes), and leaves theirs.
       prompt: (if $kind == "prompt"
-               then ((try $in.prompt catch null) | text | split("\n") | map(select(test("\\S")))
-                     | (first // "") | plain(120))
+               then ((try $in.prompt catch null) | text
+                     | sub("^(\\s*<(?<t>[A-Za-z]\\w*[-_][\\w-]*)(\\s[^>]*)?>(?s:.*?)</\\k<t>>)+"; "")
+                     | split("\n")
+                     | map(select(test("\\S") and (test("^\\s*</?[A-Za-z]\\w*[-_][\\w-]*(\\s[^>]*)?/?>\\s*$") | not)))
+                     | (first // "") | plain(120)
+                     | if . == "" then ($p.prompt // "") else . end)
                else ($p.prompt // "") end),
-      reply: (if $state != "idle" then ""
-              elif $kind == "stop" then ($reply | plain(160))
+      reply: (if $kind == "stop" then ($reply | plain(160))
+              elif $state != "idle" and $turnEnded == null then ""
               else ($p.reply // "") end),
       workflows: $workflows,
-      tasks: $tasks
+      tasks: $tasks,
+      pending: $pending,
+      answered: (if $answered then $now else ($p.answered // null) end)
     },
     $finished'
 [ "$kind" = stop ] || message=""
 update() { # previous
   printf '%s' "$input" | jq -c --argjson prev "${1:-null}" --arg kind "$kind" --arg session "$session" \
     --arg project "$project" --arg cwd "$cwd" --arg host "${__CFBundleIdentifier:-}" \
-    --arg pid "$pid" --arg age "$age" --arg reply "$message" "$program" 2>/dev/null
+    --arg pid "$pid" --arg age "$age" --arg reply "$message" --arg agent "$agent" --arg tool "$tool" \
+    --arg toolUse "$tool_use" --arg duration "$duration" --arg given "$given" --arg command "$command" \
+    --arg clock "$clock" \
+    "$program" 2>/dev/null
 }
 out="$(update "$previous")"
 # A file that is not JSON (edited by hand, say) is started afresh.

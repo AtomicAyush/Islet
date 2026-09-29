@@ -1034,7 +1034,7 @@ struct ClaudeCodeSettingsView: View {
             }
         } label: {
             Text("Hooks")
-            Text("Claude Code tells Islet what it's doing through hooks. Copy Scripts/claude-code-hook.sh from Islet's source to ~/.claude/hooks/islet-notify.sh, then add the copied hooks to ~/.claude/settings.json. Until then, nothing shows.")
+            Text("Claude Code tells Islet what it's doing through hooks. Copy Scripts/claude-code-hook.sh from Islet's source to ~/.claude/hooks/islet-notify.sh, then add the copied hooks to ~/.claude/settings.json. Until then, nothing shows. Copy the script again after updating Islet: hooks an older copy doesn't know are left out until you do.")
         }
 
         LabeledContent("Last heard from Claude Code") {

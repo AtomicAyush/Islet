@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// What a Claude Code session is doing, as its hook last said.
@@ -68,6 +69,19 @@ struct ClaudeBackgroundTask: Equatable, Identifiable, Sendable {
     var isRunning: Bool { status == "running" || status == "pending" }
 }
 
+/// A permission asked and not yet seen answered, as the hook noted it.
+struct ClaudePermissionRequest: Equatable, Sendable {
+    /// The tool call's id, "" where Claude Code did not say.
+    var toolUseId = ""
+    /// The agent that asked, "" for the session's own.
+    var agentId = ""
+    var tool = ""
+    var at: Date
+    /// For Bash, the first 16 hex digits of the command's SHA-256, which the hook keeps
+    /// in place of the command; "" otherwise.
+    var command = ""
+}
+
 /// One session's file, as `Scripts/claude-code-hook.sh` writes it. Its header lists the
 /// fields. Anything missing reads as empty, so a file from a later version of the hook
 /// with more in it, or less, still reads.
@@ -92,11 +106,14 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
     var updated: Date
     /// The latest prompt's first line, plain.
     var prompt: String = ""
-    /// The start of the last reply, while idle.
+    /// The start of the last reply, once the turn is over; shown only while idle.
     var reply: String = ""
     var workflows: [ClaudeWorkflow] = []
     /// Its other background tasks, as the latest event listed them.
     var tasks: [ClaudeBackgroundTask] = []
+    /// The permissions asked and not yet seen answered, oldest first; none where the
+    /// hook is not told when one is asked.
+    var pending: [ClaudePermissionRequest] = []
 
     /// When the turn on show began: the prompt's time, or failing that the state's.
     var turnStart: Date { turnStarted ?? since }
@@ -114,7 +131,7 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
 extension ClaudeSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
         case sessionId, project, cwd, transcriptPath, hostApp, pid, pidStarted, state, since, turnStarted, updated
-        case prompt, reply, workflows, tasks
+        case prompt, reply, workflows, tasks, pending
     }
 
     init(from decoder: Decoder) throws {
@@ -145,6 +162,23 @@ extension ClaudeSessionRecord: Decodable {
             .compactMap(\.value)
         tasks = ((try? c.decodeIfPresent([Lenient<ClaudeBackgroundTask>].self, forKey: .tasks)) ?? [])
             .compactMap(\.value)
+        pending = ((try? c.decodeIfPresent([Lenient<ClaudePermissionRequest>].self, forKey: .pending)) ?? [])
+            .compactMap(\.value)
+    }
+}
+
+extension ClaudePermissionRequest: Decodable {
+    private enum Keys: String, CodingKey {
+        case toolUseId, agentId, tool, at, command
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        toolUseId = (try? c.decodeIfPresent(String.self, forKey: .toolUseId)) ?? ""
+        agentId = (try? c.decodeIfPresent(String.self, forKey: .agentId)) ?? ""
+        tool = (try? c.decodeIfPresent(String.self, forKey: .tool)) ?? ""
+        at = Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .at))
+        command = (try? c.decodeIfPresent(String.self, forKey: .command)) ?? ""
     }
 }
 
@@ -415,6 +449,145 @@ enum ClaudeProcess {
         let start = info.kp_proc.p_starttime
         return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
     }
+
+    /// A process Claude Code started: when, and its arguments.
+    struct Child: Equatable, Sendable {
+        var started: Date
+        var arguments: [String]
+    }
+
+    /// The processes `pid` started that are still running. Only read: none is ever sent
+    /// a signal.
+    static func children(of pid: Int32) -> [Child] {
+        var pids = [pid_t](repeating: 0, count: 256)
+        var count = Int(proc_listchildpids(pid, &pids, Int32(pids.count * MemoryLayout<pid_t>.stride)))
+        if count >= pids.count {
+            pids = [pid_t](repeating: 0, count: count * 2)
+            count = Int(proc_listchildpids(pid, &pids, Int32(pids.count * MemoryLayout<pid_t>.stride)))
+        }
+        guard count > 0 else { return [] }
+        return pids.prefix(min(count, pids.count)).compactMap { child in
+            guard child > 1, let started = startTime(of: child), let arguments = arguments(of: child) else {
+                return nil
+            }
+            return Child(started: started, arguments: arguments)
+        }
+    }
+
+    /// The arguments `pid` was started with (`KERN_PROCARGS2`), or `nil` if they cannot
+    /// be read.
+    static func arguments(of pid: Int32) -> [String]? {
+        var size = 0
+        var name: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        guard sysctl(&name, u_int(name.count), nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else {
+            return nil
+        }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&name, u_int(name.count), &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else {
+            return nil
+        }
+        // The count, the program's path, the NULs padding it, then the arguments, each
+        // ending in a NUL.
+        let argc = buffer.withUnsafeBytes { Int($0.loadUnaligned(as: Int32.self)) }
+        var index = MemoryLayout<Int32>.size
+        while index < size, buffer[index] != 0 { index += 1 }
+        while index < size, buffer[index] == 0 { index += 1 }
+        var arguments: [String] = []
+        while arguments.count < argc, index < size {
+            let end = buffer[index..<size].firstIndex(of: 0) ?? size
+            arguments.append(String(decoding: buffer[index..<end], as: UTF8.self))
+            index = end + 1
+        }
+        return arguments
+    }
+}
+
+/// A Bash command Claude Code has been allowed to run, seen running. Claude Code says
+/// nothing when a permission is given in the Claude app, and nothing more until the
+/// tool is done, minutes later for a long command; but it runs each command at once,
+/// through a shell of its own: `$SHELL -c "… && eval '<the command>' < /dev/null && …"`,
+/// the command quoted as a shell word. A shell Claude Code started since the asking,
+/// running the very command asked about, means it was allowed.
+enum ClaudeBashCommand {
+    /// How much earlier than the hook's note of the asking the command may have started:
+    /// one allowed at once can start before the hook has run.
+    static let startSlack: TimeInterval = 2
+
+    /// The first 16 hex digits of the SHA-256 of `command`, as the hook keeps it.
+    static func fingerprint(_ command: String) -> String {
+        SHA256.hash(data: Data(command.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The command a shell Claude Code started for its Bash tool runs, from its
+    /// arguments; `nil` for any other process.
+    static func command(in arguments: [String]) -> String? {
+        guard arguments.count >= 3, arguments[0].hasSuffix("sh"), arguments[1] == "-c" else { return nil }
+        let script = Array(arguments[2].utf8)
+        let eval = Array("eval ".utf8)
+        guard let start = script.indices.first(where: { index in
+            script[index...].starts(with: eval) && (index == 0 || script[index - 1] == UInt8(ascii: " "))
+        }) else { return nil }
+        return word(script[(start + eval.count)...])
+    }
+
+    /// For each permission `pending`, whether it is for a Bash command one of `children`,
+    /// started since it was asked, is running. A command asked for more than once, by two
+    /// agents say, is left to PostToolUse: a shell running it cannot tell which of them
+    /// was allowed.
+    static func running(_ pending: [ClaudePermissionRequest], children: [ClaudeProcess.Child]) -> [Bool] {
+        let running = children.compactMap { child in
+            command(in: child.arguments).map { (started: child.started, fingerprint: fingerprint($0)) }
+        }
+        let asked = Dictionary(pending.map { ($0.command, 1) }, uniquingKeysWith: +)
+        return pending.map { request in
+            request.tool == "Bash" && !request.command.isEmpty && asked[request.command] == 1
+                && running.contains { $0.fingerprint == request.command && $0.started >= request.at - startSlack }
+        }
+    }
+
+    /// The shell word at the start of `text`, unquoted: quoted with '…' or "…", or with
+    /// backslashes, as Claude Code quotes it (or any shell would).
+    private static func word(_ text: ArraySlice<UInt8>) -> String? {
+        let (single, double, backslash, newline) = (UInt8(ascii: "'"), UInt8(ascii: "\""), UInt8(ascii: "\\"),
+                                                    UInt8(ascii: "\n"))
+        let ends = Set(" \t\n<>;&|()".utf8)
+        // What a backslash escapes between double quotes; before anything else it stays.
+        let escaped = Set("$`\"\\\n".utf8)
+        var out: [UInt8] = []
+        var index = text.startIndex
+        while index < text.endIndex {
+            let byte = text[index]
+            if byte == single {
+                guard let close = text[(index + 1)...].firstIndex(of: single) else { return nil }
+                out += text[(index + 1)..<close]
+                index = close + 1
+            } else if byte == double {
+                index += 1
+                while true {
+                    guard index < text.endIndex else { return nil }
+                    let inner = text[index]
+                    if inner == double { index += 1; break }
+                    if inner == backslash, index + 1 < text.endIndex, escaped.contains(text[index + 1]) {
+                        if text[index + 1] != newline { out.append(text[index + 1]) }
+                        index += 2
+                    } else {
+                        out.append(inner)
+                        index += 1
+                    }
+                }
+            } else if byte == backslash {
+                guard index + 1 < text.endIndex else { return nil }
+                if text[index + 1] != newline { out.append(text[index + 1]) }
+                index += 2
+            } else if ends.contains(byte) {
+                break
+            } else {
+                out.append(byte)
+                index += 1
+            }
+        }
+        return out.isEmpty ? nil : String(decoding: out, as: UTF8.self)
+    }
 }
 
 // MARK: - What is shown
@@ -459,7 +632,10 @@ struct ClaudeSession: Equatable, Identifiable, Sendable {
 /// minutes, unless Claude Code is still there and waiting on a tool (a long build, say).
 /// A session waiting for the person is under way again once its transcript has a
 /// message after the asking, which is when the approved tool has finished, or once the
-/// one agent it is waiting on writes again.
+/// one agent it is waiting on writes again. The hook itself marks a session working
+/// again once each permission it saw asked has been answered, where it is told of the
+/// asking; of those, a Bash command is seen answered as soon as it runs
+/// (`ClaudeBashCommand`), long before it finishes.
 enum ClaudeLiveness {
     /// A turn silent this long, in its transcripts and its hooks, is taken to be over.
     static let staleAfter: TimeInterval = 10 * 60
@@ -474,12 +650,15 @@ enum ClaudeLiveness {
     }
 
     /// What `record`'s session is doing now. `process` is whether its Claude Code is
-    /// still running, `nil` when not known.
+    /// still running, `nil` when not known; `answered`, whether every permission it has
+    /// asked has been seen given, by its command running.
     static func state(
-        of record: ClaudeSessionRecord, transcript: ClaudeTranscriptProbe?, process: Bool? = nil, now: Date
+        of record: ClaudeSessionRecord, transcript: ClaudeTranscriptProbe?, process: Bool? = nil,
+        answered: Bool = false, now: Date
     ) -> ClaudeSessionState {
         if process == false { return .idle }
         var state = record.state
+        if state == .needsPermission, answered { state = .working }
         if state.needsYou, let transcript {
             let asked = record.since.addingTimeInterval(movedOnMargin)
             if let last = transcript.lastMessage, last > asked {
@@ -507,11 +686,13 @@ enum ClaudeLiveness {
     /// shown, workflows and all.
     static func sessions(
         _ records: [ClaudeSessionRecord], transcripts: [String: ClaudeTranscriptProbe],
-        processes: [String: Bool] = [:], progress: [String: [String: ClaudeTaskProgress]] = [:], now: Date
+        processes: [String: Bool] = [:], progress: [String: [String: ClaudeTaskProgress]] = [:],
+        answered: Set<String> = [], now: Date
     ) -> [ClaudeSession] {
         let shown = records.compactMap { record -> ClaudeSession? in
             guard !isForgotten(record, now: now), processes[record.id] != false else { return nil }
-            let state = state(of: record, transcript: transcripts[record.id], process: processes[record.id], now: now)
+            let state = state(of: record, transcript: transcripts[record.id], process: processes[record.id],
+                              answered: answered.contains(record.id), now: now)
             let session = ClaudeSession(record: record, state: state, progress: progress[record.id] ?? [:])
             guard state != .idle || session.hasWorkAtWork else { return nil }
             return session
@@ -527,7 +708,7 @@ enum ClaudeLiveness {
 
     static func sessions(_ snapshot: ClaudeSessionSnapshot, now: Date) -> [ClaudeSession] {
         sessions(snapshot.records, transcripts: snapshot.transcripts, processes: snapshot.processes,
-                 progress: snapshot.progress, now: now)
+                 progress: snapshot.progress, answered: snapshot.answered, now: now)
     }
 
     private static func rank(_ state: ClaudeSessionState) -> Int {

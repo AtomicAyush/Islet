@@ -300,7 +300,9 @@ starts and ends, but not when you interrupt one, quit Claude Code or close its t
 when you give a permission, so Islet looks further. A session whose Claude Code has quit is
 over, and so is a turn you have interrupted, or one whose transcript and its agents' have been
 quiet for ten minutes while Claude waits on nothing (a long build keeps it going). A permission
-you give shows once the approved command or agent next writes, so for a long command the hand
+you give shows as soon as Claude Code uses the tool, or starts the command you allowed, and a
+denial once the agent that asked carries on; without the PermissionRequest and tool hooks, it
+shows only once the approved command or agent next writes, so for a long command the hand
 stays until it is done.
 
 How far the background work has got comes from the files Claude Code keeps beside the
@@ -643,7 +645,10 @@ cp Scripts/claude-code-hook.sh ~/.claude/hooks/islet-notify.sh
 ```
 
 and add these hooks to `~/.claude/settings.json`, beside any you have already (Settings →
-Activities → Claude Code copies them too):
+Activities → Claude Code copies them too). After updating Islet, copy the script again before
+adding hooks it did not have: an older copy would keep in its log everything the
+PermissionRequest and tool hooks hand it, commands and their output too, so while one is
+installed Settings leaves those hooks out of what it copies.
 
 ```json
 {
@@ -652,8 +657,14 @@ Activities → Claude Code copies them too):
       "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" start" }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "timeout": 10,
       "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" prompt" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" permission" }] }],
     "Notification": [{ "hooks": [{ "type": "command", "timeout": 10,
       "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" notification" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "timeout": 10, "async": true,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" tool" }] }],
+    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "timeout": 10, "async": true,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" tool" }] }],
     "Stop": [{ "hooks": [{ "type": "command", "timeout": 10,
       "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" stop" }] }],
     "SubagentStop": [{ "hooks": [{ "type": "command", "timeout": 10,
@@ -668,22 +679,32 @@ Activities → Claude Code copies them too):
 
 Each hook hands the script its kind of event. SessionStart and SessionEnd make and delete the
 session's file, UserPromptSubmit marks it working, Notification says when Claude needs your
-permission or an answer, and Stop marks it done. Claude Code sends no event when a background
-workflow finishes, but Stop and SubagentStop list the session's background tasks — workflows,
-agents sent off in the background, commands left running — and SubagentStop comes often while
-workflows run, so the list stays current, and a workflow gone from it gets its banner. The
-script keeps no command line: a command Claude Code describes by the command alone is kept by
-the name of the program it runs. If you copied the script before background agents and
-commands showed, copy it again to see them; workflows' progress needs no new copy. Claude Code
-waits for UserPromptSubmit's hooks before it sends the prompt, so the script is quick, prints
-nothing and always succeeds. Its banners are news of the Claude Code activity
-(`activity=claudeCode`), so while that holds the island, "Needs permission" takes its place
-for a moment rather than going in a row under its own raised hand; if yours go in the row,
-copy the script again. It needs `jq`, part of macOS from 15 on (`brew install jq` before
-that). It keeps the last 200 events other than agents stopping in
+permission or an answer, and Stop marks it done. PermissionRequest notes each permission asked
+(the tool, the agent that asked, and for a command a fingerprint, never the command) and prints
+nothing, so the asking stays Claude Code's; the session shows "Needs permission" only once
+Claude Code's Notification says it is still waiting, a few seconds on. Claude Code says nothing
+when you answer, so the next word from that tool or agent does: PostToolUse or
+PostToolUseFailure once the tool has been used, the agent stopping or carrying on (all a denial
+leaves), or for the session's own, the turn ending; and Islet sees an allowed command running,
+long before it finishes. The session is then working again, or done if its turn has ended. The
+tool hooks come after every tool call, so they run without Claude Code waiting (`async`), and
+end at once for a session with nothing asked. Without the PermissionRequest hook, "Needs
+permission" lasts until the turn ends, as it did before. Claude Code sends no event when a
+background workflow finishes, but Stop and SubagentStop list the session's background tasks —
+workflows, agents sent off in the background, commands left running — and SubagentStop comes
+often while workflows run, so the list stays current, and a workflow gone from it gets its
+banner. The script keeps no command line: a command Claude Code describes by the command alone
+is kept by the name of the program it runs. If you copied the script before background agents
+and commands showed, copy it again to see them; workflows' progress needs no new copy. Claude
+Code waits for UserPromptSubmit's hooks before it sends the prompt, so the script is quick,
+prints nothing and always succeeds. Its banners are news of the Claude Code activity
+(`activity=claudeCode`), so while that holds the island, "Needs permission" takes its place for
+a moment rather than going in a row under its own raised hand; if yours go in the row, copy the
+script again. It needs `jq`, part of macOS from 15 on (`brew install jq` before that). It keeps
+the last 200 events other than agents stopping and tools used in
 `~/.claude/hooks/islet-hook-log.jsonl`, to show what each carries (a prompt by its length
-alone), and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing
-them. Its header lists what each session's file holds. The workflows the earlier script kept in
+alone), and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing them. Its header lists
+what each session's file holds. The workflows the earlier script kept in
 `~/.claude/hooks/islet-workflows` are moved over at each session's next event, and the folder
 goes once they have all been, or are a day old.
 

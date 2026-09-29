@@ -14,6 +14,9 @@ struct ClaudeSessionSnapshot: Equatable, Sendable {
     /// By session id, then task id, for sessions that could be shown with workflows or
     /// agents at work: how far those have got, as their files say.
     var progress: [String: [String: ClaudeTaskProgress]] = [:]
+    /// The sessions needing permission whose every request has been seen given, its
+    /// command running (`ClaudeBashCommand`).
+    var answered: Set<String> = []
 }
 
 /// What the monitor's last read found, so what has not changed is not read again.
@@ -22,14 +25,19 @@ struct ClaudeMonitorCache: Sendable {
     var transcripts: [String: (probe: ClaudeTranscriptProbe, size: Int64)] = [:]
     /// Where each file behind the background tasks' progress was read to.
     var progress = ClaudeProgressCache()
+    /// The permissions asked whose commands have been seen running, by session id, agent,
+    /// time asked and fingerprint: one seen once is answered, though its command has since
+    /// finished and its PostToolUse is on its way.
+    var answered: Set<String> = []
 }
 
 /// Follows the folder the hook writes a file per session into, reading it off the main
 /// thread whenever a file is written, moved in or deleted (`FolderWatcher`); and between
-/// times as `ClaudeLiveness.watch` asks, for what only the transcripts and the clock
-/// say: every few seconds while a session shown is working or waiting on the person, or
-/// has workflows or agents at work whose progress is followed; once a minute while only
-/// workflows show that cannot be followed, or a quiet session might yet carry on.
+/// times as `ClaudeLiveness.watch` asks, for what only the transcripts, Claude Code's
+/// processes and the clock say: every few seconds while a session shown is working or
+/// waiting on the person, or has workflows or agents at work whose progress is followed;
+/// once a minute while only workflows show that cannot be followed, or a quiet session
+/// might yet carry on.
 ///
 /// The folder is Islet's own, in Application Support, and is made if it is not there,
 /// so it can be watched before the hook has ever run. Nothing else is written: without
@@ -177,8 +185,9 @@ final class ClaudeSessionMonitor {
 
     /// Every session file in `directory` that reads, less those a day old; a look at the
     /// transcripts of those under way, and their agents'; whether Claude Code is still
-    /// running for those that could be shown; and how far the workflows and agents at
-    /// work in those have got. Called off the main thread.
+    /// running for those that could be shown; how far the workflows and agents at work
+    /// in those have got; and for those needing permission to run commands, whether
+    /// Claude Code is running them. Called off the main thread.
     nonisolated static func read(
         _ directory: URL, now: Date, cache: ClaudeMonitorCache
     ) -> (ClaudeSessionSnapshot, ClaudeMonitorCache) {
@@ -199,6 +208,16 @@ final class ClaudeSessionMonitor {
             guard record.state != .idle || record.hasBackgroundWork else { continue }
             if let running = ClaudeProcess.isRunning(record) { snapshot.processes[record.id] = running }
             guard snapshot.processes[record.id] != false else { continue }
+            if record.state == .needsPermission, record.pending.contains(where: { $0.tool == "Bash" }),
+               snapshot.processes[record.id] == true, let pid = record.pid {
+                let keys = record.pending.map { request in
+                    "\(record.id) \(request.agentId) \(request.at.timeIntervalSince1970) \(request.command)"
+                }
+                let running = ClaudeBashCommand.running(record.pending, children: ClaudeProcess.children(of: pid))
+                let seen = zip(keys, running).filter { key, running in running || cache.answered.contains(key) }.map(\.0)
+                nextCache.answered.formUnion(seen)
+                if seen.count == keys.count { snapshot.answered.insert(record.id) }
+            }
             if record.hasBackgroundWork {
                 let progress = ClaudeTaskProgressReader.read(record, cache: cache.progress, into: &nextCache.progress)
                 if !progress.isEmpty { snapshot.progress[record.id] = progress }
