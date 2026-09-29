@@ -133,6 +133,39 @@ final class IslandViewModel {
     var isPinnedOpen = false
     #endif
 
+    /// The page kept open with its Keep Open button (the clipboard's, to drag one item
+    /// after another out of it), if any. While the island shows it, the island stays
+    /// open whatever the pointer does, dragging out to another app and back or going
+    /// off to work in one, until Keep Open is clicked again, Escape, a click on the
+    /// notch, another page, the island closing any other way, the Mac sleeping or
+    /// locking, or `keepOpenIdleTimeout` with the pointer away. Nothing but the button
+    /// sets it, so no link can hold the island open.
+    private(set) var keptOpenPage: String?
+    /// Told as a page is kept open and let go, so the controller listens for Escape
+    /// only meanwhile.
+    @ObservationIgnored var keepingOpenChanged: (Bool) -> Void = { _ in }
+    /// How long the pointer may stay away from a page kept open, with nothing dragged
+    /// from it, before it is let go and the island closes: long enough to drop one
+    /// item and work with it before fetching the next, short enough that an island
+    /// walked away from does not hang over the screen. Tests shorten it.
+    @ObservationIgnored var keepOpenIdleTimeout: TimeInterval = 5 * 60
+    @ObservationIgnored private var keepOpenIdleWork: DispatchWorkItem?
+    /// A drag that began on the island is under way (a clipboard item, a file off the
+    /// shelf, a tile being arranged). The island closes as it leaves, as it always
+    /// has, so what it covered can take the drop; kept open, it stays, and its time
+    /// away does not start until the drag is let go (`dragOut(began:)`).
+    private(set) var isDraggingOut = false
+
+    /// Whether the island stays open whatever the pointer does: kept open on the page
+    /// it shows, or, in a debug build, `islet://open?pin=1`.
+    var isHeldOpen: Bool {
+        #if DEBUG
+        if isPinnedOpen { return true }
+        #endif
+        guard let keptOpenPage else { return false }
+        return isExpanded && resolvedFocus == keptOpenPage
+    }
+
     let center = ActivityCenter.shared
 
     @ObservationIgnored private var expandWork: DispatchWorkItem?
@@ -400,9 +433,7 @@ final class IslandViewModel {
     func spaceDidSettle() {
         guard openAcrossSpaceChange else { return }
         openAcrossSpaceChange = false
-        #if DEBUG
-        if isPinnedOpen { return }
-        #endif
+        if isHeldOpen { return }
         if isSuppressed || appInFront() != appInFrontAtOpen { collapse("Space changed under a full-screen peek") }
     }
 
@@ -440,6 +471,7 @@ final class IslandViewModel {
             followPointer()
             cancelCollapse()
             cancelEditingIdle()
+            cancelKeepOpenIdle()
             if !isExpanded, Prefs.expandOnHover, !isShowingCard {
                 if mode != .hidden {
                     if compactButton == .none { scheduleExpand(after: Prefs.hoverDelay) }
@@ -534,10 +566,12 @@ final class IslandViewModel {
     }
 
     /// A click on the island that nothing in it took. Opened, that is a click beside
-    /// an indicator's card, which closes it.
-    func tap() {
+    /// an indicator's card, which closes it; on the notch (`onNotch`), it also lets go
+    /// of a page kept open.
+    func tap(onNotch: Bool = false) {
         guard !isExpanded else {
             closeIndicatorCard()
+            if onNotch { endKeepingOpen() }
             return
         }
         cancelExpand()
@@ -557,17 +591,17 @@ final class IslandViewModel {
             return
         }
         cancelExpand()
-        #if DEBUG
-        if isPinnedOpen { return }
-        #endif
+        if isHeldOpen || isDraggingOut { return }
         if isExpanded { collapse("click outside") }
     }
 
     func expand(focus: String? = nil) {
         cancelExpand()
         cancelCollapse()
-        // Another page takes the island away from the home page being arranged.
+        // Another page takes the island away from the home page being arranged, or
+        // from a page kept open.
         if focus != Self.homeFocus { stopEditingHome() }
+        if focus != keptOpenPage { stopKeepingOpen() }
         // Already open, this is a change of page, which a card does not outlast.
         closeIndicatorCard()
         let wasExpanded = isExpanded
@@ -594,6 +628,7 @@ final class IslandViewModel {
         guard isExpanded else { return }
         IslandLog.island.notice("Closed: \(reason, privacy: .public) (\(file, privacy: .public):\(line, privacy: .public))")
         let wasEditing = isEditingHome
+        let wasKeepingOpen = keptOpenPage != nil
         withAnimation(.islandClose) {
             isExpanded = false
             focus = nil
@@ -601,11 +636,14 @@ final class IslandViewModel {
             indicatorCardHeights = [:]
             roomUnderPointer = .zero
             isEditingHome = false
+            keptOpenPage = nil
         }
         homePage = 0
         cancelEditingIdle()
+        cancelKeepOpenIdle()
         menuLeftPointer = false
         if wasEditing { editingHomeChanged(false) }
+        if wasKeepingOpen { keepingOpenChanged(false) }
     }
 
     /// A menu came up in Islet, or went. One that comes up with the pointer on the
@@ -631,7 +669,62 @@ final class IslandViewModel {
     func select(focus: String) {
         closeIndicatorCard()
         if focus != Self.homeFocus { stopEditingHome() }
+        if focus != keptOpenPage { stopKeepingOpen() }
         withAnimation(.islandMorph) { self.focus = focus }
+    }
+
+    // MARK: Keeping a page open
+
+    /// Keep Open, clicked on `page`, which the island is showing: keeps the island open
+    /// on it, or, kept open already, lets it go, and the island closes as the pointer
+    /// next leaves it, as any open island does.
+    func toggleKeepingOpen(_ page: String) {
+        if keptOpenPage == page {
+            stopKeepingOpen()
+            return
+        }
+        guard isExpanded, resolvedFocus == page else { return }
+        cancelCollapse()
+        // Held on the page, so an activity starting does not take it over.
+        focus = page
+        keptOpenPage = page
+        if !isHovering { scheduleKeepOpenIdle() }
+        keepingOpenChanged(true)
+    }
+
+    /// Lets go of the page kept open, for Escape, a click on the notch, the Mac sleeping
+    /// or locking, or a long while away. An island the pointer has left closes now,
+    /// after the grace it would have had.
+    func endKeepingOpen() {
+        guard keptOpenPage != nil else { return }
+        stopKeepingOpen()
+        if isExpanded, !isHovering, !isDraggingOut { scheduleCollapse(after: 0.28) }
+    }
+
+    /// Lets go of the page kept open, leaving the island open as it would be without it.
+    private func stopKeepingOpen() {
+        guard keptOpenPage != nil else { return }
+        cancelKeepOpenIdle()
+        keptOpenPage = nil
+        keepingOpenChanged(false)
+    }
+
+    /// Lets go of the page kept open, and so closes the island, once the pointer has
+    /// been away for `keepOpenIdleTimeout` with nothing dragged from it.
+    private func scheduleKeepOpenIdle() {
+        cancelKeepOpenIdle()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.keptOpenPage != nil, !self.isHovering, !self.isDraggingOut else { return }
+            self.keepOpenIdleWork = nil
+            self.endKeepingOpen()
+        }
+        keepOpenIdleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + keepOpenIdleTimeout, execute: work)
+    }
+
+    private func cancelKeepOpenIdle() {
+        keepOpenIdleWork?.cancel()
+        keepOpenIdleWork = nil
     }
 
     // MARK: Arranging the home page
@@ -815,6 +908,20 @@ final class IslandViewModel {
 
     // MARK: File drags
 
+    /// A drag that began on the island started (`began`) or was let go, wherever it
+    /// went. Kept open, the island stays under it and its time away waits for the
+    /// drop; otherwise it closes as the drag leaves it, and let go with the pointer
+    /// away, it closes if it has not already.
+    func dragOut(began: Bool) {
+        guard began != isDraggingOut else { return }
+        isDraggingOut = began
+        if began {
+            cancelKeepOpenIdle()
+        } else if isExpanded, !isHovering, !isEditingHome, !isShowingMenu {
+            scheduleCollapse(after: 0.28)
+        }
+    }
+
     func fileDrag(began: Bool) {
         isDraggingFile = began
         if !began, focus == Self.dropFocus, !isHovering {
@@ -864,12 +971,12 @@ final class IslandViewModel {
         cancelCollapse()
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.isHovering, !self.isEditingHome, !self.isShowingMenu else { return }
-            #if DEBUG
-            if self.isPinnedOpen {
+            if self.isHeldOpen {
                 self.releaseRoom()
+                // Held open where it would have closed: a long while away lets it go.
+                if self.keptOpenPage != nil { self.scheduleKeepOpenIdle() }
                 return
             }
-            #endif
             // The room kept for the pointer goes as the island closes, in the one
             // movement.
             self.collapse("pointer left the island")
@@ -1037,6 +1144,12 @@ struct IslandLayout: Equatable {
     }
 
     var foldsSecondary: Bool { foldedWidth > 0 }
+
+    /// The notch's gap in the island's own coordinates (origin at its top left),
+    /// where a click lets go of a page kept open (`IslandViewModel.tap(onNotch:)`).
+    var notchTarget: CGRect {
+        CGRect(x: (size.width - notch.width) / 2, y: 0, width: notch.width, height: notch.height)
+    }
 
     /// Where the folded activity takes the pointer, in the island's own coordinates
     /// (origin at its top left): the notch row from the island's leading end to halfway

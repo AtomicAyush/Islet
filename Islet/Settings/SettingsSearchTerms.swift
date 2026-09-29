@@ -284,7 +284,8 @@ extension ClipboardFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
             labels: ["Remember", "Keep history between launches", "Clear when the Mac locks", "Clear everything copied"],
-            keywords: ["copy", "paste", "pasteboard", "history", "copied", "pinned", "password manager"]
+            keywords: ["copy", "paste", "pasteboard", "history", "copied", "pinned", "password manager", "drag",
+                       "drag out", "keep open", "stay open"]
         )
     }
 }

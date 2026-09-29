@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The last things copied — text, links, pictures and files — on the home page, a
-/// click from being copied again, with a page of everything the tile opens. Pinned
+/// The last things copied — text, links, pictures and files — on the home page, to
+/// copy again with a click or drag into another app, with a page of everything the
+/// tile opens, which Keep Open holds open to drag out one item after another. Pinned
 /// items stay at the top, and across restarts.
 ///
 /// macOS says nothing when something is copied, so the model looks at the
@@ -42,7 +43,9 @@ final class ClipboardFeature: Feature {
         self.model = model
         model.onChange = { [weak self] in self?.render() }
         model.onHandOff = {
-            IslandManager.shared.focusedController?.model.collapse()
+            // Kept open, the island stays: the link or the files were one step of several.
+            guard let island = IslandManager.shared.focusedController?.model, island.keptOpenPage == nil else { return }
+            island.collapse()
         }
     }
 

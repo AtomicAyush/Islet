@@ -84,6 +84,21 @@ final class IslandManager {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleRebuild() }
         })
+        // The Mac going to sleep, its screens with it, locking or another user taking
+        // over lets go of any page kept open: whoever comes back has moved on.
+        let away: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.controllers.values.forEach { $0.model.endKeepingOpen() } }
+        }
+        for name in [
+            NSWorkspace.willSleepNotification,
+            NSWorkspace.screensDidSleepNotification,
+            NSWorkspace.sessionDidResignActiveNotification,
+        ] {
+            observers.append(workspace.addObserver(forName: name, object: nil, queue: .main, using: away))
+        }
+        observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main, using: away
+        ))
 
         fullScreen.onChange = { [weak self] in self?.applyFullScreen() }
         fullScreen.onSpaceSettled = { [weak self] in

@@ -117,6 +117,8 @@ final class ClipboardModel {
 
     @ObservationIgnored let watcher: ClipboardWatcher
     @ObservationIgnored private let archive: ClipboardArchive?
+    /// Where pictures dragged out as files are written (`ClipboardDrag`).
+    @ObservationIgnored let dragFiles: ClipboardDragFiles
     /// The app in front, taken as the source of a copy that names none. Only a test
     /// replaces it.
     @ObservationIgnored var frontmost: () -> ClipboardSource? = {
@@ -153,12 +155,16 @@ final class ClipboardModel {
     /// default is elsewhere. Dropped as soon as macOS reports anything else.
     @ObservationIgnored private var readsLetThrough = false
 
-    /// `pasteboard` is the general one; tests pass a private one of their own, and a
-    /// folder of their own as `archive`'s.
-    init(pasteboard: NSPasteboard = .general, archive: ClipboardArchive? = .standard, limit: Int = ClipboardPrefs.currentLimit) {
+    /// `pasteboard` is the general one; tests pass a private one of their own, and
+    /// folders of their own as `archive`'s and `dragFiles`'.
+    init(
+        pasteboard: NSPasteboard = .general, archive: ClipboardArchive? = .standard,
+        dragFiles: ClipboardDragFiles = .shared, limit: Int = ClipboardPrefs.currentLimit
+    ) {
         history = ClipboardHistory(limit: limit)
         watcher = ClipboardWatcher(pasteboard: pasteboard)
         self.archive = archive
+        self.dragFiles = dragFiles
         checkAccess = { ClipboardAccess.of(pasteboard) }
         history.onChange = { [weak self] in
             self?.scheduleSave()
@@ -170,6 +176,8 @@ final class ClipboardModel {
     // MARK: Running
 
     func start() {
+        // Pictures left behind by a drag when Islet last quit.
+        dragFiles.removeAll()
         watcher.start()
         // What is on the clipboard already is not asked with either: who copied it is
         // not known, so it may be a password.
@@ -207,6 +215,7 @@ final class ClipboardModel {
         needsLoad = true
         saveWaitingForLoad = false
         history.forget()
+        dragFiles.removeAll()
         justCopied = nil
         endSample()
     }

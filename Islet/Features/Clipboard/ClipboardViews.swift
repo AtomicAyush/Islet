@@ -117,12 +117,13 @@ struct ClipboardHomeTile: View {
 }
 
 /// One item on the home tile: the app it came from, a line of it, and when. Click to
-/// copy it again.
+/// copy it again, or drag it into another app.
 private struct ClipboardTileRow: View {
     let item: ClipboardItem
     let model: ClipboardModel
     let now: Date
     @State private var isHovering = false
+    @Environment(\.islandTheme) private var theme
 
     var body: some View {
         let isCopied = model.justCopied == item.id
@@ -164,6 +165,11 @@ private struct ClipboardTileRow: View {
         .animation(.easeOut(duration: 0.18), value: isCopied)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+        }
+        .onDrag {
+            ClipboardDrag.provider(for: item, isSample: model.sample != nil, files: model.dragFiles)
+        } preview: {
+            ClipboardDragPreview(item: item, size: .tile, theme: theme)
         }
         .clipboardMenu(item: item, model: model)
         .accessibilityLabel(ClipboardSpeech.label(for: item, now: now))
@@ -212,10 +218,13 @@ private struct ClipboardTileAccessRow: View {
 // MARK: - Page
 
 /// Everything copied, pinned items first: the page the tile opens. Click a row to copy
-/// it again; the pin keeps it at the top, and across restarts.
+/// it again, or drag it into another app; the pin keeps it at the top, and across
+/// restarts. Keep Open, in the header, holds the island open on the page, to drag one
+/// item after another.
 struct ClipboardPage: View {
     let model: ClipboardModel
     @State private var hovered: UUID?
+    @Environment(\.island) private var island
 
     /// `hovered` starts a row as if the pointer were on it, for renders of the page.
     init(model: ClipboardModel, hovered: UUID? = nil) {
@@ -307,13 +316,23 @@ struct ClipboardPage: View {
             }
             Spacer(minLength: 8)
             if count > 0 {
-                Text("Click to copy · Right-click for more")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.islandText(0.35))
-                    .lineLimit(1)
+                // Longest first, for as much as the count and buttons leave room for.
+                ViewThatFits(in: .horizontal) {
+                    Text("Click to copy · Drag out · Right-click for more")
+                    Text("Click to copy · Right-click for more")
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.islandText(0.35))
+                .lineLimit(1)
             }
             if canClear {
                 ClipboardCapsuleButton(title: "Clear", help: "Clear everything but pinned items") { model.clear() }
+            }
+            if let island {
+                let isKept = island.keptOpenPage == ClipboardFeature.pageID
+                if count > 0 || isKept {
+                    KeepOpenButton(isOn: isKept) { island.toggleKeepingOpen(ClipboardFeature.pageID) }
+                }
             }
         }
         .frame(height: 18)
@@ -340,6 +359,7 @@ private struct ClipboardPageRow: View {
     let model: ClipboardModel
     let now: Date
     let isHovered: Bool
+    @Environment(\.islandTheme) private var theme
 
     /// The trailing column: wide enough for the two buttons, which is wider than any
     /// time with its pin, so nothing beside it moves as they swap. "Copied" is wider
@@ -364,6 +384,12 @@ private struct ClipboardPageRow: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { model.copy(item) }
+        // A drag carries the item into another app, and copies nothing.
+        .onDrag {
+            ClipboardDrag.provider(for: item, isSample: model.sample != nil, files: model.dragFiles)
+        } preview: {
+            ClipboardDragPreview(item: item, size: .page, theme: theme)
+        }
         .clipboardMenu(item: item, model: model)
         .animation(.easeOut(duration: 0.15), value: isHovered)
         .animation(.easeOut(duration: 0.18), value: isCopied)
@@ -463,6 +489,89 @@ private struct CopiedBadge: View {
             .background(Capsule().fill(green.color.opacity(Self.wash)))
             .fixedSize()
             .accessibilityLabel("Copied")
+    }
+}
+
+/// The page's Keep Open (`IslandViewModel.toggleKeepingOpen(_:)`), not to be confused
+/// with an item's pin: a capsule as Clear is, with the lock open; on, the lock shut on a
+/// wash of the accent, so it shows at a glance that the island is held open.
+private struct KeepOpenButton: View {
+    let isOn: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        let wash = isOn ? (isHovering ? 0.3 : 0.22) : (isHovering ? 0.2 : 0.12)
+        Button(action: action) {
+            label
+                .padding(.horizontal, 7)
+                .frame(height: 16)
+                .modifier(Colours(isOn: isOn, isHovering: isHovering, wash: wash))
+                .contentShape(Capsule())
+                .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help(isOn ? "Let the island close again (Esc)" : "Keep the island open, to drag one item after another")
+        .accessibilityLabel("Keep Open")
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .accessibilityHint(isOn ? "Lets the island close again" : "Keeps the island open, to drag one item after another")
+    }
+
+    private var label: some View {
+        HStack(spacing: 3) {
+            // As wide open as shut, so nothing beside it moves as it turns.
+            Image(systemName: isOn ? "lock.fill" : "lock.open")
+                .font(.system(size: 8.5, weight: .bold))
+                .frame(width: 11)
+            Text("Keep Open")
+                .font(.system(size: 10, weight: .semibold))
+        }
+    }
+
+    private struct Colours: ViewModifier {
+        let isOn: Bool
+        let isHovering: Bool
+        let wash: Double
+
+        func body(content: Content) -> some View {
+            if isOn {
+                content.islandWashed(.accent(.clipboard, minimum: Contrast.text), wash: wash, in: Capsule())
+            } else {
+                content
+                    .foregroundStyle(.islandText(isHovering ? 0.95 : 0.7, on: IslandBackdrop.island.stacked(wash)))
+                    .background(Capsule().fill(.islandSurface(wash, on: .island)))
+            }
+        }
+    }
+}
+
+/// What a row looks like as it is dragged: the app it came from and what it carries
+/// (of several files, the one a drag takes), on the island's colour, and a tile's row
+/// on the home tile's wash of it. Drawn apart from the island, so with its theme, as
+/// the row is on the page or the tile.
+struct ClipboardDragPreview: View {
+    let item: ClipboardItem
+    let size: ClipboardSummary.Size
+    let theme: IslandTheme
+
+    var body: some View {
+        let isPage = size == .page
+        let shape = RoundedRectangle(cornerRadius: isPage ? 9 : 6, style: .continuous)
+        HStack(spacing: isPage ? 10 : 6) {
+            ClipboardAppIcon(source: item.source, size: isPage ? 20 : 14)
+            ClipboardSummary(content: ClipboardDrag.carried(item.content) ?? item.content, size: isPage ? .page : .tile)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, isPage ? 8 : ClipboardLayout.tileRowInset)
+        .frame(width: isPage ? 300 : 190, height: isPage ? ClipboardLayout.pageRowHeight : ClipboardLayout.tileRowHeight + 4)
+        // The home tile's wash (`HomeTile`), under a tile's row.
+        .background(shape.fill(isPage ? .clear : theme.surface(0.07)))
+        .background(shape.fill(theme.background))
+        .overlay(shape.strokeBorder(.islandDecorative(0.14), lineWidth: 0.5))
+        .environment(\.islandTheme, theme)
+        .environment(\.colorScheme, theme.colorScheme)
     }
 }
 

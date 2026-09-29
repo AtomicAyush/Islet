@@ -14,7 +14,8 @@ final class IslandWindowController {
     private var monitors: [Any] = []
     /// Told as a menu comes up in Islet or goes (`IslandViewModel.menu(isUp:)`).
     private var menuObservers: [NSObjectProtocol] = []
-    /// Listening for Escape, while the home page is being arranged.
+    /// Listening for Escape, while the home page is being arranged or a page is kept
+    /// open.
     private var escapeMonitors: [Any] = []
     private var dragChangeCount = NSPasteboard(name: .drag).changeCount
     /// A drag of files, or of a picture from a web page, is under way.
@@ -22,6 +23,9 @@ final class IslandWindowController {
     /// The current press began on the island — dragging a file out of the shelf,
     /// say — so the drag it starts is outgoing and must not open the drop page.
     private var pressBeganInside = false
+    /// Looks at the mouse button while a press that began on the island lasts
+    /// (`watchPress()`).
+    private var pressTimer: Timer?
     /// Vertical travel of the current two-finger swipe over the island, in the
     /// direction the fingers moved (positive = down).
     private var swipeTravel: CGFloat = 0
@@ -61,13 +65,16 @@ final class IslandWindowController {
         panel.contentView = host
         panel.orderFrontRegardless()
         installMonitors()
-        model.editingHomeChanged = { [weak self] editing in self?.listenForEscape(editing) }
+        model.editingHomeChanged = { [weak self] _ in self?.listenForEscapeIfHeld() }
+        model.keepingOpenChanged = { [weak self] _ in self?.listenForEscapeIfHeld() }
         measureMenuBarRoom()
     }
 
     func invalidate() {
         menusTimer?.invalidate()
         menusTimer = nil
+        pressTimer?.invalidate()
+        pressTimer = nil
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
         menuObservers.forEach(NotificationCenter.default.removeObserver)
@@ -243,11 +250,18 @@ final class IslandWindowController {
         }
     }
 
-    /// While the home page is being arranged, Escape ends it. The panel never becomes
-    /// key, so the island never has the keyboard: it listens for the key wherever it is
-    /// pressed, only meanwhile, and the key still reaches the app in front. macOS passes
-    /// on keys pressed in other apps only to an app with Accessibility access; without
-    /// it, Done or a click outside ends arranging instead.
+    /// Listens for Escape while the home page is being arranged or a page is kept open,
+    /// and not otherwise.
+    private func listenForEscapeIfHeld() {
+        listenForEscape(model.isEditingHome || model.keptOpenPage != nil)
+    }
+
+    /// While the home page is being arranged, or a page is kept open, Escape ends it.
+    /// The panel never becomes key, so the island never has the keyboard: it listens
+    /// for the key wherever it is pressed, only meanwhile, and the key still reaches
+    /// the app in front. macOS passes on keys pressed in other apps only to an app with
+    /// Accessibility access; without it, Done or a click outside ends arranging
+    /// instead, and Keep Open or a click on the notch lets a page go.
     private func listenForEscape(_ on: Bool) {
         escapeMonitors.forEach(NSEvent.removeMonitor)
         escapeMonitors.removeAll()
@@ -267,10 +281,13 @@ final class IslandWindowController {
     }
 
     private func keyDown(_ event: NSEvent) {
-        if Self.endsEditing(event) { model.endEditingHome() }
+        guard Self.endsEditing(event) else { return }
+        model.endEditingHome()
+        model.endKeepingOpen()
     }
 
-    /// Whether a key press ends arranging the home page: Escape, with no modifier held.
+    /// Whether a key press ends arranging the home page, or lets go of a page kept
+    /// open: Escape, with no modifier held.
     static func endsEditing(_ event: NSEvent) -> Bool {
         let held = event.modifierFlags.intersection([.command, .option, .control, .shift])
         return event.keyCode == UInt16(kVK_Escape) && held.isEmpty
@@ -360,6 +377,7 @@ final class IslandWindowController {
             // Local events include Islet's other windows (Settings); only the panel counts.
             pressBeganInside = event.window === panel
             model.dragStartedOnIsland = pressBeganInside
+            if pressBeganInside { watchPress() }
         case .rightMouseDown where isLocal:
             // A right-click on the compact island's row brings up its menu
             // (`IslandChoice`), which the island opening under it would take away.
@@ -388,6 +406,37 @@ final class IslandWindowController {
             updateHitTesting()
         default:
             updateHitTesting()
+        }
+    }
+
+    /// Watches a press that began on the island until the button is let go. A drag it
+    /// starts out of the island (a clipboard item, a file off the shelf) holds the
+    /// island open until it is let go (`IslandViewModel.dragOut(began:)`); the drag
+    /// takes the mouse's moves and its release for itself, so neither may come here,
+    /// and the button is looked at instead, a few times a second while the press lasts.
+    private func watchPress() {
+        pressTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkPress() }
+        }
+        // Common modes, so it runs while a drag is tracked.
+        RunLoop.main.add(timer, forMode: .common)
+        pressTimer = timer
+    }
+
+    private func checkPress() {
+        guard NSEvent.pressedMouseButtons & 1 != 0 else {
+            pressTimer?.invalidate()
+            pressTimer = nil
+            pressBeganInside = false
+            guard model.isDraggingOut else { return }
+            model.dragOut(began: false)
+            // Where the drag was let go is where the pointer is now, on the island or off.
+            updateHitTesting()
+            return
+        }
+        if !model.isDraggingOut, NSPasteboard(name: .drag).changeCount != dragChangeCount {
+            model.dragOut(began: true)
         }
     }
 
@@ -442,8 +491,9 @@ final class IslandWindowController {
         let inside = overIsland || overSecondary != nil
         // A press that began on the island (dragging the scrubber, say) holds it open
         // until release, wherever the pointer wanders; mouse-up clears the press and
-        // comes back through here. Outgoing file drags change the drag pasteboard and
-        // are left alone.
+        // comes back through here. Outgoing drags change the drag pasteboard and are
+        // left alone, closing the island as they leave it unless it is kept open;
+        // `watchPress()` tells the model when one ends.
         if !inside, pressBeganInside, NSEvent.pressedMouseButtons & 1 != 0,
            NSPasteboard(name: .drag).changeCount == dragChangeCount {
             return

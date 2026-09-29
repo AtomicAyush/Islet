@@ -209,7 +209,7 @@ private struct IslandSurface: View {
             } else if let id = IndicatorCardLayout.compactIndicator(at: location, in: layout, indicators: model.center.indicators) {
                 model.expand(showingCardOf: id)
             } else {
-                model.tap()
+                model.tap(onNotch: layout.notchTarget.contains(location))
             }
         }
         // Hidden for a full-screen app on a display without a notch, the island is not

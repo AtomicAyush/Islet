@@ -393,8 +393,15 @@ see it. The first time, macOS asks whether Islet may see the folder screenshots 
 
 **Clipboard History.** The last dozen things you copied — text, links, pictures and files —
 on the home page, newest first, each with the app it came from and when; click one and it is
-on the clipboard again, ready to paste. The tile's arrow opens a page with all of them, where a
-pin keeps one at the top, across restarts too. macOS says nothing when something is copied, so
+on the clipboard again, ready to paste, or drag it into another app: text as text, a link as a
+link, a picture as a picture file (written only as you drop it, in a folder only you can open,
+and removed a quarter of an hour later), files as the files themselves (of several, the first
+still there). A drag copies nothing, and the island closes as it leaves, so what it covered can
+take the drop. The tile's arrow opens a page with all of them, where a pin keeps one at the
+top, across restarts too, and Keep Open in the header holds the island open, whatever the
+pointer does, to drag out one item after another. Click it again, press Escape or click the
+notch to let go; choosing another page, the island closing, the Mac sleeping or locking, or
+five minutes with the pointer away lets go too. macOS says nothing when something is copied, so
 Islet glances at the clipboard's change count twice a second and reads the clipboard only once
 the count has moved. macOS 27 asks before an app reads what other apps copy, so the first copy
 puts an Allow button on the tile: click it and allow Islet when macOS asks, then turn Islet on
