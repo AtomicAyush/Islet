@@ -49,10 +49,15 @@ extension GeneralRow {
                 keywords: ["bubbles", "left side", "right side", "split", "both sides", "menus", "live activities"]
             )
         case .islandOrder:
+            // Of Now Playing's players (`NowPlayingFeature.players`) only Spotify: with
+            // "Apple Music" among the labels, "music" would find this before Now Playing.
             SettingsSearchTerms(
-                labels: ["Show in Island", "Keep in Island", "Let Islet Choose"],
-                keywords: ["order", "priority", "pin", "pinned", "main island", "primary", "first", "bubbles",
-                           "which activity", "choose", "arrange", "reorder", "live activities"]
+                labels: [IslandOrderSection.footer, IslandOrderSection.untilArranged, "In the island", "In a bubble",
+                         "Spotify", "Reset"],
+                keywords: ["island order", "order", "priority", "pin", "pinned", "main island", "main bubble", "main",
+                           "primary", "first", "top", "always", "centre", "center", "favourite", "favorite",
+                           "which activity", "choose", "arrange", "reorder", "live activities", "music", "player",
+                           "Show in Island", "Keep in Island", "Let Islet Choose"]
             )
         case .displays:
             SettingsSearchTerms(

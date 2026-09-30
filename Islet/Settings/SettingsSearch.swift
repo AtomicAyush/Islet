@@ -246,9 +246,18 @@ final class SettingsSearch {
 
     /// Ends the search and shows `group` in its tab, scrolled to and lit for a moment.
     func show(_ group: SettingsSearchGroup) {
-        let rows = group.entries.map(\.id)
-        showTab(group.tab)
-        pendingScroll = SettingsScrollTarget(tab: group.tab, id: rows[0])
+        show(group.entries.map(\.id), in: group.tab)
+    }
+
+    /// Ends any search and shows General's `row`, scrolled to and lit for a moment: the
+    /// way into Settings from elsewhere, such as the island's menus.
+    func show(_ row: GeneralRow) {
+        show([row.id], in: "general")
+    }
+
+    private func show(_ rows: [String], in tab: String) {
+        showTab(tab)
+        pendingScroll = SettingsScrollTarget(tab: tab, id: rows[0])
         highlighted = Set(rows)
         fade?.cancel()
         fade = Task { [weak self] in

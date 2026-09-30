@@ -205,6 +205,9 @@ final class IslandViewModel {
     @ObservationIgnored var appInFront: () -> pid_t? = {
         NSWorkspace.shared.frontmostApplication?.processIdentifier
     }
+    /// Opens Settings on one of General's rows, for the island's menus
+    /// (`IslandChoice.arrange`). Only a test replaces it.
+    @ObservationIgnored var openSettings: @MainActor (GeneralRow) -> Void = { SettingsWindowController.shared.show($0) }
 
     init(metrics: NotchMetrics) {
         self.metrics = metrics

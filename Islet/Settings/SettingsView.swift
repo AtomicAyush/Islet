@@ -68,6 +68,8 @@ private struct GeneralSettings: View {
 
             AppearanceSection()
 
+            IslandOrderSection(arrangement: ActivityCenter.shared.islandArrangement)
+
             Section("Island") {
                 GeneralRow.hover
                 GeneralRow.haptics
@@ -76,8 +78,6 @@ private struct GeneralSettings: View {
             }
 
             HomeTilesSection(arrangement: ActivityCenter.shared.homeArrangement)
-
-            IslandOrderSection(arrangement: ActivityCenter.shared.islandArrangement)
 
             Section("Displays") {
                 GeneralRow.displays

@@ -9,6 +9,9 @@ struct IslandActivityInfo: Identifiable, Equatable {
     var id: String
     var title: String
     var symbol: String
+    /// What it covers, under its name in Settings, where the name alone may not say:
+    /// the players Now Playing follows.
+    var subtitle: String? = nil
     /// Lower goes first in Settings' list, until the person arranges it. The island
     /// itself goes by priority, rank and age until then (`ActivityCenter.activities`),
     /// so features give their activities' usual priority here: a timer's high first,
@@ -21,8 +24,8 @@ struct IslandActivityInfo: Identifiable, Equatable {
 extension IslandActivityInfo {
     /// `feature`'s live activity, under the feature's own id, name and symbol.
     @MainActor
-    init(_ feature: any Feature, order: Int) {
-        self.init(id: feature.id, title: feature.title, symbol: feature.symbol, order: order)
+    init(_ feature: any Feature, order: Int, subtitle: String? = nil) {
+        self.init(id: feature.id, title: feature.title, symbol: feature.symbol, subtitle: subtitle, order: order)
     }
 }
 

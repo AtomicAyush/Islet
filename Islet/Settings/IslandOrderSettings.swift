@@ -1,19 +1,26 @@
 import SwiftUI
 
-/// Settings' Island Order: the live activities of the features that are on, in the
-/// order the island takes them in when several are going on at once, to drag into
-/// another; and Reset, back to priority, rank and age (`IslandArrangement`).
+/// Settings' What Stays in the Island: the live activities of the features that are
+/// on, in the order the island takes them in when several are going on at once, to
+/// drag into another; and Reset, back to priority, rank and age (`IslandArrangement`).
+/// The island's menus open Settings here (`IslandChoice.arrange`).
 struct IslandOrderSection: View {
+    static let heading = "What Stays in the Island"
+    /// The footer, which search finds the section by too (`GeneralRow.searchTerms`).
+    static let footer = "Drag an activity to the top to keep it in the island, in the middle, whenever it's going on. The others go in bubbles beside it, in this order."
+    /// And while the list is still Islet's own.
+    static let untilArranged = "Until you move one, Islet puts what matters most first."
+
     let arrangement: IslandArrangement
 
     var body: some View {
         Section {
             IslandOrderList(id: GeneralRow.islandOrder.id, arrangement: arrangement)
         } header: {
-            Text("Island Order")
+            Text(Self.heading)
         } footer: {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("Drag activities into the order the island shows them in when several are going on: the first holds the island, and the rest go in bubbles beside it. Until you do, what matters most now goes first, like a timer or a meeting about to start, and the list shows that order. To keep one in the island for now, right-click its bubble and choose Show in Island.")
+                Text(arrangement.isArranged ? Self.footer : Self.footer + " " + Self.untilArranged)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -25,7 +32,7 @@ struct IslandOrderSection: View {
     }
 }
 
-/// The list itself, as the Island Order section and search results show it.
+/// The list itself, as its section and search results show it.
 struct IslandOrderList: View {
     let id: String
     let arrangement: IslandArrangement
@@ -50,6 +57,7 @@ struct IslandOrderList: View {
                     let index = ids.firstIndex(of: activity.id) ?? 0
                     IslandOrderRow(
                         activity: activity,
+                        holdsIsland: index == 0,
                         moveUp: index > 0 ? { arrangement.move(activity.id, to: index - 1, in: ids) } : nil,
                         moveDown: index < ids.count - 1 ? { arrangement.move(activity.id, to: index + 1, in: ids) } : nil
                     )
@@ -90,10 +98,13 @@ struct IslandOrderList: View {
     }
 }
 
-/// One activity in the list: a handle to drag it by, and its feature's symbol and name.
-/// VoiceOver moves it with the row's actions.
+/// One activity in the list: a handle to drag it by, its feature's symbol and name, and
+/// where it goes while the others are going on too, the island or a bubble. VoiceOver
+/// moves it with the row's actions.
 private struct IslandOrderRow: View {
     let activity: IslandActivityInfo
+    /// Whether it is first, and so holds the island whenever it is going on.
+    let holdsIsland: Bool
     /// One place up or down the list; `nil` at that end of it.
     let moveUp: (() -> Void)?
     let moveDown: (() -> Void)?
@@ -106,11 +117,20 @@ private struct IslandOrderRow: View {
                 .accessibilityHidden(true)
             IslandSymbolBadge(symbol: activity.symbol, size: 22, cornerRadius: 6, pointSize: 11)
                 .accessibilityHidden(true)
-            Text(activity.title)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(activity.title)
+                if let subtitle = activity.subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Spacer(minLength: 8)
+            Text(holdsIsland ? "In the island" : "In a bubble")
+                .foregroundStyle(holdsIsland ? .secondary : .tertiary)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Use the Move Up and Move Down actions, or drag the row, to change which activity the island shows first")
+        .accessibilityHint("Use the Move Up and Move Down actions, or drag the row, to change which activity stays in the island")
         .accessibilityActions {
             if let moveUp { Button("Move Up", action: moveUp) }
             if let moveDown { Button("Move Down", action: moveDown) }

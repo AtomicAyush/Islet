@@ -1223,7 +1223,8 @@ struct MoreActivitiesMenu: View {
     }
 
     /// The menu's items, then the same Show in Island choice a tab's right-click
-    /// offers, for the activities that have no tab of their own to right-click.
+    /// offers, for the activities that have no tab of their own to right-click, and
+    /// the way to the island's order in Settings, as there.
     @ViewBuilder var entries: some View {
         ForEach(items) { item in
             Button {
@@ -1238,6 +1239,8 @@ struct MoreActivitiesMenu: View {
                 Button(item.title) { model.choose(.show(item.id)) }
             }
         }
+        Divider()
+        Button(IslandChoice.arrange.title) { model.choose(.arrange) }
     }
 
     var body: some View {

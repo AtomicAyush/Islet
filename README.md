@@ -467,10 +467,13 @@ timer, then a meeting about to start, music, a shortcut or a download, then thin
 background, the newest first among equals. Right-click a bubble, the circle folded into the
 island or an activity's tab in the opened island and choose Show in Island to keep that activity
 in the island until it ends; right-click the island and choose Let Islet Choose to go back.
-VoiceOver has the same as actions. Settings → General → Island Order lists the activities of the
-features that are on, in the order the island takes them; drag one to another place and that
-order decides from then on, for the bubbles too, and Reset goes back to Islet's own. Only a
-chosen activity, or a preview on screen for a moment, goes before it.
+VoiceOver has the same as actions. To keep one there whenever it is going on, say your music,
+drag it to the top of Settings → General → What Stays in the Island; the last item in those
+menus and in the opened island's "…" menu, Choose What Stays in the Island…, opens Settings
+there. The list has the activities of the features that are on, in the order the island takes
+them, the first marked In the island and the rest In a bubble. That order decides from then on,
+for the bubbles too, and Reset goes back to Islet's own. Only a chosen activity, or a preview on
+screen for a moment, goes before it.
 
 **Rest the pointer on it to open it.** The island stretches sideways a beat before it drops,
 with a small squash and rebound, and its content arrives out of a blur. There is a tab for

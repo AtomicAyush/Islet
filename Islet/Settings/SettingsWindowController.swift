@@ -30,6 +30,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         show()
     }
 
+    /// Opens Settings on General's `row`, scrolled to and lit for a moment.
+    func show(_ row: GeneralRow) {
+        search.show(row)
+        show()
+    }
+
     func windowWillClose(_ notification: Notification) {
         // Opened again, Settings shows its tabs rather than an old search.
         search.clear()

@@ -8,8 +8,8 @@ import SwiftUI
 enum GeneralRow: String, CaseIterable, Identifiable, View {
     case openAtLogin, menuBarIcon, quit
     case appearance
-    case hover, haptics, homeLayout, bubblePlacement
     case islandOrder
+    case hover, haptics, homeLayout, bubblePlacement
     case displays, idlePill, fullScreen
 
     /// Also the row's scroll target in the tab.
@@ -22,11 +22,11 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .menuBarIcon: "Show menu bar icon"
         case .quit: "Quit Islet"
         case .appearance: "Island colour and accent"
+        case .islandOrder: "What stays in the island"
         case .hover: "Open when the pointer rests on it"
         case .haptics: "Trackpad feedback"
         case .homeLayout: "Home tiles that don't fit"
         case .bubblePlacement: "Bubble placement"
-        case .islandOrder: "Island order"
         case .displays: "Show the island on"
         case .idlePill: "Keep a resting island on displays without a notch"
         case .fullScreen: "Hide while an app is full screen"
@@ -38,8 +38,8 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         switch self {
         case .openAtLogin, .menuBarIcon, .quit: nil
         case .appearance: "Appearance"
+        case .islandOrder: IslandOrderSection.heading
         case .hover, .haptics, .homeLayout, .bubblePlacement: "Island"
-        case .islandOrder: "Island Order"
         case .displays, .idlePill, .fullScreen: "Displays"
         }
     }
@@ -50,11 +50,11 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .menuBarIcon: MenuBarIconRow(id: id)
         case .quit: QuitRow(id: id)
         case .appearance: AppearanceRows(id: id)
+        case .islandOrder: IslandOrderList(id: id, arrangement: ActivityCenter.shared.islandArrangement)
         case .hover: HoverRows(id: id)
         case .haptics: HapticsRow(id: id)
         case .homeLayout: HomeLayoutRow(id: id)
         case .bubblePlacement: BubblePlacementRow(id: id)
-        case .islandOrder: IslandOrderList(id: id, arrangement: ActivityCenter.shared.islandArrangement)
         case .displays: DisplaysRow(id: id)
         case .idlePill: IdlePillRow(id: id)
         case .fullScreen: FullScreenRows(id: id)

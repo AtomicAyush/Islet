@@ -31,7 +31,10 @@ final class NowPlayingFeature: Feature {
     /// Where the tile goes on the home page, until the person puts it somewhere else.
     static let tileOrder = 10
     var homeTile: HomeTileInfo? { HomeTileInfo(self, order: Self.tileOrder) }
-    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 30) }
+    /// Under its name where Settings orders the island, since people think of it by
+    /// their player.
+    static let players = "Spotify, Apple Music and other players"
+    var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 30, subtitle: Self.players) }
 
     private let model = NowPlayingModel()
     private let library = NowPlayingLibraryModel()
