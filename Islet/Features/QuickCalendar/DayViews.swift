@@ -310,17 +310,29 @@ private struct DayRow: View {
 
 // MARK: - Summarised in the box
 
-/// "Summarise my day", typed in the box: the day from the calendar, worked out on this
-/// Mac, and a way to send just the words typed on to the model after all.
+/// "Summarise my day", typed in the box, or "what about Friday" after it: the day from
+/// the calendar, worked out on this Mac, and a way to send just the words typed on to the
+/// model after all.
 struct DaySummaryAnswer: View {
     let model: QuickCalendarModel
-    let day: QuickDay
+    /// The day summed up: any day, gone by or to come.
+    let day: Date
     let anyway: InputAnyway?
+
+    /// The day as the box shows it, in words, for a follow-up asked of the model on this
+    /// Mac: the date, and every row read out.
+    static func words(model: QuickCalendarModel, day: Date) -> String {
+        let format = QuickCalendarFormat(model: model)
+        guard model.access == .granted else {
+            return "\(format.longDay(day)): Calendar isn't allowed to be read, so the day wasn't summed up."
+        }
+        return "\(format.longDay(day)), from Calendar. " + DayWords(format: format).spoken(model.plan(on: day, at: model.now()))
+    }
 
     var body: some View {
         let words = DayWords(format: QuickCalendarFormat(model: model))
         VStack(alignment: .leading, spacing: 6) {
-            let plan = model.access == .granted ? model.plan(day, at: model.now()) : nil
+            let plan = model.access == .granted ? model.plan(on: day, at: model.now()) : nil
             if let plan {
                 Text(words.headline(plan))
                     .font(.system(size: 12.5, weight: .semibold))
@@ -332,14 +344,15 @@ struct DaySummaryAnswer: View {
                     .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(.islandGraphic(0.4))
                     .accessibilityHidden(true)
-                Text(anyway.map { "Your day, from Calendar — not sent to \($0.name)" } ?? "Your day, from Calendar")
+                Text(anyway.map { $0.onThisMac ? "Your day, from Calendar, on this Mac" : "Your day, from Calendar — not sent to \($0.name)" }
+                    ?? "Your day, from Calendar")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.islandText(0.45))
                     .lineLimit(1)
                 if let anyway {
-                    InputQuietButton(title: "Ask \(anyway.name) anyway", symbol: "arrow.up") { anyway.send() }
+                    InputQuietButton(title: "Ask \(anyway.name) \(anyway.onThisMac ? "instead" : "anyway")", symbol: "arrow.up") { anyway.send() }
                         .fixedSize()
-                        .accessibilityHint("Sends only the words you typed, not your calendar")
+                        .accessibilityHint(anyway.onThisMac ? "Asks the words you typed instead" : "Sends only the words you typed, not your calendar")
                 }
                 Spacer(minLength: 0)
             }
@@ -352,7 +365,6 @@ struct DaySummaryAnswer: View {
                 QuickAddAccessRow(model: model, purpose: "to find your free time")
             }
         }
-        .padding(.horizontal, 6)
         .padding(.bottom, 2)
     }
 }

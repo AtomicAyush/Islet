@@ -31,6 +31,9 @@ final class IslandViewModel {
     /// island (which menu bar icons the notch hides) and would otherwise have to keep
     /// looking.
     static let didOpenNotification = Notification.Name("IslandViewModel.didOpen")
+    /// Posted as an island closes, with its model as the object: for what is kept only
+    /// while the island is open (the input box's conversation).
+    static let didCloseNotification = Notification.Name("IslandViewModel.didClose")
 
     var metrics: NotchMetrics
     /// Set by the controller from preferences and the full-screen watcher.
@@ -672,6 +675,7 @@ final class IslandViewModel {
         menuLeftPointer = false
         if wasEditing { editingHomeChanged(false) }
         if wasKeepingOpen { keepingOpenChanged(false) }
+        NotificationCenter.default.post(name: Self.didCloseNotification, object: self)
     }
 
     /// A menu came up in Islet, or went. One that comes up with the pointer on the

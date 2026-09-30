@@ -19,8 +19,10 @@ import SwiftUI
 /// the same way.
 ///
 /// Nothing typed is sent anywhere or kept: events are read by rules on this Mac
-/// (`EventParser`), and the box forgets what was typed as it closes. The calendar is
-/// never sent to a model: the day is worked out on this Mac.
+/// (`EventParser`), and the box forgets what was typed as the island closes. The day is
+/// worked out on this Mac, and the calendar is never sent to ChatGPT or Claude: a
+/// follow-up to a day summed up gives the summary to Apple's model on this Mac alone
+/// (`summary(of:model:)`).
 @MainActor
 final class QuickCalendarFeature: Feature {
     let id = "quickcalendar"
@@ -161,15 +163,40 @@ final class QuickCalendarFeature: Feature {
     }
 
     /// "Summarise my day", typed in either mode: answered from the calendar on this Mac,
-    /// and never sent to a model unless the person asks for just those words to be.
+    /// and never sent to a model unless the person asks for just those words to be. In
+    /// Ask mode it joins the conversation, and "what about tomorrow" straight after it is
+    /// answered the same way.
     static func summarise(_ model: QuickCalendarModel) -> InputCommand {
         InputCommand(
             id: summariseID,
             matches: { DaySummaryRequest.day(for: $0) != nil },
             hint: "Summarise your day from Calendar, on this Mac",
             symbol: DayPageLayout.symbol,
-            view: { text, anyway in
-                AnyView(DaySummaryAnswer(model: model, day: DaySummaryRequest.day(for: text) ?? .today, anyway: anyway))
+            answer: { text in
+                let today = model.calendar.startOfDay(for: model.now())
+                let tomorrow = model.calendar.date(byAdding: .day, value: 1, to: today) ?? today
+                return summary(of: DaySummaryRequest.day(for: text) == .tomorrow ? tomorrow : today, model: model)
+            }
+        )
+    }
+
+    /// What ChatGPT and Claude are told of a day summed up, with a follow-up: that there
+    /// was one, and nothing of it.
+    static let summaryNote = "(A summary of their calendar was shown on their Mac. Its details are private and weren't shared with you.)"
+
+    /// `day` summed up, as the box shows it and goes on from: in words for Apple's model
+    /// on this Mac, and only as `summaryNote` for any other.
+    static func summary(of day: Date, model: QuickCalendarModel) -> InputCommandAnswer {
+        InputCommandAnswer(
+            key: "day@\(day.timeIntervalSinceReferenceDate)",
+            hint: "Summarise \(QuickCalendarFormat(model: model).dayInSentence(day)) from Calendar, on this Mac",
+            subject: "Your day",
+            view: { anyway in AnyView(DaySummaryAnswer(model: model, day: day, anyway: anyway)) },
+            words: { DaySummaryAnswer.words(model: model, day: day) },
+            note: summaryNote,
+            followUp: { text in
+                DaySummaryRequest.followUp(to: text, after: day, now: model.now(), calendar: model.calendar)
+                    .map { summary(of: $0, model: model) }
             }
         )
     }

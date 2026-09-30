@@ -3,7 +3,8 @@ import SwiftUI
 
 // MARK: - The conversation
 
-/// The box's conversation above the field: each question, quietly, and its answer.
+/// The box's conversation above the field: each question, quietly, and its answer, from a
+/// model or from a command on this Mac (the day summed up).
 struct QuickAskConversation: View {
     let session: QuickAskSession
 
@@ -16,6 +17,8 @@ struct QuickAskConversation: View {
             }
             ForEach(session.exchanges) { exchange in
                 QuickAskExchangeView(session: session, exchange: exchange)
+                    // For the box to scroll to the top of the day summed up.
+                    .id(exchange.id)
             }
         }
         .padding(.horizontal, 6)
@@ -35,7 +38,14 @@ private struct QuickAskExchangeView: View {
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("You asked: \(exchange.question)")
-            answer
+            if let local = exchange.local {
+                local.answer.view(session.anyway(for: exchange))
+            } else {
+                if let subject = session.keptHere(before: exchange) {
+                    QuickAskKeptHereRow(session: session, exchange: exchange, subject: subject)
+                }
+                answer
+            }
         }
     }
 
@@ -74,6 +84,36 @@ private struct QuickAskExchangeView: View {
         case .failed(let failure):
             QuickAskFailureRow(session: session, exchange: exchange, failure: failure)
         }
+    }
+}
+
+/// Over an answer from ChatGPT or Claude to a follow-up to the day summed up: that they
+/// weren't shown it, and Apple's model, which would be, to ask instead.
+private struct QuickAskKeptHereRow: View {
+    let session: QuickAskSession
+    let exchange: QuickAskSession.Exchange
+    let subject: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.islandGraphic(0.4))
+                .accessibilityHidden(true)
+            Text("\(subject) stays on this Mac — \(exchange.provider.title) wasn't shown it")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.islandText(0.45))
+                .lineLimit(1)
+            if exchange.id == session.exchanges.last?.id, !session.isBusy, session.ask.status(of: .onDevice) == .ready {
+                InputQuietButton(title: "Ask \(AskProvider.onDevice.name)", symbol: AskProvider.onDevice.symbol) {
+                    session.askAgain(with: .onDevice)
+                }
+                .fixedSize()
+                .help("Ask Apple's model on this Mac, which is given \(subject.lowercased())")
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 

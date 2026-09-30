@@ -4,8 +4,8 @@ import FoundationModels
 #endif
 
 /// Apple's on-device model, on macOS 26 and later with Apple Intelligence on: nothing
-/// leaves the Mac. One conversation is kept for the open box, warmed up as it opens,
-/// and dropped as it closes.
+/// leaves the Mac. One conversation is kept while the island is open, warmed up as the
+/// box first opens, and dropped as the island closes.
 @MainActor
 final class AppleAskBackend: AskBackend {
     let provider = AskProvider.onDevice
@@ -68,7 +68,8 @@ final class AppleAskBackend: AskBackend {
     #endif
 
     func prepare() {
-        guard status() == .ready else { return }
+        // The box opened again with the island still open: its conversation goes on.
+        guard conversation == nil, status() == .ready else { return }
         #if canImport(FoundationModels)
         if #available(macOS 26, *) {
             let session = LanguageModelSession(instructions: AskInstructions.text)

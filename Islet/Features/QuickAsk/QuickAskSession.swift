@@ -2,8 +2,10 @@ import AppKit
 import SwiftUI
 import Observation
 
-/// One open box's conversation: each question asked and its answer, in memory only.
-/// Follow-ups go on from it; closing the box forgets all of it (`close()`), stopping any
+/// The box's conversation: each question asked and its answer, in order, whether a
+/// model answered it or a command did on this Mac (the day summed up), in memory only.
+/// Follow-ups go on from it while the island is open, the box closed and opened again
+/// meanwhile or not; the island closing forgets all of it (`close()`), stopping any
 /// answer still coming.
 @MainActor
 @Observable
@@ -14,6 +16,22 @@ final class QuickAskSession: InputSession {
         var provider: AskProvider
         var answer = ""
         var state = State.waiting
+        /// Answered on this Mac by a command rather than by a model.
+        var local: Local?
+        /// Answered by Apple's model given a command's answer, which it may repeat: kept
+        /// from ChatGPT and Claude as that answer is.
+        var drawsOn: Local?
+    }
+
+    /// A command's answer in the conversation.
+    struct Local: Equatable {
+        let commandID: String
+        let symbol: String
+        let answer: InputCommandAnswer
+
+        static func == (lhs: Local, rhs: Local) -> Bool {
+            lhs.commandID == rhs.commandID && lhs.answer.key == rhs.answer.key
+        }
     }
 
     enum State: Equatable {
@@ -53,9 +71,10 @@ final class QuickAskSession: InputSession {
         provider = ask.provider
     }
 
+    /// An answer is coming: to the latest question asked of a model, whatever was
+    /// answered on this Mac since.
     var isBusy: Bool {
-        guard let last = exchanges.last else { return false }
-        return [.waiting, .slow, .answering].contains(last.state)
+        exchanges.contains { [.waiting, .slow, .answering].contains($0.state) }
     }
 
     // MARK: InputSession
@@ -75,12 +94,39 @@ final class QuickAskSession: InputSession {
     }
 
     func submit(_ draft: String) -> Bool {
-        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A follow-up to what a command answered, that it answers too, is answered here.
+        if let local = localFollowUp(draft) {
+            append(draft.trimmingCharacters(in: .whitespacesAndNewlines), local)
+            return true
+        }
+        return sendOn(draft)
+    }
+
+    func sendOn(_ text: String) -> Bool {
+        let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isBusy else { return false }
         nextID += 1
         exchanges.append(Exchange(id: nextID, question: question, provider: provider))
         run(exchanges.count - 1)
         return true
+    }
+
+    func keep(_ answer: InputCommandAnswer, to text: String, from command: InputCommand) -> Bool {
+        append(text, Local(commandID: command.id, symbol: command.symbol, answer: answer))
+        return true
+    }
+
+    func answersHere(_ draft: String) -> InputHint? {
+        localFollowUp(draft).map { InputHint(text: $0.answer.hint, symbol: $0.symbol) }
+    }
+
+    func commandStopped(_ id: String) {
+        exchanges.removeAll { $0.local?.commandID == id }
+    }
+
+    var latestFromTop: AnyHashable? {
+        guard let last = exchanges.last, last.local != nil else { return nil }
+        return AnyHashable(last.id)
     }
 
     func stop() {
@@ -106,14 +152,46 @@ final class QuickAskSession: InputSession {
     }
 
     /// Asks the last question again of `provider` ("Ask ChatGPT" under an answer from
-    /// this Mac), in the answer's place.
+    /// this Mac, or "Ask ChatGPT anyway" under the day), in the answer's place.
     func askAgain(with provider: AskProvider) {
         guard !isBusy, let last = exchanges.indices.last else { return }
         self.provider = provider
         exchanges[last].provider = provider
         exchanges[last].answer = ""
         exchanges[last].state = .waiting
+        exchanges[last].local = nil
         run(last)
+    }
+
+    /// Under the latest answer a command gave, while nothing is coming: its words asked
+    /// of whoever answers, in its place.
+    func anyway(for exchange: Exchange) -> InputAnyway? {
+        guard exchange.local != nil, exchange.id == exchanges.last?.id, !isBusy else { return nil }
+        let provider = provider
+        return InputAnyway(name: provider.name, onThisMac: provider == .onDevice) { [weak self] in self?.askAgain(with: provider) }
+    }
+
+    /// What a model off this Mac wasn't shown, over its answer to the question straight
+    /// after a command's, or after Apple's model's answer from one: "Your day".
+    func keptHere(before exchange: Exchange) -> String? {
+        guard exchange.local == nil, exchange.provider != .onDevice,
+              let index = exchanges.firstIndex(where: { $0.id == exchange.id }), index > 0
+        else { return nil }
+        let before = exchanges[index - 1]
+        return (before.local ?? before.drawsOn)?.answer.subject
+    }
+
+    /// The answer a command gives to `text` as a follow-up to the latest exchange, if
+    /// that was the command's.
+    private func localFollowUp(_ text: String) -> Local? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let last = exchanges.last?.local, let answer = last.answer.followUp(text) else { return nil }
+        return Local(commandID: last.commandID, symbol: last.symbol, answer: answer)
+    }
+
+    private func append(_ question: String, _ local: Local) {
+        nextID += 1
+        exchanges.append(Exchange(id: nextID, question: question, provider: provider, state: .done, local: local))
     }
 
     /// The last question alone, without the exchanges before it: after one too long
@@ -131,10 +209,14 @@ final class QuickAskSession: InputSession {
     }
 
     private func run(_ index: Int) {
-        let exchange = exchanges[index]
         // Only exchanges that were answered go with a follow-up, the latest few of them.
         let answered = exchanges[..<index].filter { $0.state == .done }
-        let earlier = answered.suffix(Self.maxExchanges - 1).map { AskTurn(question: $0.question, answer: $0.answer) }
+        let given = answered.suffix(Self.maxExchanges - 1)
+        // Apple's model given a command's answer, or its own answer from one, may repeat it.
+        exchanges[index].drawsOn = exchanges[index].provider == .onDevice
+            ? given.compactMap { $0.local ?? $0.drawsOn }.last : nil
+        let exchange = exchanges[index]
+        let earlier = given.map { Self.turn($0, for: exchange.provider) }
         droppedEarlier = answered.count > earlier.count
         let backend = ask.backend(exchange.provider)
         let id = exchange.id
@@ -170,6 +252,20 @@ final class QuickAskSession: InputSession {
                 self?.finish(id, failure: error as? AskFailure ?? .provider(AskErrors.oneLine(error.localizedDescription)))
             }
         }
+    }
+
+    /// An exchange as it goes with a follow-up to `provider`. What a command answered goes
+    /// in words only to Apple's model, on this Mac; ChatGPT and Claude are told only that
+    /// there was such an answer, and that it stays private, and are told the same in place
+    /// of Apple's model's answers from it.
+    static func turn(_ exchange: Exchange, for provider: AskProvider) -> AskTurn {
+        if let local = exchange.local {
+            return AskTurn(question: exchange.question, answer: provider == .onDevice ? local.answer.words() : local.answer.note)
+        }
+        if provider != .onDevice, let local = exchange.drawsOn {
+            return AskTurn(question: exchange.question, answer: local.answer.note)
+        }
+        return AskTurn(question: exchange.question, answer: exchange.answer)
     }
 
     private func update(_ id: Int, _ change: (inout Exchange) -> Void) {

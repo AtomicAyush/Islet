@@ -299,6 +299,64 @@ enum DaySummaryRequest {
         guard phrases.contains(text) || pattern?.firstMatch(in: text, range: range) != nil else { return nil }
         return text.contains("tomorrow") ? .tomorrow : .today
     }
+
+    /// "what about tomorrow", "and Friday?", "how about next Monday then", "the day after",
+    /// "yesterday?": a day, and at most a few words leading to it.
+    private static let followUpPattern: NSRegularExpression? = {
+        let lead = #"(?:(?:and|so|ok|okay)\s+){0,2}(?:(?:what|how)\s+about\s+|what'?s\s+on\s+|summari[sz]e\s+)?(?:(?:on|for)\s+)?"#
+        let day = #"(today|tomorrow|yesterday|(?:the\s)?day\safter\stomorrow|(?:the\s)?day\sbefore\syesterday|"#
+            + #"the\s(?:next|following|previous)\sday|the\sday\s(?:after|before)(?:\sthat)?|"#
+            + #"(?:(this|next|last)\s)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday))"#
+        return try? NSRegularExpression(pattern: "^" + lead + day + #"(?:\s(?:then|instead|too))?$"#)
+    }()
+
+    private static let weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+
+    /// The day a follow-up to a day summed up asks for, or `nil` if it asks something
+    /// else. Only a day named, with at most a few words leading to it, is taken: "what
+    /// about tomorrow", "and Friday?", "next Monday", "the day after", "yesterday?".
+    /// Anything more ("what about the French revolution", "what about tomorrow's
+    /// weather") or a span ("next week", "the weekend") is asked as usual.
+    ///
+    /// "The day after" and "the day before" count from `shown`, the day summed up last;
+    /// a weekday counts from today as typing an event does: "Friday" is the next one,
+    /// today if it is Friday, "next Friday" a week on then, and "last Friday" the one
+    /// before today.
+    static func followUp(to text: String, after shown: Date, now: Date, calendar: Calendar) -> Date? {
+        // "ok, what about tomorrow", "Friday, then?": a comma is a space here.
+        let text = normalised(text.replacingOccurrences(of: ",", with: " "))
+        guard !text.isEmpty, text.count <= 60, let pattern = followUpPattern,
+              let match = pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let dayRange = Range(match.range(at: 1), in: text)
+        else { return nil }
+        let today = calendar.startOfDay(for: now)
+        let shown = calendar.startOfDay(for: shown)
+        let offset: (Date, Int)
+        switch String(text[dayRange]) {
+        case "today": offset = (today, 0)
+        case "tomorrow": offset = (today, 1)
+        case "yesterday": offset = (today, -1)
+        case let words where words.hasSuffix("after tomorrow"): offset = (today, 2)
+        case let words where words.hasSuffix("before yesterday"): offset = (today, -2)
+        case let words where words.hasPrefix("the next") || words.hasPrefix("the following") || words.hasPrefix("the day after"):
+            offset = (shown, 1)
+        case let words where words.hasPrefix("the previous") || words.hasPrefix("the day before"):
+            offset = (shown, -1)
+        default:
+            guard let nameRange = Range(match.range(at: 3), in: text),
+                  let target = weekdays.firstIndex(of: String(text[nameRange])) else { return nil }
+            let which = Range(match.range(at: 2), in: text).map { String(text[$0]) }
+            let weekday = calendar.component(.weekday, from: today) - 1
+            if which == "last" {
+                let behind = (weekday - target + 7) % 7
+                offset = (today, -(behind == 0 ? 7 : behind))
+            } else {
+                let ahead = (target - weekday + 7) % 7
+                offset = (today, ahead == 0 && which == "next" ? 7 : ahead)
+            }
+        }
+        return calendar.date(byAdding: .day, value: offset.1, to: offset.0).map(calendar.startOfDay(for:))
+    }
 }
 
 /// What Quick Calendar says of a day, its free time and its clashes: in the tile, the Day

@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 import Observation
 
-/// What the input box holds while it is open: its mode, the draft and each mode's
-/// session. Memory only, and only until the box closes (`close(_:)`): nothing of it is
+/// What the input box holds: its mode, the draft and each mode's session. Memory only:
+/// the draft until typing in the box ends, and the rest, the conversation among it, until
+/// the island it was typed in closes (`typingEnded(_:)`, `forget()`). Nothing of it is
 /// written anywhere, logged or put in a URL.
 @MainActor
 @Observable
@@ -20,9 +21,10 @@ final class InputBox {
     }
     /// Another mode offering to take the draft over, and its line.
     private(set) var suggestion: (modeID: String, line: String)?
-    /// A command answered in the box, with the words that asked for it: shown until the
-    /// next question is sent, the mode changes or the box closes.
-    private(set) var command: (id: String, text: String)?
+    /// A command answered in a mode that keeps no conversation, with the words that
+    /// asked for it: shown until the next thing is sent, the mode changes or the island
+    /// closes.
+    private(set) var command: (id: String, text: String, answer: InputCommandAnswer)?
     /// The island typing in the box.
     @ObservationIgnored weak var island: IslandViewModel?
     @ObservationIgnored weak var center: InputCenter?
@@ -30,6 +32,18 @@ final class InputBox {
     @ObservationIgnored var heightChanged: () -> Void = {}
 
     private var sessions: [String: any InputSession] = [:]
+
+    init() {
+        // What the box holds goes as the island it was typed in closes, however long
+        // after typing ended.
+        NotificationCenter.default.addObserver(forName: IslandViewModel.didCloseNotification, object: nil, queue: nil) { [weak self] note in
+            let closed = note.object.map { ObjectIdentifier($0 as AnyObject) }
+            MainActor.assumeIsolated {
+                guard let self, let island = self.island, closed == ObjectIdentifier(island) else { return }
+                self.forget()
+            }
+        }
+    }
 
     /// The field's row, the conversation above it and the preview below, as drawn.
     var rowHeight: CGFloat = InputBoxLayout.rowHeight { didSet { reportHeight(oldValue != rowHeight) } }
@@ -90,7 +104,8 @@ final class InputBox {
     /// The first other mode's offer for the draft.
     private func offer() -> (modeID: String, line: String)? {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let modes = center?.modes, center?.command(for: text) == nil else { return nil }
+        guard !text.isEmpty, let modes = center?.modes, center?.command(for: text) == nil,
+              session?.answersHere(text) == nil else { return nil }
         for mode in modes where mode.id != modeID {
             if let line = mode.suggest?(text) { return (mode.id, line) }
         }
@@ -107,24 +122,33 @@ final class InputBox {
 
     // MARK: Commands
 
-    /// The draft asks for a command: it is answered here, and goes nowhere else.
+    /// The draft asks for a command: it is answered here, and goes nowhere else. A mode
+    /// that keeps a conversation keeps the answer in it.
     private func answersCommand() -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let found = center?.command(for: text) else { return false }
-        command = (found.id, text)
+        let answer = found.answer(text)
+        command = session?.keep(answer, to: text, from: found) == true ? nil : (found.id, text, answer)
         draft = ""
         return true
     }
 
-    /// The command's answer, above the field.
+    /// The command's answer, above the field, in a mode that keeps no conversation.
     func commandView() -> AnyView? {
-        guard let command, let found = center?.commands.first(where: { $0.id == command.id }) else { return nil }
-        return found.view(command.text, anyway(command.text))
+        guard let command else { return nil }
+        return AnyView(command.answer.view(anyway(command.text)).padding(.horizontal, 6))
     }
 
     /// The command the draft asks for, as it is typed.
     var pendingCommand: InputCommand? {
         center?.command(for: draft)
+    }
+
+    /// What Return will do instead of sending the draft, if it will: answer a command, or
+    /// a follow-up to one, on this Mac.
+    var pendingHint: InputHint? {
+        if let command = pendingCommand { return InputHint(text: command.hint, symbol: command.symbol) }
+        return session?.answersHere(draft)
     }
 
     /// Sending the words a command answered on to the mode that sends drafts off, if one
@@ -135,13 +159,14 @@ final class InputBox {
             guard let self, let mode = self.center?.modes.first(where: { $0.id == mode.id }) else { return }
             self.command = nil
             self.show(mode)
-            _ = self.session?.submit(text)
+            _ = self.session?.sendOn(text)
         }
     }
 
-    /// A command's feature stopped: its answer goes.
+    /// A command's feature stopped: its answers go.
     func forgetCommand(_ id: String) {
         if command?.id == id { command = nil }
+        for session in sessions.values { session.commandStopped(id) }
     }
 
     /// One of the island's own key equivalents.
@@ -163,8 +188,34 @@ final class InputBox {
         }
     }
 
-    /// The box closed, however: every session forgets what it held, and the draft goes.
-    func close(_ reason: TypingEnd) {
+    /// Typing in the box ended. The draft goes; the conversation stays while the island
+    /// is open, to go on from when the box is opened there again, and goes as it closes.
+    /// Typing ending as the island closes or goes, the feature stops or the box moves to
+    /// another island forgets it at once.
+    func typingEnded(_ reason: TypingEnd) {
+        switch reason {
+        case .collapse, .invalidated, .featureStopped, .otherIsland:
+            forget()
+        default:
+            guard island?.isExpanded == true else { return forget() }
+            draft = ""
+            suggestion = nil
+        }
+    }
+
+    /// A mode's feature stopped: what the box held in it goes, and all of it if the box
+    /// was in that mode.
+    func forget(mode id: String) {
+        if modeID == id {
+            forget()
+        } else {
+            sessions.removeValue(forKey: id)?.close()
+        }
+    }
+
+    /// The island closed, or the box moved to another: every session forgets what it
+    /// held, and the draft goes.
+    func forget() {
         for session in sessions.values { session.close() }
         sessions = [:]
         draft = ""
@@ -229,11 +280,18 @@ struct InputBoxView: View {
                     .frame(height: box.aboveRoom)
                     // Past the most the box grows to, it follows what comes in.
                     .onChange(of: [box.aboveHeight, box.aboveRoom]) { _, _ in
-                        // A command's answer is read from its top.
+                        // A command's answer is read from its top, in the conversation too.
                         guard box.command == nil else { return }
+                        let top = box.session?.latestFromTop
                         // Again once a row that fades in (Copy) has settled.
                         for delay in [0, 0.3] {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { proxy.scrollTo(Self.end, anchor: .bottom) }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                                if let top {
+                                    proxy.scrollTo(top, anchor: .top)
+                                } else {
+                                    proxy.scrollTo(Self.end, anchor: .bottom)
+                                }
+                            }
                         }
                     }
                 }
@@ -242,7 +300,7 @@ struct InputBoxView: View {
                 // Its own height, however many lines the field has, for the box to grow to.
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { box.rowHeight = $0 }
-            if let below = box.pendingCommand.map({ AnyView(InputCommandHint(command: $0)) }) ?? box.session?.below()
+            if let below = box.pendingHint.map({ AnyView(InputCommandHint(hint: $0)) }) ?? box.session?.below()
                 ?? box.suggestion.map({ AnyView(InputSuggestionRow(box: box, line: $0.line)) }) {
                 below
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -423,18 +481,18 @@ private struct InputSuggestionRow: View {
     }
 }
 
-/// Under the field while the draft asks for a command: what Return will do instead of
-/// sending it.
+/// Under the field while the draft asks for a command, or a follow-up to one: what Return
+/// will do instead of sending it.
 private struct InputCommandHint: View {
-    let command: InputCommand
+    let hint: InputHint
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: command.symbol)
+            Image(systemName: hint.symbol)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.islandText(0.6))
                 .accessibilityHidden(true)
-            Text(command.hint)
+            Text(hint.text)
                 .font(.system(size: 11))
                 .foregroundStyle(.islandText(0.7))
                 .lineLimit(1)

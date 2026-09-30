@@ -2,21 +2,23 @@ import AppKit
 import SwiftUI
 import Observation
 
-/// A quick question, asked from the island and answered there, and forgotten as the box
-/// closes. ⌥⇧Space (or the tile, or the Shortcuts action) opens the box on the display
-/// under the pointer, ready to type; Return asks. Apple's on-device model answers where
-/// it can, and ChatGPT or Claude through their own apps' command line tools, a tap away.
+/// A quick question, asked from the island and answered there, and forgotten as the
+/// island closes. ⌥⇧Space (or the tile, or the Shortcuts action) opens the box on the
+/// display under the pointer, ready to type; Return asks. Apple's on-device model answers
+/// where it can, and ChatGPT or Claude through their own apps' command line tools, a tap
+/// away.
 ///
-/// Islet keeps nothing of it: the question and the answer are in memory while the box
-/// is open, and are gone when it closes. Nothing is written to disk or the defaults,
-/// logged, put in a URL, or copied unless Copy is pressed; the tools are run so that
-/// they keep nothing either (`AskProcess`, `CodexAskBackend`, `ClaudeAskBackend`).
+/// Islet keeps nothing of it: the questions and answers are in memory while the island
+/// is open, for follow-ups to go on from, and are gone when it closes. Nothing is written
+/// to disk or the defaults, logged, put in a URL, or copied unless Copy is pressed; the
+/// tools are run so that they keep nothing either (`AskProcess`, `CodexAskBackend`,
+/// `ClaudeAskBackend`).
 @MainActor
 final class QuickAskFeature: Feature {
     let id = "quickask"
     let title = "Quick Ask"
     let symbol = "questionmark.bubble.fill"
-    let summary = "Ask a quick question from the island, and have it forgotten as the box closes."
+    let summary = "Ask a quick question from the island, and have it forgotten as the island closes."
 
     enum Key {
         /// The provider last chosen in the box: a setting, never what was asked.

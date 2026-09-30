@@ -154,7 +154,7 @@ protocol AskBackend: AnyObject {
     /// Answers `question`, after the exchanges already had: the whole answer so far each
     /// time more of it comes. Cancelling the stream's task stops the answer.
     func answer(_ question: String, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error>
-    /// The box closed: anything held for it goes.
+    /// The island closed: anything held for its conversation goes.
     func close()
 }
 

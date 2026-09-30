@@ -112,13 +112,14 @@ struct QuickAskSettings: View {
     }
 
     static let privacy = """
-        **Islet keeps nothing.** Your question and its answer stay in memory while the box is open and are gone when it \
-        closes — nothing is saved, logged, or put on the clipboard unless you press Copy. **On this Mac** answers with \
-        Apple's on-device model; nothing leaves your Mac. **ChatGPT** and **Claude** send your question to OpenAI or \
-        Anthropic through their app's own command-line tool, with no history or session saved on this Mac, no tools, \
-        and none of your hooks, plugins or MCP servers; what OpenAI and Anthropic keep is up to their own privacy \
-        policies. Your calendar is never sent to any of them. Quick questions to ChatGPT count towards the same usage \
-        as the ChatGPT app. A file of instructions for Codex in ~/.codex (AGENTS.md) would go with each question to \
-        ChatGPT.
+        **Islet keeps nothing.** Your questions and their answers stay in memory while the island is open, for \
+        follow-ups, and are gone when it closes — nothing is saved, logged, or put on the clipboard unless you press \
+        Copy. **On this Mac** answers with Apple's on-device model; nothing leaves your Mac. **ChatGPT** and **Claude** \
+        send your question, with the conversation so far, to OpenAI or Anthropic through their app's own command-line \
+        tool, with no history or session saved on this Mac, no tools, and none of your hooks, plugins or MCP servers; \
+        what OpenAI and Anthropic keep is up to their own privacy policies. Your calendar is never sent to ChatGPT or \
+        Claude: after your day is summed up in the box they're told only that it was, and On this Mac alone is given \
+        it, for a follow-up. Quick questions to ChatGPT count towards the same usage as the ChatGPT app. A file of \
+        instructions for Codex in ~/.codex (AGENTS.md) would go with each question to ChatGPT.
         """
 }

@@ -208,9 +208,16 @@ final class QuickCalendarModel {
     /// the person's day.
     func plan(_ day: QuickDay, at now: Date) -> DayPlan {
         let today = calendar.startOfDay(for: now)
-        let start = day == .today ? today : calendar.date(byAdding: .day, value: 1, to: today) ?? today
-        let window = DayPlan.window(for: start, now: now, calendar: calendar, from: dayFrom, to: dayTo)
-        return DayPlan.make(events: events(on: start), window: window, travel: travel, now: now)
+        return plan(on: day == .today ? today : calendar.date(byAdding: .day, value: 1, to: today) ?? today, at: now)
+    }
+
+    /// The day `day` falls on, as it stands at `now`: today's from now on, and the whole
+    /// of the person's day for any other, one gone by too.
+    func plan(on day: Date, at now: Date) -> DayPlan {
+        let start = calendar.startOfDay(for: day)
+        let seen = start < calendar.startOfDay(for: now) ? start : now
+        let window = DayPlan.window(for: start, now: seen, calendar: calendar, from: dayFrom, to: dayTo)
+        return DayPlan.make(events: events(on: start), window: window, travel: travel, now: seen)
     }
 
     private static let links = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)

@@ -211,9 +211,15 @@ calendars Settings checks (all but Birthdays unless you leave some out). Each cl
 tomorrow is told once on a card while the island is resting ("Only 10 minutes to get from Gym
 to Café for Coffee"), unless Tell me about clashes is off; a clash already shown in the box as
 the event was typed isn't told again. Typing "summarise my day", "what's on tomorrow" or the
-like in the box, in either mode, shows the same summary above the field. It is recognised by
-fixed rules before anything is sent anywhere, and worked out on this Mac: your calendar is never
-sent to a model. "Ask ChatGPT anyway" (or whoever answers) sends only the words you typed.
+like in the box, in either mode, shows the same summary above the field; in Ask mode it joins
+the conversation, and straight after it "what about tomorrow", "and Friday?", "next Monday",
+"the day after" or "yesterday?" sums up that day the same way. It is recognised by fixed rules
+before anything is sent anywhere, and worked out on this Mac: your calendar is never sent to
+ChatGPT or Claude. A follow-up asked of On this Mac ("am I free at 3?") is given the summary, so
+Apple's on-device model can answer it without anything leaving your Mac; ChatGPT and Claude are
+told only that a summary was shown here and stays private, in its place and in that of On this
+Mac's answers from it, and the box says so over their answer. "Ask ChatGPT anyway" (or whoever
+answers) sends only the words you typed.
 
 **Weather.** The temperature on the home page beside a symbol for the sky, with the day's high
 and low and, when rain is on the way, when it should start: "Rain in about 20 min", "Rain
@@ -489,11 +495,12 @@ and it can clear itself when the Mac locks.
 the Ask tile on the home page, or run the Open Quick Ask action from Shortcuts) and a box opens in
 the island on the display under the pointer, ready to type. Return asks; Shift- or Option-Return
 starts a new line; Escape, ⌘W, a click outside or the shortcut again closes it. The answer comes
-into the island as it is written, a follow-up goes on from it, and Copy puts it on the clipboard
-(marked as passing, so clipboard histories — Islet's own too — leave it out). The app you were in
-stays in front the whole time, its menu bar and all, and has the keyboard back when the box
-closes. The shortcut can be changed or turned off in Settings; it takes over the non-breaking
-space ⌥⇧Space would otherwise type.
+into the island as it is written, a follow-up goes on from the conversation so far for as long
+as the island stays open (the box closed and opened again meanwhile or not), and Copy puts it on
+the clipboard (marked as passing, so clipboard histories — Islet's own too — leave it out). The
+app you were in stays in front the whole time, its menu bar and all, and has the keyboard back
+when the box closes. The shortcut can be changed or turned off in Settings; it takes over the
+non-breaking space ⌥⇧Space would otherwise type.
 
 Three can answer, chosen from the chip beside the field and remembered: **On this Mac**, Apple's
 on-device model (macOS 26 or later, with Apple Intelligence on), which is the fastest and sends
@@ -508,18 +515,20 @@ when it resets, offline, busy, Apple's model refusing or too full (with Start af
 again without the earlier questions), no word from the tool for 20 seconds, or no whole answer
 after 90. Another provider is suggested only when one is offered beside it.
 
-Islet keeps nothing. Your question and its answer stay in memory while the box is open and are
-gone when it closes — nothing is saved, logged, or put on the clipboard unless you press Copy.
-On this Mac answers with Apple's on-device model; nothing leaves your Mac. ChatGPT and Claude
-send your question to OpenAI or Anthropic through their app's own command-line tool, with no
-history or session saved on this Mac, no tools, and none of your hooks, plugins or MCP servers;
-what OpenAI and Anthropic keep is up to their own privacy policies. Your calendar is never sent
-to any of them. Quick questions to ChatGPT count towards the same usage as the ChatGPT app. Each
-question to ChatGPT or Claude runs its tool afresh in an empty folder of its own, which goes as
-it finishes, with the question on its standard input rather than its command line, only the
-environment it needs, and a model given no tools at all — no shell, no files, no web — so an
-answer can't act. The one thing that can't be left out: a global `AGENTS.md` of your own in
-`~/.codex` would go with each question to ChatGPT.
+Islet keeps nothing. Your questions and their answers stay in memory while the island is open,
+for follow-ups, and are gone when it closes — nothing is saved, logged, or put on the clipboard
+unless you press Copy. On this Mac answers with Apple's on-device model; nothing leaves your
+Mac. ChatGPT and Claude send your question to OpenAI or Anthropic through their app's own
+command-line tool, with no history or session saved on this Mac, no tools, and none of your
+hooks, plugins or MCP servers; what OpenAI and Anthropic keep is up to their own privacy
+policies. Your calendar is never sent to ChatGPT or Claude; after your day is summed up in the
+box they're told only that it was, and On this Mac alone is given it, for a follow-up. Quick
+questions to ChatGPT count towards the same usage as the ChatGPT app. Each question to ChatGPT
+or Claude runs its tool afresh in an empty folder of its own, which goes as it finishes, with
+the question on its standard input rather than its command line, only the environment it needs,
+and a model given no tools at all — no shell, no files, no web — so an answer can't act. The one
+thing that can't be left out: a global `AGENTS.md` of your own in `~/.codex` would go with each
+question to ChatGPT.
 
 **Hidden Menu Bar Icons.** On a MacBook, menu bar icons that don't fit beside the notch (when
 the app in front has a long menu, say) end up behind the camera or out of the menu bar
@@ -946,10 +955,13 @@ a change of page, the island closing, a full-screen app taking the display, the 
 keyboard (⌘Tab) or the feature stopping; the flag goes off and, if the panel still has the
 keyboard, it is ordered out and straight back in, which hands the keyboard back to the app in
 front. The client is told why (`TypingEnd`, logged as a word, never what was typed) and forgets
-what it held. Meanwhile the panel lets only the Edit menu's key equivalents through (copy, paste,
-cut, select all, undo, redo), handles its own (⌘Return, ⌘1…, ⌘W) and swallows every other ⌘ key,
-so none reaches Islet's own menu: ⌘Q never quits Islet from the box
-(`KeyEquivalentRule`).
+what was typed. The input box keeps its conversation while the island stays open, to go on from
+when it is opened there again, and forgets it as the island closes
+(`IslandViewModel.didCloseNotification`), or at once when typing ends because the island is
+going, the feature stopped or the box moved to another display. Meanwhile the panel lets only
+the Edit menu's key equivalents through (copy, paste, cut, select all, undo, redo), handles its
+own (⌘Return, ⌘1…, ⌘W) and swallows every other ⌘ key, so none reaches Islet's own menu: ⌘Q
+never quits Islet from the box (`KeyEquivalentRule`).
 
 **Colours in the code.** Island views never write `.white`, `.black` or a colour literal, and
 never read UserDefaults for a colour. The theme (`IslandTheme`) is worked out once when the
