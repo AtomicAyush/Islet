@@ -94,6 +94,9 @@ protocol InputSession: AnyObject {
     func above() -> AnyView?
     /// Drawn below the field: an event's preview.
     func below() -> AnyView?
+    /// Drawn just over the field, below the conversation and not scrolling with it: what
+    /// goes with the next thing sent (a picture of the screen).
+    func overField() -> AnyView?
     /// The chip after the field: who answers, which calendar.
     func trailingChip() -> AnyView?
     /// The draft changed, with each key.
@@ -105,6 +108,8 @@ protocol InputSession: AnyObject {
     func sendOn(_ text: String) -> Bool
     /// ⌘Return, with the draft. Returns whether the field empties.
     func accept(_ draft: String) -> Bool
+    /// ⌘⇧S: a picture of the screen for the next thing sent, in a mode that takes one.
+    func lookAtScreen()
     /// Whether something is under way that Stop ends (an answer coming).
     var isBusy: Bool { get }
     func stop()
@@ -133,6 +138,8 @@ protocol InputSession: AnyObject {
 extension InputSession {
     func above() -> AnyView? { nil }
     func below() -> AnyView? { nil }
+    func overField() -> AnyView? { nil }
+    func lookAtScreen() {}
     func trailingChip() -> AnyView? { nil }
     func draftChanged(_ draft: String) {}
     func accept(_ draft: String) -> Bool { submit(draft) }

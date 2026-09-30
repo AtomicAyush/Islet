@@ -315,10 +315,12 @@ extension QuickAskFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
             labels: ["Answer with", "On this Mac", "ChatGPT", "Claude", "Shortcut", "Connect Claude", "Connect", "Token",
-                     "Remove", "Copy", "Ask anything", "Ask", "Ask ChatGPT", "Ask Claude", "Try again", "None"],
+                     "Remove", "Copy", "Ask anything", "Ask", "Ask ChatGPT", "Ask Claude", "Try again", "None",
+                     "Look at my screen", "Front window", "Whole display", "Screen Recording", "Open System Settings"],
             keywords: ["ai", "assistant", "chatgpt", "gpt", "openai", "codex", "claude", "anthropic", "haiku",
                        "apple intelligence", "on-device", "llm", "question", "chat", "quick question", "hotkey",
-                       "keyboard shortcut", "private", "spotlight"]
+                       "keyboard shortcut", "private", "spotlight", "screen", "screenshot", "look", "see", "image",
+                       "picture", "window", "display", "vision", "screen capture"]
         )
     }
 }

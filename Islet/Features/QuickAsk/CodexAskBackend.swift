@@ -55,22 +55,41 @@ final class CodexAskBackend: AskBackend {
     func prepare() {}
     func close() {}
 
+    /// The fast model takes pictures, as ChatGPT's list of models says.
+    var takesImages: Bool {
+        setup.binary() != nil && CodexCatalog.build(from: setup.modelsCache)?.takesImages == true
+    }
+
+    /// The picture's name in the run's folder.
+    nonisolated static let imageName = "screen.jpg"
+
     func answer(_ question: String, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
+        answer(question, showing: nil, after: earlier)
+    }
+
+    /// A picture goes as a file, the one way Codex takes one (`--image`): private to the
+    /// run's folder, and taken away as soon as Codex starts answering, having read it, or
+    /// as the run ends, whichever is first.
+    func answer(_ question: String, showing image: ScreenSnapshot?, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             guard let binary = setup.binary() else { return continuation.finish(throwing: AskFailure.notInstalled) }
             // Never with Codex's own tools: no model without them, no run.
             guard let catalog = CodexCatalog.build(from: setup.modelsCache) else {
                 return continuation.finish(throwing: AskFailure.notReady)
             }
+            if image != nil, !catalog.takesImages { return continuation.finish(throwing: AskFailure.cantSee) }
             if offline() { return continuation.finish(throwing: AskFailure.offline) }
-            let launch = AskProcess.Launch(
+            var files = ["instructions.md": Data(AskInstructions.text.utf8), "catalog.json": catalog.json]
+            if let image { files[Self.imageName] = image.jpeg }
+            var launch = AskProcess.Launch(
                 executable: binary,
-                arguments: { Self.arguments(folder: $0, model: catalog.model) },
+                arguments: { Self.arguments(folder: $0, model: catalog.model, image: image != nil) },
                 environment: { [environment = setup.environment] _ in environment },
-                files: ["instructions.md": Data(AskInstructions.text.utf8), "catalog.json": catalog.json],
-                input: Data(AskInstructions.prompt(question, after: earlier).utf8),
+                files: files,
+                input: Data(AskInstructions.prompt(question, showing: image, after: earlier).utf8),
                 parent: setup.parent
             )
+            if image != nil { launch.readOnce = (Self.imageName, CodexOutput.hasRead) }
             let task = Task {
                 var parser = CodexOutput()
                 do {
@@ -95,12 +114,15 @@ final class CodexAskBackend: AskBackend {
     /// the person's configuration, rules, skills or project files, sends no analytics,
     /// keeps no history, and asks for nothing, with every feature that could give the
     /// model a tool turned off as well as the model having none. The question comes on
-    /// stdin. Only a global AGENTS.md in Codex's own folder can't be left out.
-    nonisolated static func arguments(folder: URL, model: String) -> [String] {
+    /// stdin, and a picture, if one goes, from its file in the folder. Only a global
+    /// AGENTS.md in Codex's own folder can't be left out.
+    nonisolated static func arguments(folder: URL, model: String, image: Bool = false) -> [String] {
         let path = folder.path
+        // `--image` takes every value after it up to the next option: one comes before -C.
+        let picture = image ? ["--image", "\(path)/\(imageName)"] : []
         return [
             "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
-            "--sandbox", "read-only", "--json", "-C", path, "-m", model,
+            "--sandbox", "read-only", "--json"] + picture + ["-C", path, "-m", model,
             "-c", "model_catalog_json=\(path)/catalog.json",
             "-c", "model_instructions_file=\(path)/instructions.md",
             "-c", "model_reasoning_effort=low",
@@ -141,6 +163,8 @@ enum CodexCatalog {
     struct Built {
         var model: String
         var json: Data
+        /// The model takes pictures as well as words.
+        var takesImages = false
     }
 
     static func build(from cache: URL) -> Built? {
@@ -163,7 +187,8 @@ enum CodexCatalog {
             }
             guard let json = try? JSONSerialization.data(withJSONObject: ["models": [entry]], options: [.sortedKeys]),
                   isToolFree(json, slug: slug) else { return nil }
-            return Built(model: slug, json: json)
+            let modalities = entry["input_modalities"] as? [String] ?? []
+            return Built(model: slug, json: json, takesImages: modalities.contains("image"))
         }
         return nil
     }
@@ -204,6 +229,15 @@ struct CodexOutput {
         default:
             return nil
         }
+    }
+
+    /// Codex has read the picture: it prints the model's first item, or the turn's end,
+    /// only once its question, the picture in it, has been sent.
+    @Sendable
+    static func hasRead(_ line: String) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+              let type = object["type"] as? String else { return false }
+        return type.hasPrefix("item.") || type == "turn.completed" || type == "turn.failed"
     }
 
     func finish(status: Int32) throws {

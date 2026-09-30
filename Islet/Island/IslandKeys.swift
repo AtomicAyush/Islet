@@ -39,6 +39,8 @@ enum IslandKeyAction: Equatable {
     case mode(Int)
     /// ⌘W or ⌘.: close the box.
     case close
+    /// ⇧⌘S: look at the screen, for the next question.
+    case look
 }
 
 /// What the panel does with a key equivalent while it takes keys (`IslandPanel`).
@@ -78,6 +80,7 @@ enum KeyEquivalentRule: Equatable {
         }
         // Redo.
         if others == .shift, key == "z" { return .pass }
+        if others == .shift, key == "s" { return .handle(.look) }
         return .swallow
     }
 

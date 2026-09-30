@@ -25,6 +25,8 @@ final class QuickAskFeature: Feature {
         static let provider = "feature.quickask.provider"
         /// The shortcut, as [key code, modifiers]; an empty list for none.
         static let shortcut = "feature.quickask.shortcut"
+        /// What "Look at my screen" takes a picture of (`ScreenLookTarget`): a setting.
+        static let lookAt = "feature.quickask.look-at"
     }
 
     /// Where the tile goes on the home page: after the clipboard, before the shelf.
@@ -95,7 +97,8 @@ extension FeatureTint {
 }
 
 /// What Quick Ask shares between the box, its tile and Settings: who can answer, who
-/// was chosen, the shortcut, and copying. Nothing asked or answered is kept here.
+/// was chosen, the shortcut, copying, and taking pictures of the screen. Nothing asked
+/// or answered, and no picture, is kept here.
 @MainActor
 @Observable
 final class QuickAskModel {
@@ -106,16 +109,27 @@ final class QuickAskModel {
     private(set) var statuses: [AskProvider: AskStatus] = [:]
     /// Why the shortcut isn't working, if it isn't.
     var shortcutProblem: String?
+    /// What takes pictures of the screen, when "Look at my screen" is pressed.
+    @ObservationIgnored let capturer: any ScreenCapturer
+    /// Screen Recording, as last looked at.
+    private(set) var screenPermission = ScreenPermission.denied
+    /// The display an island is on. Tests replace it.
+    @ObservationIgnored var islandDisplay: (IslandViewModel?) -> CGDirectDisplayID? = { ScreenLook.display(of: $0) }
+    /// macOS was asked for Screen Recording: it is asked once, as the control is first
+    /// used, and never again.
+    @ObservationIgnored private(set) var askedForScreen = false
 
     init(
         backends: [any AskBackend]? = nil,
         defaults: UserDefaults = .standard,
-        pasteboard: NSPasteboard = .general
+        pasteboard: NSPasteboard = .general,
+        capturer: (any ScreenCapturer)? = nil
     ) {
         let backends = backends ?? [AppleAskBackend(), CodexAskBackend(), ClaudeAskBackend()]
         self.backends = Dictionary(uniqueKeysWithValues: backends.map { ($0.provider, $0) })
         self.defaults = defaults
         self.pasteboard = pasteboard
+        self.capturer = capturer ?? SystemScreenCapturer()
     }
 
     func backend(_ provider: AskProvider) -> any AskBackend {
@@ -151,6 +165,29 @@ final class QuickAskModel {
 
     func setShortcut(_ combo: KeyCombo?) {
         defaults.set(combo?.stored ?? [Int](), forKey: QuickAskFeature.Key.shortcut)
+    }
+
+    /// What "Look at my screen" takes a picture of: the front window unless chosen.
+    var lookTarget: ScreenLookTarget {
+        get { defaults.string(forKey: QuickAskFeature.Key.lookAt).flatMap(ScreenLookTarget.init(rawValue:)) ?? .frontWindow }
+        set { defaults.set(newValue.rawValue, forKey: QuickAskFeature.Key.lookAt) }
+    }
+
+    /// Whether `provider` can be shown a picture now.
+    func takesImages(_ provider: AskProvider) -> Bool {
+        status(of: provider) == .ready && backend(provider).takesImages
+    }
+
+    func refreshScreenPermission() {
+        let current = capturer.permission()
+        if current != screenPermission { screenPermission = current }
+    }
+
+    /// Screen Recording is off, as the control is used: macOS is asked, the first time.
+    func askForScreen() {
+        guard !askedForScreen else { return }
+        askedForScreen = true
+        capturer.requestPermission()
     }
 
     func closeBackends() {

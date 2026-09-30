@@ -65,14 +65,23 @@ final class ClaudeAskBackend: AskBackend {
     func prepare() {}
     func close() {}
 
+    /// Claude's models all take pictures.
+    var takesImages: Bool { setup.binary() != nil }
+
     func answer(_ question: String, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
+        answer(question, showing: nil, after: earlier)
+    }
+
+    /// A picture goes on stdin with the question, as a message of Claude's own (`stream-json`
+    /// input), never as a file: Claude Code reads files only with the tools it isn't given.
+    func answer(_ question: String, showing image: ScreenSnapshot?, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             guard let binary = setup.binary() else { return continuation.finish(throwing: AskFailure.notInstalled) }
             guard let token = setup.tokens.token() else { return continuation.finish(throwing: AskFailure.notSignedIn) }
             if offline() { return continuation.finish(throwing: AskFailure.offline) }
             let launch = AskProcess.Launch(
                 executable: binary,
-                arguments: { _ in Self.arguments },
+                arguments: { _ in image == nil ? Self.arguments : Self.imageArguments },
                 environment: { [environment = setup.environment] folder in
                     // Claude's own configuration, which it writes as it starts, goes in
                     // the run's folder and with it, not in the person's.
@@ -81,7 +90,8 @@ final class ClaudeAskBackend: AskBackend {
                         "CLAUDE_CONFIG_DIR": folder.appendingPathComponent("config").path,
                     ]) { $1 }
                 },
-                input: Data(AskInstructions.prompt(question, after: earlier).utf8),
+                input: image.map { Self.message(AskInstructions.prompt(question, showing: $0, after: earlier), image: $0) }
+                    ?? Data(AskInstructions.prompt(question, after: earlier).utf8),
                 parent: setup.parent
             )
             let task = Task {
@@ -114,6 +124,23 @@ final class ClaudeAskBackend: AskBackend {
         "--settings", #"{"disableAllHooks":true}"#, "--system-prompt", AskInstructions.text,
         "--output-format", "stream-json", "--include-partial-messages", "--verbose",
     ]
+
+    /// The same, with the question coming as a message rather than as text, for a picture
+    /// to go in it.
+    nonisolated static let imageArguments = arguments + ["--input-format", "stream-json"]
+
+    /// The question and the picture as one user message, on one line: the picture first,
+    /// as Anthropic suggests, then the words.
+    nonisolated static func message(_ text: String, image: ScreenSnapshot) -> Data {
+        let content: [[String: Any]] = [
+            ["type": "image", "source": ["type": "base64", "media_type": ScreenSnapshot.mediaType,
+                                         "data": image.jpeg.base64EncodedString()]],
+            ["type": "text", "text": text],
+        ]
+        let message: [String: Any] = ["type": "user", "message": ["role": "user", "content": content]]
+        let data = (try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes])) ?? Data()
+        return data + Data("\n".utf8)
+    }
 }
 
 /// Claude's `stream-json` lines, as they come.

@@ -7,6 +7,13 @@ import Observation
 /// Follow-ups go on from it while the island is open, the box closed and opened again
 /// meanwhile or not; the island closing forgets all of it (`close()`), stopping any
 /// answer still coming.
+///
+/// "Look at my screen" takes one picture, then and only then, which goes with the next
+/// question asked of a model and stays with that exchange. It is sent once: follow-ups
+/// to ChatGPT and Claude carry the conversation in words, saying a picture went, and not
+/// the picture again (press the control again for a fresh look); Apple's model, whose
+/// conversation goes on in memory on this Mac, still has it. What a command answers on
+/// this Mac (the day summed up) is never sent with it, and leaves it for the next question.
 @MainActor
 @Observable
 final class QuickAskSession: InputSession {
@@ -21,6 +28,14 @@ final class QuickAskSession: InputSession {
         /// Answered by Apple's model given a command's answer, which it may repeat: kept
         /// from ChatGPT and Claude as that answer is.
         var drawsOn: Local?
+        /// The picture of the screen that went with the question.
+        var snapshot: ScreenSnapshot?
+    }
+
+    /// "Look at my screen", before a picture is ready or instead of one.
+    enum Look: Equatable {
+        case looking
+        case failed(ScreenLookFailure)
     }
 
     /// A command's answer in the conversation.
@@ -55,6 +70,10 @@ final class QuickAskSession: InputSession {
     private(set) var droppedEarlier = false
     /// The answer just copied, for "Copied".
     private(set) var justCopied: Int?
+    /// The picture of the screen for the next question, shown over the field until it goes.
+    private(set) var snapshot: ScreenSnapshot?
+    /// Taking the picture, or why it wasn't taken.
+    private(set) var lookState: Look?
 
     @ObservationIgnored let ask: QuickAskModel
     /// How long before "Still waiting", and before an answer is given up on. Tests
@@ -65,6 +84,9 @@ final class QuickAskSession: InputSession {
     @ObservationIgnored private var nextID = 0
     /// The exchange whose time ran out, as its task ends.
     @ObservationIgnored private var timedOut: Int?
+    @ObservationIgnored private var lookTask: Task<Void, Never>?
+    /// The box, for the island it is on.
+    @ObservationIgnored private weak var box: InputBox?
 
     init(ask: QuickAskModel) {
         self.ask = ask
@@ -83,8 +105,23 @@ final class QuickAskSession: InputSession {
         exchanges.isEmpty ? nil : AnyView(QuickAskConversation(session: self))
     }
 
+    func overField() -> AnyView? {
+        snapshot == nil && lookState == nil ? nil : AnyView(QuickAskLookPreview(session: self))
+    }
+
     func trailingChip() -> AnyView? {
-        AnyView(QuickAskProviderChip(session: self))
+        AnyView(HStack(spacing: 6) {
+            QuickAskLookButton(session: self)
+            QuickAskProviderChip(session: self)
+        })
+    }
+
+    func attach(to box: InputBox) {
+        self.box = box
+    }
+
+    func lookAtScreen() {
+        look(at: nil)
     }
 
     func opened() {
@@ -99,14 +136,28 @@ final class QuickAskSession: InputSession {
             append(draft.trimmingCharacters(in: .whitespacesAndNewlines), local)
             return true
         }
-        return sendOn(draft)
+        // A picture being taken goes with this question: Return waits for it.
+        guard lookState != .looking else { return false }
+        return send(draft, showing: snapshot)
     }
 
+    /// Words a command answered, sent on: without the picture, which wasn't asked about.
     func sendOn(_ text: String) -> Bool {
+        send(text, showing: nil)
+    }
+
+    /// Asks `text` of the provider, with the picture if there is one; one that can't
+    /// see pictures isn't asked, and the preview says so.
+    private func send(_ text: String, showing image: ScreenSnapshot?) -> Bool {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isBusy else { return false }
+        if image != nil, !ask.takesImages(provider) { return false }
         nextID += 1
-        exchanges.append(Exchange(id: nextID, question: question, provider: provider))
+        exchanges.append(Exchange(id: nextID, question: question, provider: provider, snapshot: image))
+        if image != nil {
+            snapshot = nil
+            lookState = nil
+        }
         run(exchanges.count - 1)
         return true
     }
@@ -136,10 +187,66 @@ final class QuickAskSession: InputSession {
     func close() {
         task?.cancel()
         task = nil
+        lookTask?.cancel()
+        lookTask = nil
         exchanges = []
+        snapshot = nil
+        lookState = nil
         droppedEarlier = false
         justCopied = nil
         ask.closeBackends()
+    }
+
+    // MARK: Looking at the screen
+
+    /// Takes one picture, now, of what `target` says (or the setting), for the next
+    /// question; it replaces one not yet sent, which goes as it starts. `remember`, the
+    /// choice becomes the setting (the eye's menu); otherwise it is for this picture only.
+    /// With Screen Recording off, macOS is asked (the first time) and the box says how to
+    /// turn it on; nothing is taken.
+    func look(at target: ScreenLookTarget?, remember: Bool = true) {
+        if let target, remember { ask.lookTarget = target }
+        guard lookTask == nil else { return }
+        ask.refreshScreenPermission()
+        guard ask.screenPermission == .granted else {
+            ask.askForScreen()
+            snapshot = nil
+            lookState = .failed(.permissionOff)
+            return
+        }
+        let request = ScreenCaptureRequest(
+            target: target ?? ask.lookTarget, displayID: ask.islandDisplay(box?.island),
+            frontmost: box?.island?.appInFront(), excluding: getpid()
+        )
+        let capturer = ask.capturer
+        snapshot = nil
+        lookState = .looking
+        lookTask = Task { [weak self] in
+            let result: Result<ScreenSnapshot, ScreenLookFailure>
+            do {
+                let capture = try await capturer.capture(request)
+                result = ScreenSnapshot.make(from: capture, target: request.target).map { .success($0) } ?? .failure(.failed)
+            } catch {
+                result = .failure(error as? ScreenLookFailure ?? .failed)
+            }
+            guard let self, !Task.isCancelled else { return }
+            lookTask = nil
+            switch result {
+            case .success(let taken):
+                snapshot = taken
+                lookState = nil
+            case .failure(let failure):
+                lookState = .failed(failure)
+            }
+        }
+    }
+
+    /// ✕ on the preview: the picture goes, unsent, or the line saying why there isn't one.
+    func removeSnapshot() {
+        lookTask?.cancel()
+        lookTask = nil
+        snapshot = nil
+        lookState = nil
     }
 
     // MARK: Asking
@@ -241,7 +348,7 @@ final class QuickAskSession: InputSession {
                 limit.cancel()
             }
             do {
-                for try await answer in backend.answer(exchange.question, after: Array(earlier)) {
+                for try await answer in backend.answer(exchange.question, showing: exchange.snapshot, after: Array(earlier)) {
                     self?.update(id) {
                         $0.answer = answer
                         $0.state = .answering
@@ -263,9 +370,9 @@ final class QuickAskSession: InputSession {
             return AskTurn(question: exchange.question, answer: provider == .onDevice ? local.answer.words() : local.answer.note)
         }
         if provider != .onDevice, let local = exchange.drawsOn {
-            return AskTurn(question: exchange.question, answer: local.answer.note)
+            return AskTurn(question: exchange.question, answer: local.answer.note, hadPicture: exchange.snapshot != nil)
         }
-        return AskTurn(question: exchange.question, answer: exchange.answer)
+        return AskTurn(question: exchange.question, answer: exchange.answer, hadPicture: exchange.snapshot != nil)
     }
 
     private func update(_ id: Int, _ change: (inout Exchange) -> Void) {

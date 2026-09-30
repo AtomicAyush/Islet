@@ -32,6 +32,9 @@ private struct QuickAskExchangeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if let snapshot = exchange.snapshot {
+                QuickAskPictureLine(snapshot: snapshot, provider: exchange.provider)
+            }
             Text(exchange.question)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.islandText(0.55))
@@ -144,11 +147,12 @@ private struct QuickAskAnswerActions: View {
                 }
             }
             if exchange.provider == .onDevice, exchange.id == session.exchanges.last?.id,
-               let other = QuickAskFallback.cloud(session.ask) {
+               let other = QuickAskFallback.cloud(session.ask, seeing: exchange.snapshot != nil) {
                 InputQuietButton(title: "Ask \(other.name)", symbol: other.symbol) {
                     session.askAgain(with: other)
                 }
-                .help("Ask \(other.name) the same question")
+                .help(exchange.snapshot == nil ? "Ask \(other.name) the same question"
+                      : "Ask \(other.name) the same question, sending it the picture")
             }
         }
         .animation(.easeOut(duration: 0.15), value: session.justCopied)
@@ -163,7 +167,7 @@ private struct QuickAskFailureRow: View {
 
     /// Who is offered instead: the sentence names only them.
     private var other: AskProvider? {
-        QuickAskFallback.instead(of: exchange.provider, after: failure, session.ask)
+        QuickAskFallback.instead(of: exchange.provider, after: failure, seeing: exchange.snapshot != nil, session.ask)
     }
 
     /// Too much for Apple's model with the earlier questions, which can be left out.
@@ -195,6 +199,8 @@ private struct QuickAskFailureRow: View {
                     InputQuietButton(title: "Ask \(other.name)", symbol: other.symbol) {
                         session.askAgain(with: other)
                     }
+                    .help(exchange.snapshot == nil || other == .onDevice ? "Ask \(other.name) the same question"
+                          : "Ask \(other.name) the same question, sending it the picture")
                 }
                 if failure == .notSignedIn, exchange.provider == .claude {
                     InputQuietButton(title: "Connect Claude", symbol: "key.fill") {
@@ -209,24 +215,35 @@ private struct QuickAskFailureRow: View {
 
 /// Where a question goes when its provider can't answer it.
 enum QuickAskFallback {
-    /// ChatGPT, or Claude, whichever is ready first: for an answer from this Mac.
+    /// ChatGPT, or Claude, whichever is ready first: for an answer from this Mac. `seeing`,
+    /// the question came with a picture, and only one that can see it will do.
     @MainActor
-    static func cloud(_ ask: QuickAskModel) -> AskProvider? {
-        [AskProvider.chatGPT, .claude].first { ask.status(of: $0) == .ready }
+    static func cloud(_ ask: QuickAskModel, seeing: Bool = false) -> AskProvider? {
+        [AskProvider.chatGPT, .claude].first { ask.status(of: $0) == .ready && (!seeing || ask.takesImages($0)) }
+    }
+
+    /// Another that can see a picture, for one that can't: this Mac first, where it stays.
+    @MainActor
+    static func seeing(besides provider: AskProvider, _ ask: QuickAskModel) -> AskProvider? {
+        AskProvider.allCases.first { $0 != provider && ask.takesImages($0) }
     }
 
     /// Another provider for a question `provider` couldn't answer: this Mac for a
     /// cloud one offline, limited or busy; the cloud for one this Mac refused or
-    /// couldn't hold.
+    /// couldn't hold. `seeing`, the question came with a picture, which it must see.
     @MainActor
-    static func instead(of provider: AskProvider, after failure: AskFailure, _ ask: QuickAskModel) -> AskProvider? {
+    static func instead(of provider: AskProvider, after failure: AskFailure, seeing: Bool = false,
+                        _ ask: QuickAskModel) -> AskProvider? {
         switch failure {
         case .offline, .usageLimit, .busy:
-            guard provider != .onDevice, ask.status(of: .onDevice) == .ready else { return nil }
+            guard provider != .onDevice, ask.status(of: .onDevice) == .ready, !seeing || ask.takesImages(.onDevice)
+            else { return nil }
             return .onDevice
         case .refused, .tooLong, .unavailable:
             guard provider == .onDevice else { return nil }
-            return cloud(ask)
+            return cloud(ask, seeing: seeing)
+        case .cantSee:
+            return Self.seeing(besides: provider, ask)
         default:
             return nil
         }
@@ -274,6 +291,214 @@ struct QuickAskProviderChip: View {
         .fixedSize()
         .accessibilityLabel("Answered by \(current.title)")
         .accessibilityHint("Chooses who answers")
+    }
+}
+
+// MARK: - Looking at the screen
+
+/// Beside the field: "Look at my screen" (⇧⌘S). A click takes one picture, then, of the
+/// front window or the whole display as chosen, for the next question; held, a menu to
+/// choose which, which is remembered.
+struct QuickAskLookButton: View {
+    let session: QuickAskSession
+
+    var body: some View {
+        let target = session.ask.lookTarget
+        Menu {
+            ForEach(ScreenLookTarget.allCases) { choice in
+                Button {
+                    session.look(at: choice)
+                } label: {
+                    if choice == target {
+                        Label(choice.title, systemImage: "checkmark")
+                    } else {
+                        Text(choice.title)
+                    }
+                }
+            }
+        } label: {
+            QuickAskLookLabel(isOn: session.snapshot != nil)
+        } primaryAction: {
+            session.look(at: nil)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Look at my screen (⇧⌘S): a picture of the \(target.title.lowercased()) goes with your next question. Hold to choose what")
+        .accessibilityLabel("Look at my screen")
+        .accessibilityHint("Takes a picture of the \(target.title.lowercased()) for your next question")
+    }
+}
+
+/// The look button's face: an eye, lit while a picture waits to go.
+struct QuickAskLookLabel: View {
+    let isOn: Bool
+
+    var body: some View {
+        Group {
+            if isOn {
+                Image(systemName: "eye.fill")
+                    .islandWashed(.accent(.quickAsk, minimum: Contrast.text), wash: 0.2, in: Circle())
+            } else {
+                Image(systemName: "eye")
+                    .foregroundStyle(.islandText(0.7, on: .surface(0.12)))
+                    .background(Circle().fill(.islandSurface(0.12)))
+            }
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .frame(width: InputBoxLayout.chipHeight, height: InputBoxLayout.chipHeight)
+        .contentShape(Circle())
+    }
+}
+
+/// Over the field: the picture that goes with the next question as it will be sent, what
+/// it is of, and where it goes, with ✕ to take it away; or, while there is none, why.
+struct QuickAskLookPreview: View {
+    let session: QuickAskSession
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            content
+            Spacer(minLength: 0)
+            Button {
+                session.removeSnapshot()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(.islandText(0.7, on: .surface(0.12)))
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(.islandSurface(0.12)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(session.snapshot == nil ? "Close" : "Don't send the picture")
+            .accessibilityLabel(session.snapshot == nil ? "Close" : "Remove the picture")
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.islandSurface(0.08)))
+        .padding(.horizontal, 6)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let snapshot = session.snapshot {
+            picture(snapshot)
+        } else {
+            switch session.lookState {
+            case .looking:
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    line("Looking…", 0.6)
+                }
+            case .failed(.permissionOff):
+                problem(symbol: "eye.slash", title: "Islet can't see your screen yet",
+                        detail: "Turn Islet on in Privacy & Security › Screen Recording, then press Look again.") {
+                    InputQuietButton(title: "Open System Settings", symbol: "gearshape") { ScreenPermission.openSettings() }
+                }
+            case .failed(.noWindow(let app)):
+                problem(symbol: "macwindow", title: "\(app ?? "The app in front") has no window to look at", detail: nil) {
+                    InputQuietButton(title: "Look at the whole display", symbol: ScreenLookTarget.display.symbol) {
+                        session.look(at: .display, remember: false)
+                    }
+                }
+            case .failed(.failed), nil:
+                problem(symbol: "exclamationmark.triangle.fill", title: "The picture couldn't be taken", detail: nil) {
+                    InputQuietButton(title: "Try again", symbol: "arrow.clockwise") { session.look(at: nil) }
+                }
+            }
+        }
+    }
+
+    private func picture(_ snapshot: ScreenSnapshot) -> some View {
+        let provider = session.provider
+        let sees = session.ask.takesImages(provider)
+        let other = sees ? nil : QuickAskFallback.seeing(besides: provider, session.ask)
+        return HStack(spacing: 10) {
+            Image(decorative: snapshot.image, scale: 1)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 76, maxHeight: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(.islandDecorative(0.2)))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                line("\(snapshot.source) — \(snapshot.target.title.lowercased())", 0.85, weight: .semibold)
+                if sees {
+                    HStack(spacing: 4) {
+                        Image(systemName: provider == .onDevice ? "lock.fill" : "arrow.up.forward")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(.islandGraphic(0.5))
+                            .accessibilityHidden(true)
+                        line(provider.pictureGoes, 0.6)
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.islandHue(.warning))
+                            .accessibilityHidden(true)
+                        line("\(provider.name) can't see pictures", 0.75)
+                        if let other {
+                            InputQuietButton(title: "Ask \(other.name)", symbol: other.symbol) { session.choose(other) }
+                                .fixedSize()
+                                .help("\(other.name) answers instead: \(other.pictureGoes.lowercased())")
+                        }
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Picture of \(snapshot.what), for your next question. "
+                            + (sees ? provider.pictureGoes : "\(provider.name) can't see pictures"))
+    }
+
+    private func problem(symbol: String, title: String, detail: String?, @ViewBuilder action: () -> some View) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.islandHue(.warning))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                line(title, 0.85, weight: .semibold)
+                if let detail {
+                    line(detail, 0.6)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                action()
+            }
+        }
+    }
+
+    private func line(_ text: String, _ alpha: Double, weight: Font.Weight = .medium) -> some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: weight))
+            .foregroundStyle(.islandText(alpha))
+            .lineLimit(2)
+    }
+}
+
+/// Over a question that went with a picture: a thumbnail of it, and where it went.
+private struct QuickAskPictureLine: View {
+    let snapshot: ScreenSnapshot
+    let provider: AskProvider
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(decorative: snapshot.image, scale: 1)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 30, maxHeight: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 2.5, style: .continuous))
+                .accessibilityHidden(true)
+            Text("With a picture of \(snapshot.what) · \(provider == .onDevice ? "stayed on this Mac" : "sent to \(provider.title)")")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.islandText(0.45))
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

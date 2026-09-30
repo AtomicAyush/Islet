@@ -23,6 +23,9 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         var environment: (URL) -> [String: String]
         /// Files put in the folder before the tool starts, by name.
         var files: [String: Data] = [:]
+        /// One of `files` the tool reads once (a picture of the screen), taken away as soon
+        /// as a line it prints says it has been read, as well as with the folder.
+        var readOnce: (name: String, isRead: @Sendable (String) -> Bool)?
         /// What the tool reads on its standard input.
         var input: Data
         var firstOutput: TimeInterval = AskLimits.firstOutput
@@ -73,6 +76,7 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
     private var isReadingDone = false
     private var isStopping = false
     private var hasOutput = false
+    private var isOnceRead = false
     private var isFinished = false
     private var status: Int32 = 0
     private var failure: Failure?
@@ -236,9 +240,10 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
             lock.unlock()
             pending.append(contentsOf: buffer[0..<count])
             while let newline = pending.firstIndex(of: UInt8(ascii: "\n")) {
-                let line = pending[pending.startIndex..<newline]
+                let line = String(decoding: pending[pending.startIndex..<newline], as: UTF8.self)
                 pending.removeSubrange(pending.startIndex...newline)
-                continuation.yield(.line(String(decoding: line, as: UTF8.self)))
+                removeIfRead(line)
+                continuation.yield(.line(line))
             }
         }
         if !pending.isEmpty { continuation.yield(.line(String(decoding: pending, as: UTF8.self))) }
@@ -247,6 +252,16 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         isReadingDone = true
         lock.unlock()
         finishIfDone()
+    }
+
+    /// The file the tool reads once goes as soon as a line says it was read.
+    private func removeIfRead(_ line: String) {
+        guard let (name, isRead) = launch.readOnce, isRead(line) else { return }
+        lock.lock()
+        let file = isOnceRead ? nil : folder?.appendingPathComponent(name)
+        isOnceRead = true
+        lock.unlock()
+        if let file { try? FileManager.default.removeItem(at: file) }
     }
 
     /// Waits for the tool to exit, then stops whatever it left running in its group and

@@ -49,6 +49,7 @@ final class InputBox {
     var rowHeight: CGFloat = InputBoxLayout.rowHeight { didSet { reportHeight(oldValue != rowHeight) } }
     var aboveHeight: CGFloat = 0 { didSet { reportHeight(oldValue != aboveHeight) } }
     var belowHeight: CGFloat = 0 { didSet { reportHeight(oldValue != belowHeight) } }
+    var overHeight: CGFloat = 0 { didSet { reportHeight(oldValue != overHeight) } }
 
     var session: (any InputSession)? {
         modeID.flatMap { sessions[$0] }
@@ -61,13 +62,15 @@ final class InputBox {
     /// The page's height: the row, with what is above and below it, up to the most the
     /// island has room for; past that, the conversation scrolls.
     var height: CGFloat {
-        min(max(InputBoxLayout.inset * 2 + rowHeight + extra(aboveHeight) + extra(belowHeight), InputBoxLayout.minimumHeight),
+        min(max(InputBoxLayout.inset * 2 + rowHeight + extra(aboveHeight) + extra(overHeight) + extra(belowHeight),
+                InputBoxLayout.minimumHeight),
             InputBoxLayout.maximumHeight)
     }
 
     /// How tall the conversation above the field may be drawn, before it scrolls.
     var aboveRoom: CGFloat {
-        max(0, min(aboveHeight, height - InputBoxLayout.inset * 2 - rowHeight - extra(belowHeight) - InputBoxLayout.spacing))
+        max(0, min(aboveHeight, height - InputBoxLayout.inset * 2 - rowHeight - extra(overHeight) - extra(belowHeight)
+                   - InputBoxLayout.spacing))
     }
 
     private func extra(_ part: CGFloat) -> CGFloat {
@@ -90,6 +93,7 @@ final class InputBox {
         command = nil
         belowHeight = 0
         aboveHeight = 0
+        overHeight = 0
         session?.draftChanged(draft)
         suggestion = offer()
     }
@@ -185,6 +189,8 @@ final class InputBox {
             show(modes[index])
         case .close:
             island?.endTyping(.close)
+        case .look:
+            session?.lookAtScreen()
         }
     }
 
@@ -225,6 +231,7 @@ final class InputBox {
         command = nil
         aboveHeight = 0
         belowHeight = 0
+        overHeight = 0
     }
 
     /// A draft that begins with another mode's prefix ("+") moves to that mode, without
@@ -295,6 +302,13 @@ struct InputBoxView: View {
                         }
                     }
                 }
+            }
+            if let over = box.session?.overField() {
+                over
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { box.overHeight = $0 }
+                    .onDisappear { box.overHeight = 0 }
             }
             row(box)
                 // Its own height, however many lines the field has, for the box to grow to.

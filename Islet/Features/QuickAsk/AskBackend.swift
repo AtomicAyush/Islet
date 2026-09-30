@@ -36,6 +36,15 @@ enum AskProvider: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Where a picture of the screen goes, beside it before it is sent.
+    var pictureGoes: String {
+        switch self {
+        case .onDevice: "Stays on this Mac"
+        case .chatGPT: "Sent to ChatGPT with your question"
+        case .claude: "Sent to Claude with your question"
+        }
+    }
+
     /// The first ready of On this Mac, ChatGPT and Claude, or On this Mac when none is.
     static func firstReady(_ status: (AskProvider) -> AskStatus) -> AskProvider {
         allCases.first { status($0) == .ready } ?? .onDevice
@@ -73,6 +82,8 @@ enum AskStatus: Equatable {
 struct AskTurn: Equatable {
     var question: String
     var answer: String
+    /// It came with a picture of the screen, which isn't sent again: a follow-up says so.
+    var hadPicture = false
 }
 
 /// Why a question went unanswered, in Islet's words.
@@ -97,6 +108,8 @@ enum AskFailure: Error, Equatable {
     case exited(Int32)
     /// The provider's own one-line message.
     case provider(String)
+    /// A picture went with the question, and this provider can't take one.
+    case cantSee
 
     /// What went wrong, and what can be done about it: `other` is the provider offered
     /// instead, if any, and `afresh` whether the question can be asked again alone.
@@ -120,6 +133,7 @@ enum AskFailure: Error, Equatable {
         case .noResponse: return "No answer from \(provider.name)"
         case .exited(let status): return "\(provider.title) stopped unexpectedly (exit \(status))"
         case .provider(let message): return "\(provider.title): \(message)"
+        case .cantSee: return "\(provider.name) can't see pictures" + (other.map { " — ask \($0.name), which can?" } ?? "")
         }
     }
 
@@ -154,8 +168,22 @@ protocol AskBackend: AnyObject {
     /// Answers `question`, after the exchanges already had: the whole answer so far each
     /// time more of it comes. Cancelling the stream's task stops the answer.
     func answer(_ question: String, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error>
+    /// Whether a picture of the screen can go with a question now.
+    var takesImages: Bool { get }
+    /// Answers `question` about `image`, a picture of the screen, if there is one. A
+    /// provider that can't take pictures says so rather than answer without it.
+    func answer(_ question: String, showing image: ScreenSnapshot?, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error>
     /// The island closed: anything held for its conversation goes.
     func close()
+}
+
+extension AskBackend {
+    var takesImages: Bool { false }
+
+    func answer(_ question: String, showing image: ScreenSnapshot?, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
+        guard image != nil else { return answer(question, after: earlier) }
+        return AsyncThrowingStream { $0.finish(throwing: AskFailure.cantSee) }
+    }
 }
 
 /// The words every provider is given to answer by.
@@ -166,8 +194,17 @@ enum AskInstructions {
     /// time: nothing of a conversation outlives its box, so each follow-up carries it.
     static func prompt(_ question: String, after earlier: [AskTurn]) -> String {
         guard !earlier.isEmpty else { return question }
-        let turns = earlier.map { "Q: \($0.question)\nA: \($0.answer)" }.joined(separator: "\n\n")
-        return "Earlier in this conversation:\n\(turns)\n\nNow: \(question)"
+        let turns = earlier.map { turn in
+            "Q\(turn.hadPicture ? " (with a picture of my screen, not sent again)" : ""): \(turn.question)\nA: \(turn.answer)"
+        }
+        return "Earlier in this conversation:\n\(turns.joined(separator: "\n\n"))\n\nNow: \(question)"
+    }
+
+    /// The question with a picture of the screen going with it: what the picture is of.
+    static func prompt(_ question: String, showing image: ScreenSnapshot?, after earlier: [AskTurn]) -> String {
+        let text = prompt(question, after: earlier)
+        guard let image else { return text }
+        return "(A picture of my screen comes with this: \(image.what).)\n\(text)"
     }
 }
 

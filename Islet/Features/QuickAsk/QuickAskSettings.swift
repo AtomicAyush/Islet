@@ -1,11 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// Quick Ask's options: who answers, the shortcut, connecting Claude, and what is kept
-/// (nothing).
+/// Quick Ask's options: who answers, the shortcut, what "Look at my screen" looks at and
+/// Screen Recording for it, connecting Claude, and what is kept (nothing).
 struct QuickAskSettings: View {
     let model: QuickAskModel
     @AppStorage(QuickAskFeature.Key.provider) private var provider = ""
+    @AppStorage(QuickAskFeature.Key.lookAt) private var lookAt = ScreenLookTarget.frontWindow
     @State private var token = ""
     @State private var hasToken = false
     @State private var tokenProblem: String?
@@ -27,6 +28,26 @@ struct QuickAskSettings: View {
         LabeledContent("Shortcut") {
             ShortcutRecorder(combo: model.shortcut, problem: model.shortcutProblem) { model.setShortcut($0) }
         }
+        Picker(selection: $lookAt) {
+            ForEach(ScreenLookTarget.allCases) { target in
+                Text(target.title).tag(target)
+            }
+        } label: {
+            Text("Look at my screen")
+            Text("What the eye beside the box's field (or ⇧⌘S in it) takes a picture of, only when you press it: the front window of the app you were in, or the whole display the island is on.")
+        }
+        LabeledContent {
+            if model.screenPermission == .granted {
+                Text("On").foregroundStyle(.secondary)
+            } else {
+                Button("Open System Settings") { ScreenPermission.openSettings() }
+            }
+        } label: {
+            Text("Screen Recording")
+            Text(model.screenPermission == .granted
+                 ? "Islet may take a picture of your screen when you ask it to look."
+                 : "Off. Islet needs it to look at your screen, and asks for it only the first time you press Look.")
+        }
         claude
         Text(LocalizedStringKey(QuickAskSettings.privacy))
             .font(.caption)
@@ -34,6 +55,7 @@ struct QuickAskSettings: View {
             .fixedSize(horizontal: false, vertical: true)
             .onAppear {
                 model.refreshStatuses()
+                model.refreshScreenPermission()
                 hasToken = claudeTokens?.hasToken ?? false
             }
     }
@@ -119,7 +141,11 @@ struct QuickAskSettings: View {
         tool, with no history or session saved on this Mac, no tools, and none of your hooks, plugins or MCP servers; \
         what OpenAI and Anthropic keep is up to their own privacy policies. Your calendar is never sent to ChatGPT or \
         Claude: after your day is summed up in the box they're told only that it was, and On this Mac alone is given \
-        it, for a follow-up. Quick questions to ChatGPT count towards the same usage as the ChatGPT app. A file of \
+        it, for a follow-up. **Look at my screen** takes one picture, only when you press it, of the front window \
+        or the whole display, never with Islet's own windows in it, shown over the field before it goes. It goes \
+        once, with your next question: to On this Mac, it stays on your Mac; to ChatGPT or Claude, it is sent with \
+        it (to ChatGPT through a private file that goes as soon as it has been read). Follow-ups don't send it \
+        again, and it is forgotten with the conversation. Quick questions to ChatGPT count towards the same usage as the ChatGPT app. A file of \
         instructions for Codex in ~/.codex (AGENTS.md) would go with each question to ChatGPT.
         """
 }

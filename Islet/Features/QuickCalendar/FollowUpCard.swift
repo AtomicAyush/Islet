@@ -119,7 +119,7 @@ struct FollowUpCard: View {
                 switch action {
                 case .accept: finish(.add(card.place))
                 case .close: island.endTyping(.close)
-                case .mode: break
+                case .mode, .look: break
                 }
             },
             leavesPage: false

@@ -12,6 +12,9 @@ final class AppleAskBackend: AskBackend {
 
     /// How available the model is, looked up afresh. Tests replace it.
     var availability: () -> AskStatus = { AppleAskBackend.systemAvailability() }
+    /// Whether the model can see pictures: on macOS 27, where it says it can. Tests
+    /// replace it.
+    var seesImages: () -> Bool = { AppleAskBackend.systemSeesImages() }
 
     /// The open box's conversation (`LanguageModelSession`), and how many exchanges it
     /// has seen, so a follow-up goes on from it rather than starting again.
@@ -20,6 +23,19 @@ final class AppleAskBackend: AskBackend {
 
     func status() -> AskStatus {
         availability()
+    }
+
+    var takesImages: Bool {
+        status() == .ready && seesImages()
+    }
+
+    static func systemSeesImages() -> Bool {
+        #if canImport(FoundationModels)
+        if #available(macOS 27, *) {
+            return SystemLanguageModel.default.capabilities.contains(.vision)
+        }
+        #endif
+        return false
     }
 
     static func systemAvailability() -> AskStatus {
@@ -52,6 +68,7 @@ final class AppleAskBackend: AskBackend {
             case .guardrailViolation, .refusal: return AskFailure.refused
             case .contextSizeExceeded: return AskFailure.tooLong
             case .rateLimited: return AskFailure.busy
+            case .unsupportedCapability: return AskFailure.cantSee
             default: return AskFailure.provider(AskErrors.oneLine(error.localizedDescription))
             }
         }
@@ -86,9 +103,16 @@ final class AppleAskBackend: AskBackend {
     }
 
     func answer(_ question: String, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
+        answer(question, showing: nil, after: earlier)
+    }
+
+    /// A picture goes to the model in memory, and stays in its conversation, on this Mac,
+    /// for follow-ups to go on from until the island closes.
+    func answer(_ question: String, showing image: ScreenSnapshot?, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let status = status()
             guard status == .ready else { return continuation.finish(throwing: AskFailure.unavailable(status)) }
+            if image != nil, !seesImages() { return continuation.finish(throwing: AskFailure.cantSee) }
             #if canImport(FoundationModels)
             if #available(macOS 26, *) {
                 // A conversation that has seen every exchange so far goes on; otherwise one
@@ -105,7 +129,7 @@ final class AppleAskBackend: AskBackend {
                 turnsSeen = earlier.count + 1
                 let task = Task { @MainActor in
                     do {
-                        for try await snapshot in session.streamResponse(to: prompt) {
+                        for try await snapshot in Self.stream(session, prompt, image: image) {
                             continuation.yield(snapshot.content)
                         }
                         continuation.finish()
@@ -120,4 +144,18 @@ final class AppleAskBackend: AskBackend {
             continuation.finish(throwing: AskFailure.unavailable(.needsNewerMacOS))
         }
     }
+
+    #if canImport(FoundationModels)
+    /// The words, and the picture after them where there is one (macOS 27).
+    @available(macOS 26, *)
+    private static func stream(
+        _ session: LanguageModelSession, _ prompt: String, image: ScreenSnapshot?
+    ) -> LanguageModelSession.ResponseStream<String> {
+        if #available(macOS 27, *), let image {
+            let picture = Attachment(image.image).label("A picture of my screen: \(image.what)")
+            return session.streamResponse(to: Prompt { prompt; picture })
+        }
+        return session.streamResponse(to: prompt)
+    }
+    #endif
 }

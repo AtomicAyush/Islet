@@ -515,6 +515,23 @@ when it resets, offline, busy, Apple's model refusing or too full (with Start af
 again without the earlier questions), no word from the tool for 20 seconds, or no whole answer
 after 90. Another provider is suggested only when one is offered beside it.
 
+**Look at my screen.** The eye beside the field (or ⇧⌘S while typing) takes one picture, then
+and only then, for your next question: the front window of the app you were in, or the whole
+display the island is on (held, the eye offers the choice, which Settings › Quick Ask keeps too).
+Islet's own windows are never in it. It's shown over the field before anything is sent, with what
+it is of and where it will go — "Stays on this Mac" for On this Mac, "Sent to ChatGPT (or Claude)
+with your question" — and ✕ to take it away. It goes with that one question, made no larger than
+1600 pixels on its longest side: On this Mac is handed it in memory (Apple's model sees pictures
+on macOS 27), Claude's tool gets it on its standard input beside the question, and ChatGPT's tool,
+which only takes a file, gets a private one in its run's own folder that goes as soon as ChatGPT
+has read it. A provider that can't see pictures says so and offers one that can, in one click; the
+picture is never quietly left behind. Follow-ups don't send it again: ChatGPT and Claude are told
+in words that an earlier question came with one (press the eye again for a fresh look), and On
+this Mac, whose conversation stays in memory, still has it. The day summed up never takes it. The
+picture needs Screen Recording, which macOS asks for the first time you press the eye and never
+otherwise; while it's off the box says how to turn it on, with a button to the right pane of System
+Settings.
+
 Islet keeps nothing. Your questions and their answers stay in memory while the island is open,
 for follow-ups, and are gone when it closes — nothing is saved, logged, or put on the clipboard
 unless you press Copy. On this Mac answers with Apple's on-device model; nothing leaves your
@@ -522,7 +539,9 @@ Mac. ChatGPT and Claude send your question to OpenAI or Anthropic through their 
 command-line tool, with no history or session saved on this Mac, no tools, and none of your
 hooks, plugins or MCP servers; what OpenAI and Anthropic keep is up to their own privacy
 policies. Your calendar is never sent to ChatGPT or Claude; after your day is summed up in the
-box they're told only that it was, and On this Mac alone is given it, for a follow-up. Quick
+box they're told only that it was, and On this Mac alone is given it, for a follow-up. A
+picture of your screen is taken only when you press the eye, is never written anywhere but that
+private file for ChatGPT's tool or logged, and is forgotten with the conversation. Quick
 questions to ChatGPT count towards the same usage as the ChatGPT app. Each question to ChatGPT
 or Claude runs its tool afresh in an empty folder of its own, which goes as it finishes, with
 the question on its standard input rather than its command line, only the environment it needs,
