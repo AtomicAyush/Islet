@@ -1291,8 +1291,10 @@ struct IslandLayout: Equatable {
     ///
     /// So the fold never takes a bubble away: the activity after the island has the
     /// bubble right of it that it would have were only the two of them running,
-    /// whenever there is room. And one further activity alone never goes left: with no
-    /// room right of the island it folds in, exactly as with bubbles right of it only.
+    /// whenever there is room. Where something on the menu bar leaves no room for it
+    /// there (a status item, or the pill macOS shows while the screen is shared), it
+    /// goes left of the island if that side has room, and folds in only if neither
+    /// has, as with bubbles right of the island only.
     struct Bubbles: Equatable {
         var count = 0
         var folds = false
@@ -1310,7 +1312,6 @@ struct IslandLayout: Equatable {
     ) -> Bubbles {
         let pitch = diameter + bubbleGap
         guard others > 0 else { return Bubbles() }
-        let leftRoom = others > 1 ? leftRoom : 0, leftRoomFolded = others > 1 ? leftRoomFolded : 0
         func capacity(_ room: CGFloat) -> Int {
             var count = maxBubbles
             while count > 0, CGFloat(count) * pitch > room { count -= 1 }

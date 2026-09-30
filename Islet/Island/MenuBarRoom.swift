@@ -134,9 +134,30 @@ enum MenuBarRoom {
     static func accessibilityFinding(
         rightOf edge: CGFloat, on display: CGDirectDisplayID, askedAt: ContinuousClock.Instant = .now
     ) -> Finding {
-        let screen = CGDisplayBounds(display)
-        let items = MenuExtras.shared.frames(askedAt: askedAt).filter { isOnMenuBar($0, of: screen) }
+        finding(among: MenuExtras.shared.frames(askedAt: askedAt), rightOf: edge, on: CGDisplayBounds(display))
+    }
+
+    /// What status items with these frames, as drawn (`drawnFrame`), say of the room
+    /// right of `edge` on the menu bar of a display with these bounds, all in top-left
+    /// global coordinates.
+    static func finding(among frames: [CGRect], rightOf edge: CGFloat, on screen: CGRect) -> Finding {
+        let items = frames.filter { isOnMenuBar($0, of: screen) }
         return items.isEmpty ? .unknown : firstItem(among: items, rightOf: edge)
+    }
+
+    /// Status items macOS draws wider than Accessibility says they are, by their
+    /// identifier, and how far past the frame to keep clear. The camera and microphone
+    /// item ("Audio and Video Controls") turns into a coloured capsule while either is
+    /// in use, and while the whole screen is shared or recorded, reaching about four
+    /// points left of its frame; nine keeps a bubble the same seven points from the
+    /// capsule as bubbles keep from each other.
+    static let wideItems: [String: CGFloat] = ["com.apple.menuextra.audiovideo": 9]
+
+    /// The part of the menu bar a status item with this frame and identifier takes, as
+    /// drawn: its frame, widened for one of `wideItems`.
+    static func drawnFrame(_ frame: CGRect, identifier: String?) -> CGRect {
+        guard let identifier, let bleed = wideItems[identifier] else { return frame }
+        return frame.insetBy(dx: -bleed, dy: 0)
     }
 
     /// Whether a frame lies along the top of the display, where its menu bar is. Every
@@ -150,8 +171,10 @@ enum MenuBarRoom {
             && frame.maxY > screen.minY && frame.minY < screen.minY + 24
     }
 
+    /// Where the first item reaching past `edge` begins, or `edge` itself for one
+    /// across it, as a widened capsule right beside the notch can be.
     private static func firstItem(among frames: [CGRect], rightOf edge: CGFloat) -> Finding {
-        guard let x = frames.map(\.minX).filter({ $0 >= edge }).min() else { return .clear }
+        guard let x = frames.filter({ $0.maxX > edge }).map({ max($0.minX, edge) }).min() else { return .clear }
         return .item(at: x)
     }
 
@@ -327,7 +350,7 @@ private final class MenuExtras: @unchecked Sendable {
         return frames + wideFrames(in: app)
     }
 
-    /// The items in `wideItems` that the agent shows, each widened by its bleed. The
+    /// The items in `MenuBarRoom.wideItems` that the agent shows, each as drawn. The
     /// extras bar's own children are holders with no identifier; the item inside each
     /// has one, a level or two further down. Only the leftmost frame matters, so a
     /// widened copy beside the plain one is enough.
@@ -338,8 +361,8 @@ private final class MenuExtras: @unchecked Sendable {
             var next: [AXUIElement] = []
             for element in level {
                 if let identifier = value("AXIdentifier", of: element) as? String,
-                   let bleed = wideItems[identifier], let frame = frame(of: element) {
-                    found.append(frame.insetBy(dx: -bleed, dy: 0))
+                   MenuBarRoom.wideItems[identifier] != nil, let frame = frame(of: element) {
+                    found.append(MenuBarRoom.drawnFrame(frame, identifier: identifier))
                 } else {
                     next += (value(kAXChildrenAttribute, of: element) as? [CFTypeRef] ?? []).compactMap(self.element)
                 }
@@ -349,20 +372,10 @@ private final class MenuExtras: @unchecked Sendable {
         return found
     }
 
-    /// Status items macOS draws wider than Accessibility says they are, by their
-    /// identifier, and how far past the frame to keep clear. The camera and microphone
-    /// item ("Audio and Video Controls") turns into a coloured capsule while either is
-    /// in use, reaching about four points left of its frame; nine keeps a bubble the
-    /// same seven points from the capsule as bubbles keep from each other.
-    static let wideItems: [String: CGFloat] = ["com.apple.menuextra.audiovideo": 9]
-
     /// The frames of one app's status items: none if it has none, or does not answer in time.
     private static func extras(of pid: pid_t) -> [CGRect] {
         MenuBarAccessibility.extras(of: pid).compactMap { item in
-            guard let frame = frame(of: item) else { return nil }
-            guard let identifier = value("AXIdentifier", of: item) as? String,
-                  let bleed = wideItems[identifier] else { return frame }
-            return frame.insetBy(dx: -bleed, dy: 0)
+            frame(of: item).map { MenuBarRoom.drawnFrame($0, identifier: value("AXIdentifier", of: item) as? String) }
         }
     }
 
@@ -376,5 +389,102 @@ private final class MenuExtras: @unchecked Sendable {
 
     private static func element(_ value: CFTypeRef) -> AXUIElement? {
         MenuBarAccessibility.element(value)
+    }
+}
+
+/// Says when the menu bar's items come, go or move, as the process that draws the
+/// system items tells Accessibility: macOS 27's menu bar process, or Control Center
+/// before it. So the room beside the island is measured again as soon as the pill
+/// macOS shows while the camera, the microphone or the screen is in use appears or
+/// goes, rather than at the next look, seconds later. Only if Islet already has
+/// Accessibility; nothing is asked for.
+@MainActor
+final class MenuBarChanges {
+    /// How soon after a change the room is measured, and again once the menu bar has
+    /// finished moving its items along, which takes it a second or so.
+    private static let soon = 0.3
+    private static let settled = 1.5
+    private static let notifications = [
+        kAXCreatedNotification, kAXUIElementDestroyedNotification, kAXLayoutChangedNotification,
+        kAXMovedNotification, kAXResizedNotification,
+    ]
+
+    private var observer: AXObserver?
+    private var pid: pid_t?
+    private var onChange: () -> Void = {}
+    /// Counts changes, so only the last of a burst is measured again once it settles.
+    private var changes = 0
+    private var measuringSoon = false
+
+    /// Starts listening, calling `onChange` shortly after each change, or picks up a
+    /// menu bar process that has started again since. Does nothing more if already
+    /// listening to the same one.
+    func start(_ onChange: @escaping () -> Void) {
+        self.onChange = onChange
+        guard AXIsProcessTrusted(), let app = Self.drawer() else {
+            stop()
+            return
+        }
+        guard app.processIdentifier != pid || observer == nil else { return }
+        stop()
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        var created: AXObserver?
+        guard AXObserverCreate(app.processIdentifier, { _, _, _, refcon in
+            guard let refcon else { return }
+            let changes = Unmanaged<MenuBarChanges>.fromOpaque(refcon).takeUnretainedValue()
+            MainActor.assumeIsolated { changes.changed() }
+        }, &created) == .success, let created else { return }
+        // The app as a whole, and the window and extras bar that hold the items, as
+        // the menu bar process may post only to the element it changed.
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        let windows = MenuBarAccessibility.value(kAXWindowsAttribute, of: element) as? [CFTypeRef] ?? []
+        let bar = MenuBarAccessibility.value(kAXExtrasMenuBarAttribute, of: element)
+        for target in [element] + (windows + [bar].compactMap { $0 }).compactMap(MenuBarAccessibility.element) {
+            for name in Self.notifications {
+                AXObserverAddNotification(created, target, name as CFString, refcon)
+            }
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .defaultMode)
+        observer = created
+        pid = app.processIdentifier
+    }
+
+    func stop() {
+        if let observer {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        }
+        observer = nil
+        pid = nil
+        changes &+= 1
+    }
+
+    /// The process that draws the system items, the pill among them.
+    private static func drawer() -> NSRunningApplication? {
+        [MenuBarAccessibility.menuBarAgent, "com.apple.controlcenter"].lazy.compactMap {
+            NSRunningApplication.runningApplications(withBundleIdentifier: $0).first
+        }.first
+    }
+
+    /// Each change comes as a burst of notifications: measured soon after the first,
+    /// no more often than that while they keep coming, and again once they have stopped.
+    func changed() {
+        changes &+= 1
+        let change = changes
+        if !measuringSoon {
+            measuringSoon = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.soon) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.measuringSoon = false
+                    if self.observer != nil { self.onChange() }
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settled) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, change == self.changes else { return }
+                self.onChange()
+            }
+        }
     }
 }

@@ -16,6 +16,9 @@ final class IslandManager {
     /// Re-measures the menu bar while there is more than one activity: status items
     /// come and go without telling anyone.
     private var roomTimer: Timer?
+    /// Measures the menu bar again as soon as an item comes or goes there, the pill
+    /// macOS shows while the screen is shared say, while there is more than one activity.
+    private let menuBarChanges = MenuBarChanges()
     /// Watches which app's menus the menu bar shows, which the bubbles left of the
     /// island stop short of.
     private var menuBarOwnerObservation: NSKeyValueObservation?
@@ -195,7 +198,8 @@ final class IslandManager {
 
     /// How many further activities' bubbles fit beside each island depends on where
     /// the menu bar's status items begin, so they are measured again whenever the
-    /// activities after the first change, and every 20 seconds while there are any.
+    /// activities after the first change, as soon as an item comes or goes while there
+    /// are any, and every 20 seconds besides, for the changes nothing tells of.
     private func watchSecondary() {
         let ids = withObservationTracking {
             ActivityCenter.shared.activities.dropFirst().map(\.id)
@@ -212,16 +216,25 @@ final class IslandManager {
         if ids.isEmpty {
             roomTimer?.invalidate()
             roomTimer = nil
+            menuBarChanges.stop()
         } else if roomTimer == nil {
             roomTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.measureMenuBars() }
+                MainActor.assumeIsolated { self?.measureMenuBars(listening: true) }
             }
             roomTimer?.tolerance = 5
+            listenForMenuBarChanges()
         }
     }
 
-    private func measureMenuBars() {
+    /// Measures each island's menu bar. `listening` also picks up a menu bar process
+    /// started again since, or Accessibility granted since (`MenuBarChanges.start`).
+    private func measureMenuBars(listening: Bool = false) {
+        if listening { listenForMenuBarChanges() }
         for controller in controllers.values { controller.measureMenuBarRoom() }
+    }
+
+    private func listenForMenuBarChanges() {
+        menuBarChanges.start { [weak self] in self?.measureMenuBars() }
     }
 
     private func applyFullScreen() {

@@ -469,7 +469,9 @@ the gap stays exactly over the camera.
 most important one keeps the island and each of the others buds off into a circle of its own,
 in the island's order (below): the first to its right, the next to its left, and so on in turn,
 each side taking as many as the menu bar leaves room for (four at most in all), and once one side
-is full the rest go on the other. A single other activity only ever goes right. On the left they
+is full the rest go on the other. A single other activity goes right, and left only when the
+menu bar has no room for it there, as when macOS shows its pill for a shared screen or the
+camera beside the notch. On the left they
 stop short of the front app's menus, which Islet finds through Accessibility and looks at again
 as you switch app; without it, or with the menus reaching the notch, they all go right, short of
 any menus that run on past it. Settings → General → Bubble placement keeps them to the right
