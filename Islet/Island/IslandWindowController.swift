@@ -17,6 +17,10 @@ final class IslandWindowController {
     /// Listening for Escape, while the home page is being arranged or a page is kept
     /// open.
     private var escapeMonitors: [Any] = []
+    /// Gives the panel the keyboard while something in the island is typed in.
+    private let keyboard: IslandKeyboard
+    /// Watches for the panel losing the keyboard while typing: ⌘Tab, a click elsewhere.
+    private var resignKeyObserver: NSObjectProtocol?
     private var dragChangeCount = NSPasteboard(name: .drag).changeCount
     /// A drag of files, or of a picture from a web page, is under way.
     private var fileDragActive = false
@@ -52,6 +56,7 @@ final class IslandWindowController {
         let metrics = NotchMetrics.measure(screen)
         model = IslandViewModel(metrics: metrics)
         panel = IslandPanel(frame: Self.frame(for: metrics))
+        keyboard = IslandKeyboard(window: panel)
 
         let root = IslandRootView(model: model) { [weak self] layout in
             self?.layout = layout
@@ -67,10 +72,13 @@ final class IslandWindowController {
         installMonitors()
         model.editingHomeChanged = { [weak self] _ in self?.listenForEscapeIfHeld() }
         model.keepingOpenChanged = { [weak self] _ in self?.listenForEscapeIfHeld() }
+        model.typingChanged = { [weak self] typing in self?.typingChanged(typing) }
+        panel.keyAction = { [weak model] action in model?.keyAction(action) }
         measureMenuBarRoom()
     }
 
     func invalidate() {
+        model.endTyping(.invalidated)
         menusTimer?.invalidate()
         menusTimer = nil
         pressTimer?.invalidate()
@@ -257,11 +265,11 @@ final class IslandWindowController {
     }
 
     /// While the home page is being arranged, or a page is kept open, Escape ends it.
-    /// The panel never becomes key, so the island never has the keyboard: it listens
-    /// for the key wherever it is pressed, only meanwhile, and the key still reaches
-    /// the app in front. macOS passes on keys pressed in other apps only to an app with
-    /// Accessibility access; without it, Done or a click outside ends arranging
-    /// instead, and Keep Open or a click on the notch lets a page go.
+    /// The panel is key only while something in it is typed in, so neither has the
+    /// keyboard: it listens for the key wherever it is pressed, only meanwhile, and the
+    /// key still reaches the app in front. macOS passes on keys pressed in other apps
+    /// only to an app with Accessibility access; without it, Done or a click outside
+    /// ends arranging instead, and Keep Open or a click on the notch lets a page go.
     private func listenForEscape(_ on: Bool) {
         escapeMonitors.forEach(NSEvent.removeMonitor)
         escapeMonitors.removeAll()
@@ -277,6 +285,25 @@ final class IslandWindowController {
             return event
         }) {
             escapeMonitors.append(m)
+        }
+    }
+
+    // MARK: Typing
+
+    /// Typing began or ended in the island (`IslandViewModel.beginTyping`): the panel
+    /// takes the keyboard, or hands it back. The keyboard going elsewhere meanwhile, to
+    /// another app or window, ends typing.
+    private func typingChanged(_ typing: Bool) {
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver(resignKeyObserver)
+            self.resignKeyObserver = nil
+        }
+        keyboard.typingChanged(typing)
+        guard typing else { return }
+        resignKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.endTyping(.resignedKey) }
         }
     }
 

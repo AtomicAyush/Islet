@@ -311,6 +311,34 @@ extension ClipboardFeature {
     }
 }
 
+extension QuickAskFeature {
+    var searchTerms: SettingsSearchTerms {
+        SettingsSearchTerms(
+            labels: ["Answer with", "On this Mac", "ChatGPT", "Claude", "Shortcut", "Connect Claude", "Connect", "Token",
+                     "Remove", "Copy", "Ask anything", "Ask", "Ask ChatGPT", "Ask Claude", "Try again", "None"],
+            keywords: ["ai", "assistant", "chatgpt", "gpt", "openai", "codex", "claude", "anthropic", "haiku",
+                       "apple intelligence", "on-device", "llm", "question", "chat", "quick question", "hotkey",
+                       "keyboard shortcut", "private", "spotlight"]
+        )
+    }
+}
+
+extension QuickCalendarFeature {
+    var searchTerms: SettingsSearchTerms {
+        SettingsSearchTerms(
+            labels: ["Add events to", "Default calendar", "Default length", "Ask about missing details", "After",
+                     "Travel time", "Your day", "From", "To", "Calendars to check", "All calendars",
+                     "Tell me about clashes", "Calendar access", "New event", "Location", "Notes", "All day", "Add",
+                     "Undo", "Not now", "Don't ask", "Allow Calendar access", "Today", "Tomorrow", "Summarise",
+                     "Show day"],
+            keywords: ["schedule", "add event", "new event", "quick add", "meeting", "appointment", "conflict", "clash",
+                       "double booked", "overlap", "free time", "free", "busy", "availability", "agenda", "summarise",
+                       "summarize", "summary", "day overview", "my day", "travel", "commute", "reminder", "follow up",
+                       "location", "place"]
+        )
+    }
+}
+
 extension HiddenMenuBarIconsFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(

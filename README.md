@@ -167,6 +167,54 @@ the pointer on the camera a moment, then click to join, in the Zoom or Teams app
 installed. The **Join Meeting** action in Shortcuts and `islet://calendar/join` join the call
 under way or starting within 15 minutes.
 
+**Quick Calendar.** Add an event by typing it: in the input box (the Quick Ask shortcut, then ⌘2
+or the mode chip, or start the line with `+`), type "Dentist tomorrow 3pm", "call mum friday
+9:30", "Standup 15:00–15:30", "gym 7am for 90 min", "lunch at Nando's at 1", "interview 12 Oct
+10:30", "meet at half 3" or "flight Oct 3" (all day). It is read on this Mac by rules, not by a
+model, and never sent anywhere. Under the field a preview shows what was read, each part a chip
+to change it: the day, the time (an hour typed without am or pm is taken as the likelier and
+marked "?": the evening for dinner or drinks, and after "tonight" 12 is midnight and 1 to 4 the
+small hours), the length (an hour unless Settings says otherwise) and All day. A time already
+past today with no day typed is taken as tomorrow's; one typed in another zone ("3pm PT") keeps
+its moment. Beneath are blanks for Location (a place read from "at …" is filled in and marked as
+a guess) and Notes, and the calendar chip beside the field picks the calendar, your default one
+unless Settings says otherwise. If the event overlaps another, or leaves less than the travel
+time to get to its place, a line says so; it is only a warning. Return moves on to Location, then
+Notes; only Add, ⌘Return or Return in Notes writes, and only the event shown. "Added to Work ·
+Undo" follows for eight seconds, and Undo takes the event away again only if nothing has changed
+it since. In Ask mode, a line that reads as an event rather than a question offers "Add “Dentist”
+tomorrow 15:00 to Calendar? ⌘↩"; taking it moves to Event mode for a look first, and Return still
+asks.
+
+Left without a place, a timed event that isn't online is asked about later on a card, "Add a
+place for Dentist?": two hours after adding it (1 to 4 in Settings, or half an hour before it
+starts if that is sooner; not at all if that would be within a quarter of an hour). Click the
+card's field to type the place, then Add, which sets that event's place and nothing else; Not
+now asks once more an hour later (or a quarter of an hour before it starts), and Don't ask lets
+it be. The card is never shown once the event has started, and is dropped without a word if the
+event was deleted, moved or given a place meanwhile. What Islet keeps for this, so it outlasts a
+restart, is only the event's identifiers and times, never its title, place or notes; turning
+Quick Calendar off forgets it, and Ask about missing details in Settings turns the cards off.
+
+The **Today** tile on the home page says how the day stands, "Free until 15:00" or "Busy until
+16:00", and how much free time is left, with a "1 clash" badge when two events don't fit. Its +
+opens the box in Event mode, and **Summarise** opens the day: free time, travel and events in
+order, "Free until 10:30", "10:30 Travel to Main St", "11:00 – 12:00 Dentist · Main St", with
+all-day events on a line of their own and a switch to tomorrow. Today's is counted from now, and
+both only within your day (8:00 to 22:00 unless Settings says otherwise); gaps shorter than a
+quarter of an hour aren't counted as free. Getting to an event with a place takes the travel
+time (30 minutes unless Settings says otherwise), unless the event before it is at the same
+place; online events and ones with no place need none. Two events clash when they overlap by a
+minute or more, or when the gap between them is shorter than the time needed to get to the
+second; only timed events that aren't declined, cancelled or shown as free count, in the
+calendars Settings checks (all but Birthdays unless you leave some out). Each clash today or
+tomorrow is told once on a card while the island is resting ("Only 10 minutes to get from Gym
+to Café for Coffee"), unless Tell me about clashes is off; a clash already shown in the box as
+the event was typed isn't told again. Typing "summarise my day", "what's on tomorrow" or the
+like in the box, in either mode, shows the same summary above the field. It is recognised by
+fixed rules before anything is sent anywhere, and worked out on this Mac: your calendar is never
+sent to a model. "Ask ChatGPT anyway" (or whoever answers) sends only the words you typed.
+
 **Weather.** The temperature on the home page beside a symbol for the sky, with the day's high
 and low and, when rain is on the way, when it should start: "Rain in about 20 min", "Rain
 around 3 PM". When rain is due within half an hour and it is dry now, a word beside the notch
@@ -436,6 +484,42 @@ manager is in front; a password manager's browser extension that marks nothing l
 browser. Files are kept as references, never copied. The history lives in memory unless you ask
 Settings to keep it between launches (pictures over 2 MB, unless pinned, stay in memory only),
 and it can clear itself when the Mac locks.
+
+**Quick Ask.** A quick question without opening a chat app: press ⌥⇧Space in any app (or click
+the Ask tile on the home page, or run the Open Quick Ask action from Shortcuts) and a box opens in
+the island on the display under the pointer, ready to type. Return asks; Shift- or Option-Return
+starts a new line; Escape, ⌘W, a click outside or the shortcut again closes it. The answer comes
+into the island as it is written, a follow-up goes on from it, and Copy puts it on the clipboard
+(marked as passing, so clipboard histories — Islet's own too — leave it out). The app you were in
+stays in front the whole time, its menu bar and all, and has the keyboard back when the box
+closes. The shortcut can be changed or turned off in Settings; it takes over the non-breaking
+space ⌥⇧Space would otherwise type.
+
+Three can answer, chosen from the chip beside the field and remembered: **On this Mac**, Apple's
+on-device model (macOS 26 or later, with Apple Intelligence on), which is the fastest and sends
+nothing anywhere; **ChatGPT**, through the command line tool inside the ChatGPT app, signed in as
+the app is; and **Claude**, through the command line tool inside the Claude app. Claude's app
+keeps its sign-in to itself, so Settings › Quick Ask › Connect Claude shows the command to run
+once in Terminal (`claude setup-token`) and takes the token it prints, which Islet keeps in its
+own keychain item. Until you choose, the first that can answer does, in that order; under an
+answer from this Mac, one click asks ChatGPT (or Claude) the same question. What goes wrong is
+said in a line with what might help: the app not installed, not signed in, a usage limit and
+when it resets, offline, busy, Apple's model refusing or too full (with Start afresh to ask
+again without the earlier questions), no word from the tool for 20 seconds, or no whole answer
+after 90. Another provider is suggested only when one is offered beside it.
+
+Islet keeps nothing. Your question and its answer stay in memory while the box is open and are
+gone when it closes — nothing is saved, logged, or put on the clipboard unless you press Copy.
+On this Mac answers with Apple's on-device model; nothing leaves your Mac. ChatGPT and Claude
+send your question to OpenAI or Anthropic through their app's own command-line tool, with no
+history or session saved on this Mac, no tools, and none of your hooks, plugins or MCP servers;
+what OpenAI and Anthropic keep is up to their own privacy policies. Your calendar is never sent
+to any of them. Quick questions to ChatGPT count towards the same usage as the ChatGPT app. Each
+question to ChatGPT or Claude runs its tool afresh in an empty folder of its own, which goes as
+it finishes, with the question on its standard input rather than its command line, only the
+environment it needs, and a model given no tools at all — no shell, no files, no web — so an
+answer can't act. The one thing that can't be left out: a global `AGENTS.md` of your own in
+`~/.codex` would go with each question to ChatGPT.
 
 **Hidden Menu Bar Icons.** On a MacBook, menu bar icons that don't fit beside the notch (when
 the app in front has a long menu, say) end up behind the camera or out of the menu bar
@@ -836,6 +920,9 @@ the old one; the hooks' lines never change, since a changed hook has to be trust
   the island only through `ActivityCenter`. The timer is the smallest and the pattern the
   rest follow.
 - `Islet/Home/` — the opened island's home page: its tiles, its pages, and arranging them.
+- `Islet/Input/` — the input box: the one page of the opened island that is typed in, its
+  modes (a feature registers one with `InputCenter`), the shortcut that opens it, and the
+  Shortcuts action.
 - `Islet/Support/` — views and helpers shared by every feature, and the island's colours:
   `IslandTheme`, the `.island…` styles, `SystemHue` and `FeatureTint`; the fills and ring in
   `IslandLook`, and the one clock their motion keeps time by in `IslandMotion`.
@@ -844,6 +931,25 @@ the old one; the hooks' lines never change, since a changed hook has to be trust
   other names for it, are in `SettingsSearchTerms.swift` beside every other feature's. A
   section added to the General tab is found once it is a `GeneralRow`.
 - `Vendor/mediaremote-adapter/` — see below.
+
+**Typing in the island.** The island's panel is a non-activating panel that never has the
+keyboard, except while something in it is being typed in, and then only because the person asked:
+the shortcut, a click on a field or a tile that opens one, the Shortcuts action. Hovering, a
+banner, a card appearing, an activity or an `islet://` URL never takes the keyboard (a URL can
+show the input page; a click in its field then types). A page asks for the keyboard with
+`IslandViewModel.beginTyping(in:client:)` — through `IslandManager.beginTyping`, which ends typing
+in any other island first — and the window controller sets `IslandPanel.takesKeys` and makes the
+panel key. The app in front stays in front: Islet is never activated, so the menu bar,
+`frontmostApplication` and everything that watches them are unchanged. While typing, the island
+stays open wherever the pointer goes. Typing ends on Escape, Close, the shortcut, a click outside,
+a change of page, the island closing, a full-screen app taking the display, the panel losing the
+keyboard (⌘Tab) or the feature stopping; the flag goes off and, if the panel still has the
+keyboard, it is ordered out and straight back in, which hands the keyboard back to the app in
+front. The client is told why (`TypingEnd`, logged as a word, never what was typed) and forgets
+what it held. Meanwhile the panel lets only the Edit menu's key equivalents through (copy, paste,
+cut, select all, undo, redo), handles its own (⌘Return, ⌘1…, ⌘W) and swallows every other ⌘ key,
+so none reaches Islet's own menu: ⌘Q never quits Islet from the box
+(`KeyEquivalentRule`).
 
 **Colours in the code.** Island views never write `.white`, `.black` or a colour literal, and
 never read UserDefaults for a colour. The theme (`IslandTheme`) is worked out once when the
@@ -897,6 +1003,13 @@ need to know. A model that keeps a colour (an alert, an indicator, a banner) sto
 when the colour changes. An AppKit or Core Animation view in the island is given its colour by
 its SwiftUI wrapper, from `@Environment(\.islandTheme)`; only code outside any view asks
 `ink.nsColor(in: Prefs.islandTheme)`.
+
+The input box, Quick Ask and Quick Calendar use the roles above and no new ones: the chips beside
+the field are `.islandWashed` in the feature's colour, the field is `.islandPrimary` with its
+placeholder in `.islandText`, a code block and the preview's chips and blanks lie on
+`.islandSurface`, Add is `filledButton(.quickCalendar)`, a clash (the Today tile's badge, the
+Day page's marker, the clash card) is marked in `.islandHue(.warning)`, and free time in
+`.islandHue(.success)`.
 
 A feature declares its own colour once, in its own folder, as tuned for the black island:
 

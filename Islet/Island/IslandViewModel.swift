@@ -35,7 +35,11 @@ final class IslandViewModel {
     var metrics: NotchMetrics
     /// Set by the controller from preferences and the full-screen watcher.
     var showsIdlePill = false
-    var isSuppressed = false
+    var isSuppressed = false {
+        // Typing ends as a full-screen app takes the display: the app it was typed
+        // over is not the one in front any more. Opened over one, it carries on.
+        didSet { if isSuppressed, !oldValue { endTyping(.suppressed) } }
+    }
     /// While the island is hidden for a full-screen app, the notch still opens it (on
     /// a display without one, a strip along the middle of the top edge). Set by the
     /// manager from preferences.
@@ -94,6 +98,21 @@ final class IslandViewModel {
     /// from, does not stay open for ever. Tests shorten it.
     @ObservationIgnored var editingIdleTimeout: TimeInterval = 60
     @ObservationIgnored private var editingIdleWork: DispatchWorkItem?
+    /// Where something in the island is being typed in, while it is
+    /// (`beginTyping(in:client:)`). The island's window has the keyboard meanwhile, and
+    /// the island stays open whatever the pointer does, with no time limit, until
+    /// typing ends.
+    private(set) var typingPlace: TypingPlace?
+    var isTyping: Bool { typingPlace != nil }
+    /// Goes up each time the field being typed in should take the caret: as typing
+    /// begins, and again should it begin again in the same place.
+    private(set) var focusRequest = 0
+    /// Told as typing begins and ends, so the controller gives the window the keyboard
+    /// and hands it back (`IslandKeyboard`).
+    @ObservationIgnored var typingChanged: (Bool) -> Void = { _ in }
+    @ObservationIgnored private var typingClient: TypingClient?
+    /// The page the island was on when typing took it to another, to go back to.
+    @ObservationIgnored private var focusBeforeTyping: String?
     /// A menu opened from the opened island is up: one of the header's lists of what it
     /// has no room for, or a right click's. The island stays open meanwhile, whatever
     /// the pointer does (`menu(isUp:)`).
@@ -490,6 +509,9 @@ final class IslandViewModel {
             // ends it.
             if isEditingHome {
                 scheduleEditingIdle()
+            } else if isTyping {
+                // Typing holds it open too, with no time limit: the pointer is often
+                // moved out of the way to type.
             } else if isExpanded, !isShowingMenu {
                 // One of its menus holds it open while up, and gives the pointer longer
                 // to come back as it goes (`menu(isUp:)`).
@@ -594,6 +616,7 @@ final class IslandViewModel {
             return
         }
         cancelExpand()
+        endTyping(.clickOutside)
         if isHeldOpen || isDraggingOut { return }
         if isExpanded { collapse("click outside") }
     }
@@ -601,6 +624,7 @@ final class IslandViewModel {
     func expand(focus: String? = nil) {
         cancelExpand()
         cancelCollapse()
+        endTyping(leaving: focus)
         // Another page takes the island away from the home page being arranged, or
         // from a page kept open.
         if focus != Self.homeFocus { stopEditingHome() }
@@ -629,6 +653,7 @@ final class IslandViewModel {
         cancelCollapse()
         openAcrossSpaceChange = false
         guard isExpanded else { return }
+        if case .page = typingPlace { endTyping(.collapse) }
         IslandLog.island.notice("Closed: \(reason, privacy: .public) (\(file, privacy: .public):\(line, privacy: .public))")
         let wasEditing = isEditingHome
         let wasKeepingOpen = keptOpenPage != nil
@@ -670,6 +695,7 @@ final class IslandViewModel {
     }
 
     func select(focus: String) {
+        endTyping(leaving: focus)
         closeIndicatorCard()
         if focus != Self.homeFocus { stopEditingHome() }
         if focus != keptOpenPage { stopKeepingOpen() }
@@ -786,6 +812,73 @@ final class IslandViewModel {
     private func cancelEditingIdle() {
         editingIdleWork?.cancel()
         editingIdleWork = nil
+    }
+
+    // MARK: Typing
+
+    /// The person asked to type in this island — pressed the shortcut, clicked a field,
+    /// or a tile that opens one — so its window takes the keyboard, and a page to type
+    /// in is opened. Nothing else begins typing: not the pointer resting on the island,
+    /// a banner, an `islet://` URL (which any app or web page can open) or an activity.
+    /// The client is told of the island's own key equivalents and of typing ending.
+    func beginTyping(in place: TypingPlace, client: TypingClient) {
+        if let typingPlace, typingPlace != place { endTyping(.otherPage) }
+        if case .page(let id) = place {
+            if !isExpanded {
+                focusBeforeTyping = nil
+                expand(focus: id)
+            } else if resolvedFocus != id {
+                focusBeforeTyping = resolvedFocus
+                select(focus: id)
+            }
+        }
+        cancelCollapse()
+        closeIndicatorCard()
+        let begins = typingPlace == nil
+        typingPlace = place
+        typingClient = client
+        if begins { typingChanged(true) }
+        focusRequest &+= 1
+    }
+
+    /// Typing ends, the window hands the keyboard back, and the client forgets what was
+    /// typed. Unless the island is already going elsewhere, it leaves the page typed in:
+    /// back to the page it was on, or home, with the pointer on it, and closed without.
+    func endTyping(_ reason: TypingEnd) {
+        guard let place = typingPlace else { return }
+        typingPlace = nil
+        let client = typingClient
+        typingClient = nil
+        let back = focusBeforeTyping
+        focusBeforeTyping = nil
+        IslandLog.island.notice("Typing ended: \(reason.rawValue, privacy: .public)")
+        typingChanged(false)
+        client?.ended(reason)
+
+        guard case .page(let id) = place, client?.leavesPage ?? true, isExpanded, resolvedFocus == id else { return }
+        switch reason {
+        case .otherPage, .collapse, .clickOutside, .invalidated:
+            return
+        default:
+            break
+        }
+        if isHovering {
+            select(focus: back ?? Self.homeFocus)
+        } else {
+            collapse("typing ended")
+        }
+    }
+
+    /// One of the island's own key equivalents, pressed while it has the keyboard.
+    func keyAction(_ action: IslandKeyAction) {
+        typingClient?.key(action)
+    }
+
+    /// The island is going to another page (`nil`: whatever it would show), which ends
+    /// typing in the page it leaves.
+    private func endTyping(leaving focus: String?) {
+        guard case .page(let id) = typingPlace, focus != id else { return }
+        endTyping(.otherPage)
     }
 
     // MARK: Room under the pointer
@@ -972,8 +1065,9 @@ final class IslandViewModel {
 
     private func scheduleCollapse(after delay: TimeInterval) {
         cancelCollapse()
+        guard !isTyping else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.isHovering, !self.isEditingHome, !self.isShowingMenu else { return }
+            guard let self, !self.isHovering, !self.isEditingHome, !self.isShowingMenu, !self.isTyping else { return }
             if self.isHeldOpen {
                 self.releaseRoom()
                 // Held open where it would have closed: a long while away lets it go.

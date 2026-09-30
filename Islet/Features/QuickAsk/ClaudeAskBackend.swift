@@ -1,0 +1,221 @@
+import Foundation
+import Security
+
+/// Claude, through the command line tool that comes inside the Claude app (Claude
+/// Code). It can't borrow the app's own sign-in, so the person makes a token for it
+/// once (`claude setup-token`) and gives it to Islet, which keeps it in its own item in
+/// the keychain (`ClaudeTokenStore`).
+///
+/// Each question is a run of its own that keeps nothing: no session saved, none of the
+/// person's settings, hooks, plugins, MCP servers, slash commands or memory, and no
+/// tools at all. The answer comes as it is written.
+@MainActor
+final class ClaudeAskBackend: AskBackend {
+    let provider = AskProvider.claude
+
+    struct Setup {
+        /// The tool, if the Claude app has one.
+        var binary: () -> URL?
+        var tokens: any ClaudeTokenStore
+        var environment: [String: String]
+        var parent = FileManager.default.temporaryDirectory
+
+        static var standard: Setup {
+            Setup(
+                binary: { ClaudeAskBackend.findBinary() },
+                tokens: KeychainClaudeTokenStore(),
+                environment: AskEnvironment.base(extra: [
+                    "DISABLE_TELEMETRY": "1",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+                ])
+            )
+        }
+    }
+
+    /// The cheapest, fastest model.
+    nonisolated static let model = "claude-haiku-4-5-20251001"
+
+    private let setup: Setup
+    var offline: () -> Bool = { AskNetwork.shared.isOffline }
+
+    init(setup: Setup = .standard) {
+        self.setup = setup
+    }
+
+    var tokens: any ClaudeTokenStore { setup.tokens }
+
+    /// The Claude app keeps its tool in a folder per version; the newest.
+    nonisolated static func findBinary(
+        root: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Claude/claude-code")
+    ) -> URL? {
+        let versions = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+        return versions.sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+            .map { root.appendingPathComponent($0).appendingPathComponent("claude.app/Contents/MacOS/claude") }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    func status() -> AskStatus {
+        guard setup.binary() != nil else { return .notInstalled }
+        guard setup.tokens.hasToken else { return .signInNeeded }
+        return .ready
+    }
+
+    func prepare() {}
+    func close() {}
+
+    func answer(_ question: String, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            guard let binary = setup.binary() else { return continuation.finish(throwing: AskFailure.notInstalled) }
+            guard let token = setup.tokens.token() else { return continuation.finish(throwing: AskFailure.notSignedIn) }
+            if offline() { return continuation.finish(throwing: AskFailure.offline) }
+            let launch = AskProcess.Launch(
+                executable: binary,
+                arguments: { _ in Self.arguments },
+                environment: { [environment = setup.environment] folder in
+                    // Claude's own configuration, which it writes as it starts, goes in
+                    // the run's folder and with it, not in the person's.
+                    environment.merging([
+                        "CLAUDE_CODE_OAUTH_TOKEN": token,
+                        "CLAUDE_CONFIG_DIR": folder.appendingPathComponent("config").path,
+                    ]) { $1 }
+                },
+                input: Data(AskInstructions.prompt(question, after: earlier).utf8),
+                parent: setup.parent
+            )
+            let task = Task {
+                var parser = ClaudeOutput()
+                do {
+                    for try await output in AskProcess.run(launch) {
+                        switch output {
+                        case .line(let line):
+                            if let answer = try parser.take(line) { continuation.yield(answer) }
+                        case .exited(let status):
+                            try parser.finish(status: status)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: AskErrors.map(error))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Print mode with no session saved; no tools; no settings from anywhere, so none of
+    /// the person's hooks, and hooks off besides; no MCP servers but an empty list; no
+    /// slash commands. Streamed as it is written. The empty strings are arguments of
+    /// their own: no tools, no setting sources.
+    nonisolated static let arguments = [
+        "-p", "--no-session-persistence", "--model", model, "--tools", "", "--setting-sources", "",
+        "--strict-mcp-config", "--mcp-config", #"{"mcpServers":{}}"#, "--disable-slash-commands",
+        "--settings", #"{"disableAllHooks":true}"#, "--system-prompt", AskInstructions.text,
+        "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+    ]
+}
+
+/// Claude's `stream-json` lines, as they come.
+struct ClaudeOutput {
+    private(set) var answer = ""
+    private var isDone = false
+
+    /// The answer so far, if this line adds to it.
+    mutating func take(_ line: String) throws -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+              let type = object["type"] as? String else { return nil }
+        switch type {
+        case "stream_event":
+            guard let event = object["event"] as? [String: Any], event["type"] as? String == "content_block_delta",
+                  let delta = event["delta"] as? [String: Any], delta["type"] as? String == "text_delta",
+                  let text = delta["text"] as? String, !text.isEmpty else { return nil }
+            answer += text
+            return answer
+        case "system":
+            // Retries tell of a refused sign-in long before the last of them gives up.
+            guard object["subtype"] as? String == "api_retry" else { return nil }
+            let status = object["error_status"] as? Int ?? 0
+            if status == 401 || status == 403 { throw AskFailure.notSignedIn }
+            if (status == 429 || status == 529), (object["attempt"] as? Int ?? 0) >= 2 { throw AskFailure.busy }
+            return nil
+        case "result":
+            isDone = true
+            if object["is_error"] as? Bool == true {
+                throw Self.failure(object["result"] as? String ?? "", status: object["api_error_status"] as? Int)
+            }
+            guard answer.isEmpty, let result = object["result"] as? String, !result.isEmpty else { return nil }
+            answer = result
+            return answer
+        default:
+            return nil
+        }
+    }
+
+    func finish(status: Int32) throws {
+        guard answer.isEmpty else { return }
+        throw AskFailure.exited(status)
+    }
+
+    static func failure(_ message: String, status: Int?) -> AskFailure {
+        let lower = message.lowercased()
+        if status == 401 || status == 403 || lower.contains("not logged in") || lower.contains("authenticate") {
+            return .notSignedIn
+        }
+        if status == 429 || status == 529 || lower.contains("overloaded") { return .busy }
+        return .provider(AskErrors.oneLine(message))
+    }
+}
+
+/// Where the token for Claude is kept.
+protocol ClaudeTokenStore: AnyObject {
+    var hasToken: Bool { get }
+    func token() -> String?
+    func save(_ token: String) throws
+    func remove()
+}
+
+/// The token in Islet's own keychain item, which Islet alone reads. Islet never reads
+/// the Claude app's.
+final class KeychainClaudeTokenStore: ClaudeTokenStore {
+    static let service = "com.ayush.Islet.ClaudeToken"
+    static let account = "Claude"
+
+    enum Failure: Error { case notSaved(OSStatus) }
+
+    private var query: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: Self.service,
+         kSecAttrAccount as String: Self.account]
+    }
+
+    var hasToken: Bool {
+        var probe = query
+        probe[kSecReturnAttributes as String] = true
+        return SecItemCopyMatching(probe as CFDictionary, nil) == errSecSuccess
+    }
+
+    func token() -> String? {
+        var read = query
+        read[kSecReturnData as String] = true
+        read[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(read as CFDictionary, &result) == errSecSuccess, let data = result as? Data else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    func save(_ token: String) throws {
+        remove()
+        var item = query
+        item[kSecValueData as String] = Data(token.utf8)
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        let status = SecItemAdd(item as CFDictionary, nil)
+        guard status == errSecSuccess else { throw Failure.notSaved(status) }
+    }
+
+    func remove() {
+        SecItemDelete(query as CFDictionary)
+    }
+}

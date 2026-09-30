@@ -69,6 +69,15 @@ struct IsletShortcuts: AppShortcutsProvider {
             systemImageName: "video.fill"
         )
         AppShortcut(
+            intent: OpenQuickAskIntent(),
+            phrases: [
+                "Ask a quick question with \(.applicationName)",
+                "Open Quick Ask in \(.applicationName)",
+            ],
+            shortTitle: "Quick Ask",
+            systemImageName: "questionmark.bubble.fill"
+        )
+        AppShortcut(
             intent: PresentationModeIntent(),
             phrases: [
                 "Turn presentation mode on or off in \(.applicationName)",

@@ -125,6 +125,21 @@ final class IslandManager {
         return controllers.values.first { NSMouseInRect(point, $0.screen.frame, false) } ?? controllers.values.first
     }
 
+    // MARK: Typing
+
+    /// Typing begins in `island`, which takes the keyboard (`IslandViewModel.beginTyping`).
+    /// Only one island has it: typing in any other ends first.
+    func beginTyping(on island: IslandViewModel, in place: TypingPlace, client: TypingClient) {
+        Self.beginTyping(on: island, in: place, client: client, among: controllers.values.map(\.model))
+    }
+
+    static func beginTyping(
+        on island: IslandViewModel, in place: TypingPlace, client: TypingClient, among islands: [IslandViewModel]
+    ) {
+        for other in islands where other !== island { other.endTyping(.otherIsland) }
+        island.beginTyping(in: place, client: client)
+    }
+
     // MARK: Screens
 
     private var wantedScreens: [NSScreen] {

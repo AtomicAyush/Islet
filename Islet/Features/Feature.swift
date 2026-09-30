@@ -89,6 +89,7 @@ final class FeatureRegistry {
         InputDevicesFeature(),
         NetworkFeature(),
         CalendarFeature(),
+        QuickCalendarFeature(),
         WeatherFeature(),
         PrivacyFeature(),
         MicMuteFeature(),
@@ -103,6 +104,7 @@ final class FeatureRegistry {
         FileCopiesFeature(),
         ScreenshotsFeature(),
         ClipboardFeature(),
+        QuickAskFeature(),
         HiddenMenuBarIconsFeature(),
     ]
 

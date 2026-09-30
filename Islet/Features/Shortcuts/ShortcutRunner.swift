@@ -305,15 +305,51 @@ final class ShortcutLaunches: @unchecked Sendable {
     }
 }
 
+/// A tool Islet started that must not outlive it: `ToolRun`, and Quick Ask's
+/// `AskProcess`.
+protocol ChildProcess: AnyObject, Sendable {
+    /// SIGTERM, there and then, with no timer behind it: for the app about to quit.
+    func terminateNow()
+}
+
+/// Every tool Islet has started and not yet seen exit, so that none outlives Islet: see
+/// `ToolRun.terminateAll()`.
+final class ChildProcesses: @unchecked Sendable {
+    static let shared = ChildProcesses()
+
+    private let lock = NSLock()
+    // Guarded by `lock`. Held strongly, and only until the tool exits, so a run
+    // can always be reached while its tool is there to stop.
+    private var children: [ObjectIdentifier: any ChildProcess] = [:]
+
+    func insert(_ child: any ChildProcess) {
+        lock.lock()
+        defer { lock.unlock() }
+        children[ObjectIdentifier(child)] = child
+    }
+
+    func remove(_ child: any ChildProcess) {
+        lock.lock()
+        defer { lock.unlock() }
+        children[ObjectIdentifier(child)] = nil
+    }
+
+    func all() -> [any ChildProcess] {
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(children.values)
+    }
+}
+
 /// One run of a command line tool, with its arguments passed as they are (no shell).
 /// It ends when the tool exits, when its time is up or when the task awaiting it is
 /// cancelled, whichever comes first; ending early stops the tool, with SIGTERM and
 /// then, if it lingers, SIGKILL — or, for a tool that handles it, SIGINT first. Nothing
 /// blocks while it runs but a thread reading its output, which ends with the tool.
 ///
-/// Every tool still going is known here, so that none outlives Islet: see
-/// `terminateAll()`.
-final class ToolRun: @unchecked Sendable {
+/// Every tool still going is known to `ChildProcesses`, so that none outlives Islet:
+/// see `terminateAll()`.
+final class ToolRun: ChildProcess, @unchecked Sendable {
     struct Result {
         var status: Int32
         var output: String
@@ -327,38 +363,13 @@ final class ToolRun: @unchecked Sendable {
     /// SIGKILL to timers that a quitting app does not live to fire, so a tool slow to
     /// act on SIGINT would carry on, its shortcut with it, after Islet had gone. The
     /// tool's runner is its own, and goes with it, as the Focus toggle has always
-    /// relied on.
+    /// relied on. Quick Ask's tools are stopped with them (`ChildProcesses`).
     static func terminateAll() {
-        for run in running.all() { run.terminateNow() }
+        for child in running.all() { child.terminateNow() }
     }
 
-    /// The runs whose tools have been started and have not yet exited.
-    private static let running = Registry()
-
-    private final class Registry: @unchecked Sendable {
-        private let lock = NSLock()
-        // Guarded by `lock`. Held strongly, and only until the tool exits, so a run
-        // can always be reached while its tool is there to stop.
-        private var runs: [ObjectIdentifier: ToolRun] = [:]
-
-        func insert(_ run: ToolRun) {
-            lock.lock()
-            defer { lock.unlock() }
-            runs[ObjectIdentifier(run)] = run
-        }
-
-        func remove(_ run: ToolRun) {
-            lock.lock()
-            defer { lock.unlock() }
-            runs[ObjectIdentifier(run)] = nil
-        }
-
-        func all() -> [ToolRun] {
-            lock.lock()
-            defer { lock.unlock() }
-            return Array(runs.values)
-        }
-    }
+    /// The tools that have been started and have not yet exited.
+    private static var running: ChildProcesses { .shared }
 
     private let process = Process()
     private let pipe: Pipe?
@@ -504,7 +515,7 @@ final class ToolRun: @unchecked Sendable {
     }
 
     /// SIGTERM at once, with no timer behind it, for `terminateAll()`.
-    private func terminateNow() {
+    func terminateNow() {
         lock.lock()
         let isRunning = isLaunched && status == nil
         lock.unlock()
