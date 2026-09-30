@@ -258,16 +258,16 @@ final class IslandWindowController {
         }
     }
 
-    /// Listens for Escape while the home page is being arranged or a page is kept open,
-    /// and not otherwise.
+    /// Listens for Escape while the home page is being arranged or a page is kept open to
+    /// drag from, and not otherwise (`IslandViewModel.listensForEscape`).
     private func listenForEscapeIfHeld() {
-        listenForEscape(model.isEditingHome || model.keptOpenPage != nil)
+        listenForEscape(model.listensForEscape)
     }
 
-    /// While the home page is being arranged, or a page is kept open, Escape ends it.
-    /// The panel is key only while something in it is typed in, so neither has the
-    /// keyboard: it listens for the key wherever it is pressed, only meanwhile, and the
-    /// key still reaches the app in front. macOS passes on keys pressed in other apps
+    /// While the home page is being arranged, or a page is kept open to drag from, Escape
+    /// ends it. The panel is key only while something in it is typed in, so neither has
+    /// the keyboard: it listens for the key wherever it is pressed, only meanwhile, and
+    /// the key still reaches the app in front. macOS passes on keys pressed in other apps
     /// only to an app with Accessibility access; without it, Done or a click outside
     /// ends arranging instead, and Keep Open or a click on the notch lets a page go.
     private func listenForEscape(_ on: Bool) {
@@ -309,8 +309,11 @@ final class IslandWindowController {
 
     private func keyDown(_ event: NSEvent) {
         guard Self.endsEditing(event) else { return }
+        // Escape in the app being typed in is that app's: a page kept open to read is
+        // let go only from its own field.
+        let letsGo = model.keptOpenPurpose == .dragging
         model.endEditingHome()
-        model.endKeepingOpen()
+        if letsGo { model.endKeepingOpen() }
     }
 
     /// Whether a key press ends arranging the home page, or lets go of a page kept

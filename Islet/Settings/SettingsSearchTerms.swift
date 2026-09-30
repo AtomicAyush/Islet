@@ -319,6 +319,7 @@ extension QuickAskFeature {
                      "Look at my screen", "Front window", "Whole display", "Screen Recording", "Open System Settings",
                      "Let Apple's model read your calendar", "Ask Apple's model"],
             keywords: ["ai", "assistant", "chatgpt", "gpt", "openai", "codex", "claude", "anthropic", "haiku",
+                       "keep open", "stay open", "stay", "pin", "keep answer", "read while typing", "type elsewhere",
                        "apple intelligence", "on-device", "llm", "question", "chat", "quick question", "hotkey",
                        "keyboard shortcut", "private", "spotlight", "screen", "screenshot", "look", "see", "image",
                        "picture", "window", "display", "vision", "screen capture", "calendar", "free", "busy", "available",

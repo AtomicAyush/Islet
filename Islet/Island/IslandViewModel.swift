@@ -24,6 +24,20 @@ final class IslandViewModel {
         case expanded(focus: String)
     }
 
+    /// What a page is kept open for (`toggleKeepingOpen(_:for:)`), which decides what
+    /// else lets it go.
+    enum KeepOpenPurpose: Equatable {
+        /// Dragging one item after another out of it, the clipboard's: Escape pressed
+        /// anywhere lets it go, and so does `keepOpenIdleTimeout` with the pointer away.
+        case dragging
+        /// Reading it while typing in another app, the input box's: typing in it
+        /// ending, however it ends, hands the keyboard back and leaves the island open
+        /// on it, but for Escape or ⌘W in its own field, which let it go. Escape pressed
+        /// in the app being typed in is that app's. The pointer may be away for
+        /// `readingIdleTimeout`.
+        case reading
+    }
+
     static let homeFocus = "home"
     static let dropFocus = "drop"
     /// Posted as an island opens, with its model as the object; not as one already open
@@ -156,21 +170,30 @@ final class IslandViewModel {
     #endif
 
     /// The page kept open with its Keep Open button (the clipboard's, to drag one item
-    /// after another out of it), if any. While the island shows it, the island stays
-    /// open whatever the pointer does, dragging out to another app and back or going
-    /// off to work in one, until Keep Open is clicked again, Escape, a click on the
-    /// notch, another page, the island closing any other way, the Mac sleeping or
-    /// locking, or `keepOpenIdleTimeout` with the pointer away. Nothing but the button
-    /// sets it, so no link can hold the island open.
+    /// after another out of it; the input box's, to read an answer while typing in
+    /// another app), if any. While the island shows it, the island stays open whatever
+    /// the pointer does, dragging out to another app and back or going off to work in
+    /// one, until Keep Open is clicked again, Escape, a click on the notch, another
+    /// page, the island closing any other way, the Mac sleeping or locking, or a long
+    /// while with the pointer away (`KeepOpenPurpose`). Nothing but the button sets it,
+    /// so no link can hold the island open.
     private(set) var keptOpenPage: String?
+    /// What the page is kept open for, while one is.
+    private(set) var keptOpenPurpose = KeepOpenPurpose.dragging
     /// Told as a page is kept open and let go, so the controller listens for Escape
     /// only meanwhile.
     @ObservationIgnored var keepingOpenChanged: (Bool) -> Void = { _ in }
-    /// How long the pointer may stay away from a page kept open, with nothing dragged
-    /// from it, before it is let go and the island closes: long enough to drop one
-    /// item and work with it before fetching the next, short enough that an island
-    /// walked away from does not hang over the screen. Tests shorten it.
+    /// How long the pointer may stay away from a page kept open to drag from, with
+    /// nothing dragged from it, before it is let go and the island closes: long enough
+    /// to drop one item and work with it before fetching the next, short enough that an
+    /// island walked away from does not hang over the screen. Tests shorten it.
     @ObservationIgnored var keepOpenIdleTimeout: TimeInterval = 5 * 60
+    /// The same for a page kept open to read while typing elsewhere: an answer is gone
+    /// back to again and again over a stretch of work (steps followed one by one, code
+    /// written from it), so it is given half an hour rather than the time to fetch one
+    /// item, and still a conversation walked away from does not stay on the screen for
+    /// the rest of the day. Tests shorten it.
+    @ObservationIgnored var readingIdleTimeout: TimeInterval = 30 * 60
     @ObservationIgnored private var keepOpenIdleWork: DispatchWorkItem?
     /// A drag that began on the island is under way (a clipboard item, a file off the
     /// shelf, a tile being arranged). The island closes as it leaves, as it always
@@ -186,6 +209,13 @@ final class IslandViewModel {
         #endif
         guard let keptOpenPage else { return false }
         return isExpanded && resolvedFocus == keptOpenPage
+    }
+
+    /// Whether Escape pressed anywhere ends what holds the island open: arranging the
+    /// home page, or a page kept open to drag from. A page kept open to read is let go
+    /// only from its own field.
+    var listensForEscape: Bool {
+        isEditingHome || keptOpenPage != nil && keptOpenPurpose == .dragging
     }
 
     let center = ActivityCenter.shared
@@ -709,9 +739,9 @@ final class IslandViewModel {
     // MARK: Keeping a page open
 
     /// Keep Open, clicked on `page`, which the island is showing: keeps the island open
-    /// on it, or, kept open already, lets it go, and the island closes as the pointer
-    /// next leaves it, as any open island does.
-    func toggleKeepingOpen(_ page: String) {
+    /// on it, for `purpose`, or, kept open already, lets it go, and the island closes as
+    /// the pointer next leaves it, as any open island does.
+    func toggleKeepingOpen(_ page: String, for purpose: KeepOpenPurpose = .dragging) {
         if keptOpenPage == page {
             stopKeepingOpen()
             return
@@ -720,6 +750,7 @@ final class IslandViewModel {
         cancelCollapse()
         // Held on the page, so an activity starting does not take it over.
         focus = page
+        keptOpenPurpose = purpose
         keptOpenPage = page
         if !isHovering { scheduleKeepOpenIdle() }
         keepingOpenChanged(true)
@@ -743,21 +774,28 @@ final class IslandViewModel {
     }
 
     /// Lets go of the page kept open, and so closes the island, once the pointer has
-    /// been away for `keepOpenIdleTimeout` with nothing dragged from it.
+    /// been away for `keepOpenIdleTimeout` (`readingIdleTimeout`, kept open to read) with
+    /// nothing dragged from it and nothing typed in it.
     private func scheduleKeepOpenIdle() {
         cancelKeepOpenIdle()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.keptOpenPage != nil, !self.isHovering, !self.isDraggingOut else { return }
+            guard let self, self.keptOpenPage != nil, !self.isHovering, !self.isDraggingOut, !self.isTypingInKeptPage else { return }
             self.keepOpenIdleWork = nil
             self.endKeepingOpen()
         }
         keepOpenIdleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + keepOpenIdleTimeout, execute: work)
+        let timeout = keptOpenPurpose == .reading ? readingIdleTimeout : keepOpenIdleTimeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
     }
 
     private func cancelKeepOpenIdle() {
         keepOpenIdleWork?.cancel()
         keepOpenIdleWork = nil
+    }
+
+    /// Something is being typed in the page kept open: the input box's field.
+    private var isTypingInKeptPage: Bool {
+        keptOpenPage.map { typingPlace == .page($0) } ?? false
     }
 
     // MARK: Arranging the home page
@@ -841,6 +879,8 @@ final class IslandViewModel {
         let begins = typingPlace == nil
         typingPlace = place
         typingClient = client
+        // Typing in a page kept open is no while away.
+        if isTypingInKeptPage { cancelKeepOpenIdle() }
         if begins { typingChanged(true) }
         focusRequest &+= 1
     }
@@ -848,8 +888,18 @@ final class IslandViewModel {
     /// Typing ends, the window hands the keyboard back, and the client forgets what was
     /// typed. Unless the island is already going elsewhere, it leaves the page typed in:
     /// back to the page it was on, or home, with the pointer on it, and closed without.
+    /// A page kept open to read it stays (`KeepOpenPurpose.reading`), but for Escape, ⌘W,
+    /// the box going to another island or its feature stopping, which let it go first.
     func endTyping(_ reason: TypingEnd) {
         guard let place = typingPlace else { return }
+        if case .page(let id) = place, id == keptOpenPage, keptOpenPurpose == .reading {
+            switch reason {
+            case .escape, .close, .otherIsland, .featureStopped:
+                stopKeepingOpen()
+            default:
+                break
+            }
+        }
         typingPlace = nil
         let client = typingClient
         typingClient = nil
@@ -860,6 +910,12 @@ final class IslandViewModel {
         client?.ended(reason)
 
         guard case .page(let id) = place, client?.leavesPage ?? true, isExpanded, resolvedFocus == id else { return }
+        if id == keptOpenPage, keptOpenPurpose == .reading {
+            // Kept open, the keyboard went where the person wanted it, and the island
+            // stays; the wait for a long while away starts again from here.
+            if !isHovering { scheduleKeepOpenIdle() }
+            return
+        }
         switch reason {
         case .otherPage, .collapse, .clickOutside, .invalidated:
             return

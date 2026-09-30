@@ -331,7 +331,9 @@ struct ClipboardPage: View {
             if let island {
                 let isKept = island.keptOpenPage == ClipboardFeature.pageID
                 if count > 0 || isKept {
-                    KeepOpenButton(isOn: isKept) { island.toggleKeepingOpen(ClipboardFeature.pageID) }
+                    KeepOpenButton(isOn: isKept, tint: .clipboard, purpose: "to drag one item after another") {
+                        island.toggleKeepingOpen(ClipboardFeature.pageID)
+                    }
                 }
             }
         }
@@ -489,61 +491,6 @@ private struct CopiedBadge: View {
             .background(Capsule().fill(green.color.opacity(Self.wash)))
             .fixedSize()
             .accessibilityLabel("Copied")
-    }
-}
-
-/// The page's Keep Open (`IslandViewModel.toggleKeepingOpen(_:)`), not to be confused
-/// with an item's pin: a capsule as Clear is, with the lock open; on, the lock shut on a
-/// wash of the accent, so it shows at a glance that the island is held open.
-private struct KeepOpenButton: View {
-    let isOn: Bool
-    let action: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        let wash = isOn ? (isHovering ? 0.3 : 0.22) : (isHovering ? 0.2 : 0.12)
-        Button(action: action) {
-            label
-                .padding(.horizontal, 7)
-                .frame(height: 16)
-                .modifier(Colours(isOn: isOn, isHovering: isHovering, wash: wash))
-                .contentShape(Capsule())
-                .fixedSize()
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .help(isOn ? "Let the island close again (Esc)" : "Keep the island open, to drag one item after another")
-        .accessibilityLabel("Keep Open")
-        .accessibilityValue(isOn ? "On" : "Off")
-        .accessibilityAddTraits(isOn ? .isSelected : [])
-        .accessibilityHint(isOn ? "Lets the island close again" : "Keeps the island open, to drag one item after another")
-    }
-
-    private var label: some View {
-        HStack(spacing: 3) {
-            // As wide open as shut, so nothing beside it moves as it turns.
-            Image(systemName: isOn ? "lock.fill" : "lock.open")
-                .font(.system(size: 8.5, weight: .bold))
-                .frame(width: 11)
-            Text("Keep Open")
-                .font(.system(size: 10, weight: .semibold))
-        }
-    }
-
-    private struct Colours: ViewModifier {
-        let isOn: Bool
-        let isHovering: Bool
-        let wash: Double
-
-        func body(content: Content) -> some View {
-            if isOn {
-                content.islandWashed(.accent(.clipboard, minimum: Contrast.text), wash: wash, in: Capsule())
-            } else {
-                content
-                    .foregroundStyle(.islandText(isHovering ? 0.95 : 0.7, on: IslandBackdrop.island.stacked(wash)))
-                    .background(Capsule().fill(.islandSurface(wash, on: .island)))
-            }
-        }
     }
 }
 

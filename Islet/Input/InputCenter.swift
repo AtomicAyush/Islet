@@ -159,7 +159,9 @@ extension InputSession {
 /// page is there while any mode is registered.
 ///
 /// What is typed and shown there is kept in memory only: the draft until typing in it
-/// ends, and the conversation until the island closes (`InputBox.typingEnded(_:)`).
+/// ends, and the conversation until the island closes (`InputBox.typingEnded(_:)`). Keep
+/// Open in the box's header keeps the island open on it, to read it while typing in
+/// another app (`IslandViewModel.KeepOpenPurpose.reading`).
 @MainActor
 @Observable
 final class InputCenter {
@@ -197,7 +199,11 @@ final class InputCenter {
     /// forgets what it held in it either way.
     func unregister(id: String) {
         guard modes.contains(where: { $0.id == id }) else { return }
-        if box.modeID == id { box.island?.endTyping(.featureStopped) }
+        if box.modeID == id {
+            box.island?.endTyping(.featureStopped)
+            // Kept open on it with the keyboard elsewhere, the island lets it go too.
+            if box.isKeptOpen { box.island?.endKeepingOpen() }
+        }
         box.forget(mode: id)
         modes.removeAll { $0.id == id }
         publishPage(animated: false)
@@ -231,8 +237,12 @@ final class InputCenter {
     func open(_ modeID: String? = nil, on island: IslandViewModel? = nil) {
         guard let island = island ?? focusedIsland(), let mode = mode(id: modeID ?? box.modeID) else { return }
         // The conversation belongs to the island it was had in: the box moves to another
-        // empty, typing in it or not, as it does from one gone with its display.
-        if box.island !== island { box.forget() }
+        // empty, typing in it or not, as it does from one gone with its display. Kept
+        // open there, that island lets it go.
+        if box.island !== island {
+            if let other = box.island, other.keptOpenPage == Self.pageID { other.endKeepingOpen() }
+            box.forget()
+        }
         beginTyping(island, .page(Self.pageID), TypingClient(
             key: { [weak self] action in self?.box.key(action) },
             ended: { [weak self] reason in self?.box.typingEnded(reason) }
@@ -243,9 +253,13 @@ final class InputCenter {
     }
 
     /// The shortcut: closes the box where it is being typed in, and otherwise opens it.
+    /// Kept open, it never closes the box: it hands the keyboard back to the app in
+    /// front, and takes it again for the box as it is, in its mode, on its island.
     func toggle(_ modeID: String? = nil) {
         if let island = box.island, island.typingPlace == .page(Self.pageID) {
             island.endTyping(.shortcut)
+        } else if let island = box.island, box.isKeptOpen, island.isHeldOpen {
+            open(box.modeID, on: island)
         } else {
             open(modeID)
         }

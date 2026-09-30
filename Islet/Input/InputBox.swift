@@ -3,12 +3,19 @@ import SwiftUI
 import Observation
 
 /// What the input box holds: its mode, the draft and each mode's session. Memory only:
-/// the draft until typing in the box ends, and the rest, the conversation among it, until
-/// the island it was typed in closes (`typingEnded(_:)`, `forget()`). Nothing of it is
-/// written anywhere, logged or put in a URL.
+/// the draft until typing in the box ends (kept open, until the island closes), and the
+/// rest, the conversation among it, until the island it was typed in closes
+/// (`typingEnded(_:)`, `forget()`). Nothing of it is written anywhere, logged or put in a
+/// URL.
 @MainActor
 @Observable
 final class InputBox {
+    enum Key {
+        /// Keep Open's hint has been shown (`showsKeepOpenHint`): a flag, never anything
+        /// typed.
+        static let keepOpenHintShown = "input.keepOpenHintShown"
+    }
+
     /// The mode the box is in, while it is open.
     var modeID: String?
     var draft = "" {
@@ -30,6 +37,18 @@ final class InputBox {
     @ObservationIgnored weak var center: InputCenter?
     /// Told as the box's height changes, for the page to be published at it.
     @ObservationIgnored var heightChanged: () -> Void = {}
+    /// Where Keep Open's hint is remembered. Tests replace it.
+    @ObservationIgnored var defaults = UserDefaults.standard
+    /// Whether the box shows its header, with Keep Open: from the first time something
+    /// is asked or added in it, or anything shows above the field, for as long as the
+    /// island is open, so the field does not move as the next thing is typed.
+    private(set) var showsHeader = false { didSet { reportHeight(oldValue != showsHeader) } }
+    /// Keep Open's hint in the header, "Keep Open to read it while you work": up from
+    /// the first time there is something above the field while the box is typed in and
+    /// the pointer is away from the island, the person on their way to another app,
+    /// until Keep Open is clicked or the island closes. Only ever once
+    /// (`Key.keepOpenHintShown`).
+    private(set) var showsKeepOpenHint = false
 
     private var sessions: [String: any InputSession] = [:]
 
@@ -47,7 +66,13 @@ final class InputBox {
 
     /// The field's row, the conversation above it and the preview below, as drawn.
     var rowHeight: CGFloat = InputBoxLayout.rowHeight { didSet { reportHeight(oldValue != rowHeight) } }
-    var aboveHeight: CGFloat = 0 { didSet { reportHeight(oldValue != aboveHeight) } }
+    var aboveHeight: CGFloat = 0 {
+        didSet {
+            if aboveHeight > 0 { showsHeader = true }
+            reportHeight(oldValue != aboveHeight)
+            offerKeepOpenHint()
+        }
+    }
     var belowHeight: CGFloat = 0 { didSet { reportHeight(oldValue != belowHeight) } }
     var overHeight: CGFloat = 0 { didSet { reportHeight(oldValue != overHeight) } }
 
@@ -59,18 +84,22 @@ final class InputBox {
         center?.modes.first { $0.id == modeID }
     }
 
-    /// The page's height: the row, with what is above and below it, up to the most the
-    /// island has room for; past that, the conversation scrolls.
+    /// The page's height: the row, with the header and what is above and below it, up to
+    /// the most the island has room for; past that, the conversation scrolls.
     var height: CGFloat {
-        min(max(InputBoxLayout.inset * 2 + rowHeight + extra(aboveHeight) + extra(overHeight) + extra(belowHeight),
-                InputBoxLayout.minimumHeight),
+        min(max(InputBoxLayout.inset * 2 + extra(headerHeight) + rowHeight + extra(aboveHeight) + extra(overHeight)
+                + extra(belowHeight), InputBoxLayout.minimumHeight),
             InputBoxLayout.maximumHeight)
     }
 
     /// How tall the conversation above the field may be drawn, before it scrolls.
     var aboveRoom: CGFloat {
-        max(0, min(aboveHeight, height - InputBoxLayout.inset * 2 - rowHeight - extra(overHeight) - extra(belowHeight)
-                   - InputBoxLayout.spacing))
+        max(0, min(aboveHeight, height - InputBoxLayout.inset * 2 - extra(headerHeight) - rowHeight - extra(overHeight)
+                   - extra(belowHeight) - InputBoxLayout.spacing))
+    }
+
+    private var headerHeight: CGFloat {
+        showsHeader ? InputBoxLayout.headerHeight : 0
     }
 
     private func extra(_ part: CGFloat) -> CGFloat {
@@ -122,6 +151,7 @@ final class InputBox {
         guard let session, session.submit(draft) else { return }
         command = nil
         draft = ""
+        showsHeader = true
     }
 
     // MARK: Commands
@@ -134,6 +164,7 @@ final class InputBox {
         let answer = found.answer(text)
         command = session?.keep(answer, to: text, from: found) == true ? nil : (found.id, text, answer)
         draft = ""
+        showsHeader = true
         return true
     }
 
@@ -184,6 +215,7 @@ final class InputBox {
             }
             guard let session, session.accept(draft) else { return }
             draft = ""
+            showsHeader = true
         case .mode(let index):
             guard let modes = center?.modes, modes.indices.contains(index) else { return }
             show(modes[index])
@@ -196,6 +228,7 @@ final class InputBox {
 
     /// Typing in the box ended. The draft goes; the conversation stays while the island
     /// is open, to go on from when the box is opened there again, and goes as it closes.
+    /// Kept open, the draft stays too, to go on with once back from the other app.
     /// Typing ending as the island closes or goes, the feature stops or the box moves to
     /// another island forgets it at once.
     func typingEnded(_ reason: TypingEnd) {
@@ -204,9 +237,34 @@ final class InputBox {
             forget()
         default:
             guard island?.isExpanded == true else { return forget() }
+            if isKeptOpen { return }
             draft = ""
             suggestion = nil
         }
+    }
+
+    // MARK: Keep Open
+
+    /// Whether the island the box is typed in is kept open on it, to read it while
+    /// typing in another app.
+    var isKeptOpen: Bool {
+        island?.keptOpenPage == InputCenter.pageID
+    }
+
+    /// Keep Open, in the header, on the island showing the box.
+    func toggleKeepingOpen(on island: IslandViewModel) {
+        island.toggleKeepingOpen(InputCenter.pageID, for: .reading)
+        if island.keptOpenPage == InputCenter.pageID { showsKeepOpenHint = false }
+    }
+
+    /// Shows Keep Open's hint if now is the first time for it (`showsKeepOpenHint`): as
+    /// something shows above the field, and as the pointer leaves the island.
+    func offerKeepOpenHint() {
+        guard !showsKeepOpenHint, aboveHeight > 0, let island, !island.isHovering,
+              island.typingPlace == .page(InputCenter.pageID), !isKeptOpen,
+              !defaults.bool(forKey: Key.keepOpenHintShown) else { return }
+        defaults.set(true, forKey: Key.keepOpenHintShown)
+        showsKeepOpenHint = true
     }
 
     /// A mode's feature stopped: what the box held in it goes, and all of it if the box
@@ -232,6 +290,8 @@ final class InputBox {
         aboveHeight = 0
         belowHeight = 0
         overHeight = 0
+        showsHeader = false
+        showsKeepOpenHint = false
     }
 
     /// A draft that begins with another mode's prefix ("+") moves to that mode, without
@@ -257,11 +317,14 @@ enum InputBoxLayout {
     /// The most the page grows to: the opened island stays well inside its window.
     static let maximumHeight: CGFloat = 216
     static let chipHeight: CGFloat = 26
+    /// The header's row, with Keep Open (`InputBox.showsHeader`).
+    static let headerHeight: CGFloat = 18
     static let fieldLines = 1...4
 }
 
-/// The input box's page: what the mode shows above the field, the field between the
-/// mode's chip and its own, and what the mode shows below.
+/// The input box's page: its header with Keep Open once there is something to keep,
+/// what the mode shows above the field, the field between the mode's chip and its own,
+/// and what the mode shows below.
 struct InputBoxView: View {
     let center: InputCenter
     @Environment(\.island) private var island
@@ -271,6 +334,14 @@ struct InputBoxView: View {
     var body: some View {
         let box = center.box
         VStack(spacing: InputBoxLayout.spacing) {
+            if box.showsHeader, let island {
+                InputBoxHeader(
+                    isKept: island.keptOpenPage == InputCenter.pageID, showsHint: box.showsKeepOpenHint,
+                    tint: box.mode?.tint ?? .quickAsk
+                ) {
+                    box.toggleKeepingOpen(on: island)
+                }
+            }
             if let above = box.commandView() ?? box.session?.above() {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical) {
@@ -324,6 +395,11 @@ struct InputBoxView: View {
         }
         .padding(.vertical, InputBoxLayout.inset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The pointer leaving for another app, with an answer showing: the first time,
+        // the header says Keep Open would keep it.
+        .onChange(of: island?.isHovering ?? false) { _, isHovering in
+            if !isHovering { box.offerKeepOpenHint() }
+        }
     }
 
     private var isTypingHere: Bool {
@@ -395,6 +471,41 @@ struct InputBoxView: View {
     private func takeCaret() {
         guard isTypingHere else { return }
         DispatchQueue.main.async { isFocused = true }
+    }
+}
+
+/// The box's header: Keep Open, to read what is in the box while typing in another app,
+/// and the first time there is an answer to read, a line saying so.
+struct InputBoxHeader: View {
+    let isKept: Bool
+    let showsHint: Bool
+    let tint: FeatureTint
+    let toggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Spacer(minLength: 8)
+            // Beside the button it points to.
+            if showsHint, !isKept {
+                HStack(spacing: 4) {
+                    Text("Keep Open to read it while you work")
+                        .lineLimit(1)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .accessibilityHidden(true)
+                }
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.islandText(0.55))
+                .transition(.opacity)
+            }
+            KeepOpenButton(
+                isOn: isKept, tint: tint, purpose: "to read it while you work in another app",
+                letGoHelp: "Let the island close again (Esc in the box)", action: toggle
+            )
+        }
+        .padding(.horizontal, 6)
+        .frame(height: InputBoxLayout.headerHeight)
+        .animation(.easeOut(duration: 0.2), value: showsHint && !isKept)
     }
 }
 

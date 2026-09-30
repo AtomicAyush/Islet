@@ -503,6 +503,17 @@ app you were in stays in front the whole time, its menu bar and all, and has the
 when the box closes. The shortcut can be changed or turned off in Settings; it takes over the
 non-breaking space ⌥⇧Space would otherwise type.
 
+To read an answer while you work, click Keep Open in the box's header (there once something has
+been asked or added, in either mode). The island then stays open on the box whatever the pointer
+does: a click in another app gives that app the keyboard and leaves the box, its draft and the
+conversation where they are, and an answer still coming keeps coming. A click on the field, or
+the shortcut, takes the keyboard back for a follow-up, which goes on from the conversation as
+ever; the shortcut again hands it back rather than closing the box. Click Keep Open again, press
+Escape or ⌘W in the box, or click the notch to let go, and the island closes as usual, the
+conversation with it; choosing another page, the Mac sleeping or locking, or half an hour with
+the pointer away lets go too (Escape pressed in the other app is that app's). The first time an
+answer shows while you're heading for another app, the header says so, once.
+
 Three can answer, chosen from the chip beside the field and remembered: **On this Mac**, Apple's
 on-device model (macOS 26 or later, with Apple Intelligence on), which is the fastest and sends
 nothing anywhere; **ChatGPT**, through the command line tool inside the ChatGPT app, signed in as
@@ -1057,9 +1068,10 @@ its SwiftUI wrapper, from `@Environment(\.islandTheme)`; only code outside any v
 The input box, Quick Ask and Quick Calendar use the roles above and no new ones: the chips beside
 the field are `.islandWashed` in the feature's colour, the field is `.islandPrimary` with its
 placeholder in `.islandText`, a code block and the preview's chips and blanks lie on
-`.islandSurface`, Add is `filledButton(.quickCalendar)`, a clash (the Today tile's badge, the
-Day page's marker, the clash card) is marked in `.islandHue(.warning)`, and free time in
-`.islandHue(.success)`.
+`.islandSurface`, Keep Open in the box's header is the clipboard's own button in the mode's
+colour, with its hint in `.islandText`, Add is `filledButton(.quickCalendar)`, a clash (the Today
+tile's badge, the Day page's marker, the clash card) is marked in `.islandHue(.warning)`, and free
+time in `.islandHue(.success)`.
 
 A feature declares its own colour once, in its own folder, as tuned for the black island:
 
