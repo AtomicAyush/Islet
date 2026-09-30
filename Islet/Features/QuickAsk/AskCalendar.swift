@@ -26,6 +26,8 @@ final class AskCalendar {
     static let maxTitle = 60
     static let maxPlace = 40
     static let maxCalendarName = 30
+    /// With nothing left on the day asked, the next event is looked for this many days on.
+    static let lookAhead = 7
 
     /// What ChatGPT and Claude are told, with a follow-up, of an answer Apple's model gave
     /// from the calendar: that there was one, and nothing of it.
@@ -99,12 +101,32 @@ final class AskCalendar {
 }
 
 /// What the calendar tool is asked, as the model passes it: a day, how many days from it,
-/// and a time or a stretch of it, in the person's own words.
+/// a time or a stretch of it, in the person's own words, and how much of it to tell.
 struct CalendarQuery: Equatable, Sendable {
     var day: String
     var days: Int?
     var time: String?
     var until: String?
+    var scope = Scope.all
+
+    /// How much of the day to tell: all of it, what is still to come, or the next event
+    /// alone.
+    enum Scope: Equatable, Sendable {
+        case all, remaining, next
+
+        /// The scope `words` name, as the model says it; the whole day for anything else.
+        init(_ words: String?) {
+            switch CalendarQuery.clean(words ?? "") {
+            case "next", "next event", "next one", "first", "first event", "first one":
+                self = .next
+            case "remaining", "rest", "the rest", "left", "what's left", "upcoming", "to come", "still to come", "later",
+                 "rest of the day", "the rest of the day", "rest of today", "the rest of today", "after now":
+                self = .remaining
+            default:
+                self = .all
+            }
+        }
+    }
 
     /// A stretch of the day asked about, in minutes after midnight.
     struct Window: Equatable {
@@ -137,7 +159,8 @@ struct CalendarQuery: Equatable, Sendable {
         let weekday = calendar.component(.weekday, from: today)
         let ahead = { (days: Int) in calendar.date(byAdding: .day, value: days, to: today).map(calendar.startOfDay(for:)) }
         switch text.hasPrefix("on ") ? String(text.dropFirst(3)) : text {
-        case "", "now", "today", "tonight", "this morning", "this afternoon", "this evening":
+        case "", "now", "today", "tonight", "this morning", "this afternoon", "this evening", "later", "later today",
+             "rest of today", "the rest of today", "rest of the day", "the rest of the day":
             return (today, nil)
         case "week", "this week", "the week", "the rest of the week", "rest of the week":
             // Today to Sunday.
@@ -220,7 +243,8 @@ struct CalendarQuery: Equatable, Sendable {
     static func windows(_ time: String?, until: String?) -> [Window]? {
         guard let time else { return [] }
         let text = clean(time)
-        if ["", "all day", "whole day", "the whole day", "day", "the day", "any time", "anytime"].contains(text) { return [] }
+        if ["", "all day", "whole day", "the whole day", "day", "the day", "any time", "anytime", "now", "right now", "later",
+            "rest of the day", "the rest of the day", "remaining", "next"].contains(text) { return [] }
         if let part = parts[text] { return [Window(label: part.0, start: part.1, end: part.2)] }
         guard let starts = clock(text) else { return nil }
         let ends = until.flatMap { clock($0) } ?? []
@@ -234,11 +258,14 @@ struct CalendarQuery: Equatable, Sendable {
     }
 }
 
-/// The calendar as the tool tells it to Apple's model, in short lines: for each day, its
-/// all-day events, its timed ones (with place, calendar and the travel time before them),
+/// The calendar as the tool tells it to Apple's model, in short lines: the time now and,
+/// with today among the days read, a line saying what is on now, what is next and what is
+/// still to start today; then for each day its all-day events, its timed ones (with place,
+/// calendar and the travel time before them, and today's marked as over, on now or next),
 /// its clashes, and its free time within the person's day; and, for a time asked about,
-/// whether it is free and if not what takes it. Worked out as the Day page is (`DayPlan`),
-/// on this Mac.
+/// whether it is free and if not what takes it. Asked for what remains, the events that are
+/// over are left out; asked for the next, that event alone, looked for up to a week on.
+/// Worked out as the Day page is (`DayPlan`), on this Mac.
 @MainActor
 struct CalendarReading {
     let model: QuickCalendarModel
@@ -261,41 +288,59 @@ struct CalendarReading {
         guard let (start, implied) = CalendarQuery.day(query.day, now: now, calendar: calendar, parser: model.parser()) else {
             return "Couldn't tell which day \"\(Self.trim(query.day, 40))\" is. Read it again with the date as YYYY-MM-DD."
         }
-        var lines = ["Times are in \(calendar.timeZone.identifier)."]
+        var lines = ["It is now \(format.time(now)) on \(heading(now, relative: false)). Times are in \(calendar.timeZone.identifier)."]
+        if query.scope == .next {
+            guard let next = next(from: start) else { return CalendarReading.noAccess }
+            return (lines + next).joined(separator: "\n")
+        }
         let asked = query.days ?? implied ?? 1
         let count = min(max(asked, 1), AskCalendar.maxDays)
         if asked > AskCalendar.maxDays { lines.append("Only \(AskCalendar.maxDays) days are read at once: these are the first.") }
         let windows = CalendarQuery.windows(query.time, until: query.until)
         if windows == nil, let time = query.time { lines.append("Couldn't read the time \"\(Self.trim(time, 20))\": the whole day follows.") }
+        let today = calendar.startOfDay(for: now)
         guard let end = calendar.date(byAdding: .day, value: count, to: start),
               let events = model.read(from: start, to: end)
         else { return CalendarReading.noAccess }
-        let names = Dictionary(model.store.eventCalendars().map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        // Today among the days read: where it stands, first, as the short answer.
+        var upNext: DayEvent?
+        if start <= today, end > today {
+            guard let standing = standing(counting: true) else { return CalendarReading.noAccess }
+            lines.append(standing.words)
+            upNext = standing.next
+        }
+        let remaining = query.scope == .remaining
+        if remaining { lines.append("Only what is still to come is listed: events that are over are left out.") }
+        let names = calendarNames()
         var listed = 0, left = 0, clashes = 0, clashesLeft = 0
         for offset in 0..<count {
             guard let day = calendar.date(byAdding: .day, value: offset, to: start).map(calendar.startOfDay(for:)),
                   let next = calendar.date(byAdding: .day, value: 1, to: day)
             else { continue }
             let onDay = events.filter { $0.end > day && $0.start < next }
+            let isToday = day == today
             lines.append(heading(day) + ":")
             // The whole calendar day, for the travel before each event and the times asked
             // about; the person's day, for the free time.
             let whole = DayPlan.make(events: onDay, window: DateInterval(start: day, end: next), travel: model.travel, now: day)
-            var travel: [String: DateInterval] = [:]
-            for case .travel(let span, let event) in whole.rows { travel[event.id] = span }
-            let dayEvents = onDay.filter(\.isAllDay).sorted { $0.title < $1.title }
+            let travel = travelTimes(whole)
+            var dayEvents = onDay.filter(\.isAllDay).sorted { $0.title < $1.title }
                 + onDay.filter { !$0.isAllDay }.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
-            if dayEvents.isEmpty { lines.append("- No events.") }
+            let over = dayEvents.filter { $0.end <= now }.count
+            if remaining { dayEvents.removeAll { $0.end <= now } }
+            if dayEvents.isEmpty { lines.append(remaining && over > 0 ? "- Nothing left: all \(over) of its events are over." : "- No events.") }
+            if remaining, over > 0, !dayEvents.isEmpty { lines.append("- \(over) earlier \(over == 1 ? "event is" : "events are") over, not listed.") }
             for event in dayEvents {
                 guard listed < AskCalendar.maxEvents else {
                     left += 1
                     continue
                 }
                 listed += 1
-                lines.append("- " + line(event, on: day, travel: travel[event.id], calendars: names))
+                let status = isToday ? self.status(event, next: upNext) : ""
+                lines.append("- " + line(event, on: day, travel: travel[event.id], calendars: names, status: status))
             }
             let words = DayWords(format: format)
-            for clash in whole.clashes {
+            for clash in whole.clashes where !remaining || clash.second.end > now {
                 guard clashes < AskCalendar.maxClashes else {
                     clashesLeft += 1
                     continue
@@ -303,7 +348,7 @@ struct CalendarReading {
                 clashes += 1
                 lines.append("- Clash: " + words.sentence(clash))
             }
-            if count <= AskCalendar.maxFreeDays { lines.append(free(on: day, events: onDay)) }
+            if count <= AskCalendar.maxFreeDays { lines.append(free(on: day, events: onDay, from: remaining ? now : day)) }
             for window in windows ?? [] { lines.append(check(window, on: day, plan: whole)) }
         }
         if left > 0 { lines.append("…and \(left) more events not listed: ask about fewer days to see them.") }
@@ -311,21 +356,130 @@ struct CalendarReading {
         return lines.joined(separator: "\n")
     }
 
-    /// "Wednesday 30 September 2026 (today)".
-    private func heading(_ day: Date) -> String {
+    /// Where today stands, in a line: the time, what is on now, the next event (on a later
+    /// day within a week when none is left today) and, `counting`, what is still to start
+    /// today. `nil` when the calendar can't be read.
+    private func standing(counting: Bool) -> (words: String, next: DayEvent?)? {
+        let today = calendar.startOfDay(for: now)
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: today),
+              let horizon = calendar.date(byAdding: .day, value: AskCalendar.lookAhead + 1, to: today),
+              let events = model.read(from: today, to: horizon)
+        else { return nil }
+        let timed = events.filter { !$0.isAllDay }.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        let onNow = timed.filter { $0.start <= now && $0.end > now }
+        let toCome = timed.filter { $0.start > now && $0.start < tomorrow }
+        let next = timed.first { $0.start > now }
+        var words = "Now \(format.time(now))."
+        words += onNow.isEmpty ? " Nothing on now."
+            : " On now: " + onNow.map { brief($0) + ", until \(format.time($0.end))" }.joined(separator: "; ") + "."
+        if let next, next.start < tomorrow {
+            words += " Next: \(brief(next)), in \(DayWords.span(next.start.timeIntervalSince(now)))."
+        } else if let next {
+            words += " Nothing else today. Next: \(brief(next, withDay: true))."
+        } else {
+            words += " Nothing else today, and nothing in the next \(AskCalendar.lookAhead) days."
+        }
+        if counting, !toCome.isEmpty {
+            let named = toCome.prefix(8).map { "\(Self.trim(Clashes.named($0), AskCalendar.maxTitle)) \(format.time($0.start))" }
+            let more = toCome.count > named.count ? " and \(toCome.count - named.count) more" : ""
+            let current = onNow.isEmpty ? "" : "\(onNow.count) on now and "
+            words += " Left today: \(current)\(toCome.count) still to start (" + named.joined(separator: ", ") + more + ")."
+        }
+        return (words, next)
+    }
+
+    /// The next event from `day` on, for a reading of the next alone: from now for today (or
+    /// a day gone), from its start for a later day; looked for within a week. `nil` when the
+    /// calendar can't be read.
+    private func next(from day: Date) -> [String]? {
+        let today = calendar.startOfDay(for: now)
+        var lines: [String] = []
+        let next: DayEvent?
+        if day <= today {
+            guard let standing = standing(counting: false) else { return nil }
+            lines.append(standing.words)
+            next = standing.next
+        } else {
+            guard let horizon = calendar.date(byAdding: .day, value: AskCalendar.lookAhead + 1, to: day),
+                  let events = model.read(from: day, to: horizon)
+            else { return nil }
+            next = events.filter { !$0.isAllDay && $0.start >= day }.min { ($0.start, $0.end) < ($1.start, $1.end) }
+            if let next, calendar.isDate(next.start, inSameDayAs: day) {
+                lines.append("First on \(heading(day)): \(brief(next)).")
+            } else if let next {
+                lines.append("Nothing on \(heading(day)). The next after it: \(brief(next, withDay: true)).")
+            } else {
+                lines.append("Nothing on \(heading(day)), or in the \(AskCalendar.lookAhead) days after it.")
+            }
+        }
+        guard let next else { return lines }
+        // The event in full, with the travel before it.
+        let nextDay = calendar.startOfDay(for: next.start)
+        guard let after = calendar.date(byAdding: .day, value: 1, to: nextDay),
+              let onDay = model.read(from: nextDay, to: after)
+        else { return nil }
+        let travel = travelTimes(DayPlan.make(events: onDay, window: DateInterval(start: nextDay, end: after), travel: model.travel, now: nextDay))
+        let status = nextDay == today ? self.status(next, next: next) : ""
+        lines.append(heading(nextDay) + ":")
+        lines.append("- " + line(next, on: nextDay, travel: travel[next.id], calendars: calendarNames(), status: status))
+        return lines
+    }
+
+    /// For an event today: " (over)", " (on now)", " (next, in 55 min)", or nothing.
+    private func status(_ event: DayEvent, next: DayEvent?) -> String {
+        if event.isAllDay { return "" }
+        if event.end <= now { return " (over)" }
+        if event.start <= now { return " (on now)" }
+        if event.id == next?.id { return " (next, in \(DayWords.span(event.start.timeIntervalSince(now))))" }
+        return ""
+    }
+
+    /// "Dentist, 15:00 – 15:45, at Main St"; with its day, "Physics lecture, tomorrow
+    /// (Tuesday 29 September 2026), 09:00 – 10:00, at Hall B".
+    private func brief(_ event: DayEvent, withDay: Bool = false) -> String {
+        var parts = [Self.trim(Clashes.named(event), AskCalendar.maxTitle)]
+        if withDay {
+            let day = calendar.startOfDay(for: event.start)
+            let offset = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: day).day ?? 0
+            parts.append(offset == 1 ? "tomorrow (\(heading(day, relative: false)))" : heading(day, relative: false))
+        }
+        parts.append(format.range(event.start, event.end))
+        if event.isOnline {
+            parts.append("online")
+        } else if let place = event.location.map({ Self.trim($0, AskCalendar.maxPlace) }), !place.isEmpty {
+            parts.append("at " + place)
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// The travel time before each event of a day's plan, by event.
+    private func travelTimes(_ plan: DayPlan) -> [String: DateInterval] {
+        var travel: [String: DateInterval] = [:]
+        for case .travel(let span, let event) in plan.rows { travel[event.id] = span }
+        return travel
+    }
+
+    private func calendarNames() -> [String: String] {
+        Dictionary(model.store.eventCalendars().map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// "Wednesday 30 September 2026 (today)", or without "(today)".
+    private func heading(_ day: Date, relative: Bool = true) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_GB")
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "EEEE d MMMM yyyy"
+        guard relative else { return formatter.string(from: day) }
         let today = calendar.startOfDay(for: now)
-        let offset = calendar.dateComponents([.day], from: today, to: day).day ?? 0
-        let relative = [-1: " (yesterday)", 0: " (today)", 1: " (tomorrow)"][offset] ?? ""
-        return formatter.string(from: day) + relative
+        let offset = calendar.dateComponents([.day], from: today, to: calendar.startOfDay(for: day)).day ?? 0
+        let words = [-1: " (yesterday)", 0: " (today)", 1: " (tomorrow)"][offset] ?? ""
+        return formatter.string(from: day) + words
     }
 
-    /// "9:00 – 10:00: Dentist; at Main St; calendar Home; travel before it 8:30 – 9:00".
-    private func line(_ event: DayEvent, on day: Date, travel: DateInterval?, calendars: [String: String]) -> String {
+    /// "9:00 – 10:00 (next, in 1 h): Dentist; at Main St; calendar Home; travel before it
+    /// 8:30 – 9:00".
+    private func line(_ event: DayEvent, on day: Date, travel: DateInterval?, calendars: [String: String], status: String = "") -> String {
         var parts = [Self.trim(Clashes.named(event), AskCalendar.maxTitle)]
         if event.isOnline {
             parts.append("online")
@@ -337,14 +491,16 @@ struct CalendarReading {
         if let travel { parts.append("travel time before it \(format.range(travel.start, travel.end))") }
         if event.isAllDay { return "All day: " + parts.joined(separator: "; ") }
         let from = event.start < day ? " (from the day before)" : ""
-        return "\(format.range(event.start, event.end))\(from): " + parts.joined(separator: "; ")
+        return "\(format.range(event.start, event.end))\(from)\(status): " + parts.joined(separator: "; ")
     }
 
-    /// The free time within the person's day (Settings' Your day).
-    private func free(on day: Date, events: [DayEvent]) -> String {
-        let window = DayPlan.window(for: day, now: day, calendar: calendar, from: model.dayFrom, to: model.dayTo)
-        let plan = DayPlan.make(events: events, window: window, travel: model.travel, now: day)
+    /// The free time within the person's day (Settings' Your day), from `from` on: its
+    /// start, or now for what is still to come today.
+    private func free(on day: Date, events: [DayEvent], from: Date) -> String {
+        let window = DayPlan.window(for: day, now: from, calendar: calendar, from: model.dayFrom, to: model.dayTo)
+        let plan = DayPlan.make(events: events, window: window, travel: model.travel, now: from)
         let hours = format.range(window.start, window.end)
+        if window.duration <= 0 { return "- Free time in their day: none left, their day is over." }
         if plan.free.isEmpty { return "- Free time in their day (\(hours)): none." }
         if plan.free.count == 1, plan.free[0] == window { return "- Free time in their day (\(hours)): all of it." }
         return "- Free time in their day (\(hours)): " + plan.free.map { format.range($0.start, $0.end) }.joined(separator: ", ") + "."
@@ -414,10 +570,15 @@ extension AskInstructions {
     static func apple(now: Date, calendar: Calendar, locale: Locale, readsCalendar: Bool) -> String {
         var words = text + " " + moment(now, calendar: calendar, locale: locale)
         if readsCalendar {
-            words += " You can read the person's calendar, on this Mac, with the readCalendar tool. Use it for any question about their"
-                + " events, classes, meetings or plans, or when they are free, busy or available, and answer only from what it"
-                + " returns. Pass the day and the time as they said them. A time without am or pm, like \"at 8\", can be the"
-                + " morning or the evening: the tool checks both, so answer for both unless one is clearly meant."
+            words += " You can read the person's calendar, on this Mac, with the readCalendar tool. Always call it before answering"
+                + " any question about their events, classes, meetings or plans (what is next, what is left today, what is on a"
+                + " day), or when they are free, busy or available, and answer only from what it returns: never make up an event."
+                + " Pass the day and the time as they said them. For their next event, call it with the scope \"next\"; for what"
+                + " they have left or remaining today, with the scope \"remaining\". A time without am or pm, like \"at 8\", can"
+                + " be the morning or the evening: the tool checks both, so answer for both unless one is clearly meant. Answer"
+                + " only what was asked, in a sentence or two: for their next event, that one event with its time and place; for"
+                + " what is left today, only the events still to come, saying of one on now that it is on now. Never mention"
+                + " events that are over unless asked about them."
         }
         return words
     }
@@ -443,13 +604,15 @@ extension AskInstructions {
 @available(macOS 26, *)
 struct CalendarTool: Tool {
     let name = "readCalendar"
-    let description = "Reads the person's calendar on this Mac: the events on a day or a few days, their free time, and whether a time asked about is free. It only reads."
+    let description = "Reads the person's calendar on this Mac: their next event, what is left today, the events on a day or a few days, their free time, and whether a time asked about is free. It only reads."
     let read: @MainActor @Sendable (CalendarQuery) -> String
 
     @Generable
     struct Arguments {
         @Guide(description: "The day: \"today\", \"tomorrow\", a weekday such as \"friday\" or \"next monday\", \"this week\", \"the weekend\", or a date as YYYY-MM-DD")
         var day: String
+        @Guide(description: "How much to read: \"next\" for the next event alone, \"remaining\" for what is still to come today, \"all\" for the whole day. Leave out for all")
+        var scope: String?
         @Guide(description: "How many days to read from that day; leave out for just that day. At most 31")
         var days: Int?
         @Guide(description: "A time asked about, as the person said it: \"8\", \"8pm\", \"14:30\", \"morning\". Leave out for the whole day")
@@ -459,7 +622,8 @@ struct CalendarTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        let query = CalendarQuery(day: arguments.day, days: arguments.days, time: arguments.time, until: arguments.until)
+        let query = CalendarQuery(day: arguments.day, days: arguments.days, time: arguments.time, until: arguments.until,
+                                  scope: CalendarQuery.Scope(arguments.scope))
         return await read(query)
     }
 }
