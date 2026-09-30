@@ -5,7 +5,9 @@ import FoundationModels
 
 /// Apple's on-device model, on macOS 26 and later with Apple Intelligence on: nothing
 /// leaves the Mac. One conversation is kept while the island is open, warmed up as the
-/// box first opens, and dropped as the island closes.
+/// box first opens, and dropped as the island closes. Its instructions say what day and
+/// time it is as it is asked, and, while Settings lets it, it can read the calendar
+/// (`AskCalendar`).
 @MainActor
 final class AppleAskBackend: AskBackend {
     let provider = AskProvider.onDevice
@@ -16,10 +18,22 @@ final class AppleAskBackend: AskBackend {
     /// replace it.
     var seesImages: () -> Bool = { AppleAskBackend.systemSeesImages() }
 
+    /// The calendar, for the model to read while Settings lets it; `nil`, it has no tool.
+    var calendar: AskCalendar?
+
     /// The open box's conversation (`LanguageModelSession`), and how many exchanges it
     /// has seen, so a follow-up goes on from it rather than starting again.
     private var conversation: AnyObject?
     private var turnsSeen = 0
+    /// When the conversation was last told the time: in its instructions, or since.
+    private var toldTime: Date?
+
+    /// A conversation warmed up but not yet asked anything is made afresh after this long,
+    /// so its instructions have the time it is asked at.
+    static let freshFor: TimeInterval = 60
+    /// A conversation going on is told the time again with a question after this long, or
+    /// on another day.
+    static let retellAfter: TimeInterval = 10 * 60
 
     func status() -> AskStatus {
         availability()
@@ -89,7 +103,7 @@ final class AppleAskBackend: AskBackend {
         guard conversation == nil, status() == .ready else { return }
         #if canImport(FoundationModels)
         if #available(macOS 26, *) {
-            let session = LanguageModelSession(instructions: AskInstructions.text)
+            let session = newSession()
             session.prewarm()
             conversation = session
             turnsSeen = 0
@@ -100,7 +114,51 @@ final class AppleAskBackend: AskBackend {
     func close() {
         conversation = nil
         turnsSeen = 0
+        toldTime = nil
+        calendar?.conversationStarted()
     }
+
+    /// Whether a new conversation is given the calendar tool: Settings' switch on, and
+    /// Quick Calendar there to read through.
+    var readsCalendar: Bool {
+        calendar?.offered == true
+    }
+
+    /// The moment of asking, in the calendar and locale the calendar is read in.
+    private func clock() -> (now: Date, calendar: Calendar, locale: Locale) {
+        calendar?.clock() ?? (Date(), .autoupdatingCurrent, .autoupdatingCurrent)
+    }
+
+    /// The instructions a conversation starting now is given.
+    func instructions() -> String {
+        let clock = clock()
+        return AskInstructions.apple(now: clock.now, calendar: clock.calendar, locale: clock.locale, readsCalendar: readsCalendar)
+    }
+
+    /// `prompt` for a conversation going on, with the time again in front of it once it
+    /// has moved on a while (or to another day) since the conversation was last told it.
+    private func timed(_ prompt: String) -> String {
+        let clock = clock()
+        guard let told = toldTime,
+              clock.now.timeIntervalSince(told) >= Self.retellAfter || !clock.calendar.isDate(told, inSameDayAs: clock.now)
+        else { return prompt }
+        toldTime = clock.now
+        return "(\(AskInstructions.moment(clock.now, calendar: clock.calendar, locale: clock.locale)))\n\(prompt)"
+    }
+
+    #if canImport(FoundationModels)
+    /// A conversation, with the day and time in its instructions and, while Settings lets
+    /// it, the calendar tool.
+    @available(macOS 26, *)
+    func newSession() -> LanguageModelSession {
+        toldTime = clock().now
+        calendar?.conversationStarted()
+        let instructions = instructions()
+        guard readsCalendar else { return LanguageModelSession(instructions: instructions) }
+        let tool = CalendarTool { [weak calendar] query in calendar?.read(query) ?? CalendarReading.turnedOff }
+        return LanguageModelSession(tools: [tool], instructions: instructions)
+    }
+    #endif
 
     func answer(_ question: String, after earlier: [AskTurn]) -> AsyncThrowingStream<String, Error> {
         answer(question, showing: nil, after: earlier)
@@ -117,12 +175,16 @@ final class AppleAskBackend: AskBackend {
             if #available(macOS 26, *) {
                 // A conversation that has seen every exchange so far goes on; otherwise one
                 // starts afresh with them in the question (another provider had them).
+                // One warmed up a while ago and not yet asked is made afresh, for the time.
                 var prompt = question
                 let session: LanguageModelSession
-                if let current = conversation as? LanguageModelSession, turnsSeen == earlier.count {
+                let current = conversation as? LanguageModelSession
+                let stale = turnsSeen == 0 && toldTime.map { clock().now.timeIntervalSince($0) >= Self.freshFor } != false
+                if let current, turnsSeen == earlier.count, !stale {
                     session = current
+                    prompt = turnsSeen == 0 ? question : timed(question)
                 } else {
-                    session = LanguageModelSession(instructions: AskInstructions.text)
+                    session = newSession()
                     prompt = AskInstructions.prompt(question, after: earlier)
                 }
                 conversation = session

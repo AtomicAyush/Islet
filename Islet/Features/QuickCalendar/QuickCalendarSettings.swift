@@ -92,7 +92,7 @@ struct QuickCalendarSettings: View {
             }
         }
         .onAppear { model.refresh() }
-        Text("What you type is read on this Mac and never sent anywhere, and your day is worked out here too: your calendar is never sent to ChatGPT or Claude. A follow-up to your day summed up in Ask mode gives it to Apple's model on this Mac alone. Only Add writes to your calendar: the event shown, or the place typed on a card.")
+        Text("What you type is read on this Mac and never sent anywhere, and your day is worked out here too: your calendar is never sent to ChatGPT or Claude. Apple's model on this Mac alone may read it, in Ask mode, while Quick Ask's switch lets it, and is given your day summed up for a follow-up. Only Add writes to your calendar: the event shown, or the place typed on a card.")
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)

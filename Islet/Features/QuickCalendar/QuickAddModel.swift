@@ -202,6 +202,14 @@ final class QuickCalendarModel {
         return checked(store.events(from: start, to: end))
     }
 
+    /// The events overlapping `start` to `end` in the calendars checked, read afresh, with
+    /// access looked at afresh too: for Apple's model reading the calendar (`AskCalendar`).
+    /// `nil` without access.
+    func read(from start: Date, to end: Date) -> [DayEvent]? {
+        guard store.access == .granted else { return nil }
+        return checked(store.events(from: start, to: end))
+    }
+
     // MARK: Days
 
     /// `day`'s free time and clashes as they stand at `now`: today's from now on, within

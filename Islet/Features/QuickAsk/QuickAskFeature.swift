@@ -27,6 +27,8 @@ final class QuickAskFeature: Feature {
         static let shortcut = "feature.quickask.shortcut"
         /// What "Look at my screen" takes a picture of (`ScreenLookTarget`): a setting.
         static let lookAt = "feature.quickask.look-at"
+        /// Whether Apple's model may read the calendar (`AskCalendar`): on unless turned off.
+        static let calendar = "feature.quickask.calendar"
     }
 
     /// Where the tile goes on the home page: after the clipboard, before the shelf.
@@ -97,8 +99,8 @@ extension FeatureTint {
 }
 
 /// What Quick Ask shares between the box, its tile and Settings: who can answer, who
-/// was chosen, the shortcut, copying, and taking pictures of the screen. Nothing asked
-/// or answered, and no picture, is kept here.
+/// was chosen, the shortcut, copying, taking pictures of the screen, and the calendar
+/// Apple's model reads. Nothing asked or answered, and no picture, is kept here.
 @MainActor
 @Observable
 final class QuickAskModel {
@@ -118,18 +120,23 @@ final class QuickAskModel {
     /// macOS was asked for Screen Recording: it is asked once, as the control is first
     /// used, and never again.
     @ObservationIgnored private(set) var askedForScreen = false
+    /// The calendar, as Apple's model reads it.
+    @ObservationIgnored let calendar: AskCalendar
 
     init(
         backends: [any AskBackend]? = nil,
         defaults: UserDefaults = .standard,
         pasteboard: NSPasteboard = .general,
-        capturer: (any ScreenCapturer)? = nil
+        capturer: (any ScreenCapturer)? = nil,
+        calendar: AskCalendar? = nil
     ) {
         let backends = backends ?? [AppleAskBackend(), CodexAskBackend(), ClaudeAskBackend()]
         self.backends = Dictionary(uniqueKeysWithValues: backends.map { ($0.provider, $0) })
         self.defaults = defaults
         self.pasteboard = pasteboard
         self.capturer = capturer ?? SystemScreenCapturer()
+        self.calendar = calendar ?? AskCalendar(defaults: defaults)
+        if let apple = self.backends[.onDevice] as? AppleAskBackend, apple.calendar == nil { apple.calendar = self.calendar }
     }
 
     func backend(_ provider: AskProvider) -> any AskBackend {
@@ -171,6 +178,12 @@ final class QuickAskModel {
     var lookTarget: ScreenLookTarget {
         get { defaults.string(forKey: QuickAskFeature.Key.lookAt).flatMap(ScreenLookTarget.init(rawValue:)) ?? .frontWindow }
         set { defaults.set(newValue.rawValue, forKey: QuickAskFeature.Key.lookAt) }
+    }
+
+    /// Whether a question about the calendar for ChatGPT or Claude offers Apple's model
+    /// instead: it can answer now, and read the calendar.
+    var offersCalendar: Bool {
+        status(of: .onDevice) == .ready && calendar.offered
     }
 
     /// Whether `provider` can be shown a picture now.

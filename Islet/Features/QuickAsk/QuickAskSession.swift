@@ -14,6 +14,10 @@ import Observation
 /// the picture again (press the control again for a fresh look); Apple's model, whose
 /// conversation goes on in memory on this Mac, still has it. What a command answers on
 /// this Mac (the day summed up) is never sent with it, and leaves it for the next question.
+///
+/// Apple's model may read the calendar (`AskCalendar`): its answers from it are kept from
+/// ChatGPT and Claude as a day summed up is, and a question about the calendar meant for
+/// them offers Apple's model instead of being sent (`CalendarQuestion`).
 @MainActor
 @Observable
 final class QuickAskSession: InputSession {
@@ -30,6 +34,12 @@ final class QuickAskSession: InputSession {
         var drawsOn: Local?
         /// The picture of the screen that went with the question.
         var snapshot: ScreenSnapshot?
+        /// Answered by Apple's model after reading the calendar, or going on from an answer
+        /// that did, which it may repeat: kept from ChatGPT and Claude as a command's is.
+        var fromCalendar = false
+        /// Apple's model went to read the calendar without access: as it was, for the
+        /// button to allow it.
+        var calendarAccess: CalendarAccess?
     }
 
     /// "Look at my screen", before a picture is ready or instead of one.
@@ -58,6 +68,9 @@ final class QuickAskSession: InputSession {
         case done
         case failed(AskFailure)
         case stopped
+        /// A question about the calendar for ChatGPT or Claude, not sent: Apple's model,
+        /// which reads the calendar on this Mac, is offered instead, or asking anyway.
+        case offered
     }
 
     /// The most exchanges kept and resent with a follow-up; the oldest go first.
@@ -153,12 +166,14 @@ final class QuickAskSession: InputSession {
         guard !question.isEmpty, !isBusy else { return false }
         if image != nil, !ask.takesImages(provider) { return false }
         nextID += 1
-        exchanges.append(Exchange(id: nextID, question: question, provider: provider, snapshot: image))
+        // A question about the calendar for ChatGPT or Claude waits for a choice.
+        let offers = provider != .onDevice && image == nil && ask.offersCalendar && CalendarQuestion.matches(question)
+        exchanges.append(Exchange(id: nextID, question: question, provider: provider, state: offers ? .offered : .waiting, snapshot: image))
         if image != nil {
             snapshot = nil
             lookState = nil
         }
-        run(exchanges.count - 1)
+        if !offers { run(exchanges.count - 1) }
         return true
     }
 
@@ -267,6 +282,8 @@ final class QuickAskSession: InputSession {
         exchanges[last].answer = ""
         exchanges[last].state = .waiting
         exchanges[last].local = nil
+        exchanges[last].fromCalendar = false
+        exchanges[last].calendarAccess = nil
         run(last)
     }
 
@@ -285,7 +302,7 @@ final class QuickAskSession: InputSession {
               let index = exchanges.firstIndex(where: { $0.id == exchange.id }), index > 0
         else { return nil }
         let before = exchanges[index - 1]
-        return (before.local ?? before.drawsOn)?.answer.subject
+        return (before.local ?? before.drawsOn)?.answer.subject ?? (before.fromCalendar ? "Your calendar" : nil)
     }
 
     /// The answer a command gives to `text` as a follow-up to the latest exchange, if
@@ -322,7 +339,10 @@ final class QuickAskSession: InputSession {
         // Apple's model given a command's answer, or its own answer from one, may repeat it.
         exchanges[index].drawsOn = exchanges[index].provider == .onDevice
             ? given.compactMap { $0.local ?? $0.drawsOn }.last : nil
+        // And so may its own answer from the calendar, as may one reading it now.
+        exchanges[index].fromCalendar = exchanges[index].provider == .onDevice && given.contains { $0.fromCalendar }
         let exchange = exchanges[index]
+        let readsBefore = ask.calendar.reads
         let earlier = given.map { Self.turn($0, for: exchange.provider) }
         droppedEarlier = answered.count > earlier.count
         let backend = ask.backend(exchange.provider)
@@ -353,24 +373,44 @@ final class QuickAskSession: InputSession {
                         $0.answer = answer
                         $0.state = .answering
                     }
+                    self?.noteReading(id, since: readsBefore)
                 }
+                self?.noteReading(id, since: readsBefore)
                 self?.finish(id, failure: nil)
             } catch {
+                self?.noteReading(id, since: readsBefore)
                 self?.finish(id, failure: error as? AskFailure ?? .provider(AskErrors.oneLine(error.localizedDescription)))
             }
+        }
+    }
+
+    /// Apple's model read the calendar for the exchange since `reads`, or its conversation
+    /// did for one no longer kept, which it may repeat: it is marked, with access if this
+    /// reading found none.
+    private func noteReading(_ id: Int, since reads: Int) {
+        let calendar = ask.calendar
+        let read = calendar.reads > reads
+        guard read || (calendar.readInConversation && exchanges.contains { $0.id == id && $0.provider == .onDevice })
+        else { return }
+        update(id) {
+            $0.fromCalendar = true
+            if read { $0.calendarAccess = calendar.lastAccess == .granted ? nil : calendar.lastAccess }
         }
     }
 
     /// An exchange as it goes with a follow-up to `provider`. What a command answered goes
     /// in words only to Apple's model, on this Mac; ChatGPT and Claude are told only that
     /// there was such an answer, and that it stays private, and are told the same in place
-    /// of Apple's model's answers from it.
+    /// of Apple's model's answers from it, or from the calendar.
     static func turn(_ exchange: Exchange, for provider: AskProvider) -> AskTurn {
         if let local = exchange.local {
             return AskTurn(question: exchange.question, answer: provider == .onDevice ? local.answer.words() : local.answer.note)
         }
         if provider != .onDevice, let local = exchange.drawsOn {
             return AskTurn(question: exchange.question, answer: local.answer.note, hadPicture: exchange.snapshot != nil)
+        }
+        if provider != .onDevice, exchange.fromCalendar {
+            return AskTurn(question: exchange.question, answer: AskCalendar.note, hadPicture: exchange.snapshot != nil)
         }
         return AskTurn(question: exchange.question, answer: exchange.answer, hadPicture: exchange.snapshot != nil)
     }

@@ -1,12 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// Quick Ask's options: who answers, the shortcut, what "Look at my screen" looks at and
-/// Screen Recording for it, connecting Claude, and what is kept (nothing).
+/// Quick Ask's options: who answers, Apple's model reading the calendar, the shortcut, what
+/// "Look at my screen" looks at and Screen Recording for it, connecting Claude, and what is
+/// kept (nothing).
 struct QuickAskSettings: View {
     let model: QuickAskModel
     @AppStorage(QuickAskFeature.Key.provider) private var provider = ""
     @AppStorage(QuickAskFeature.Key.lookAt) private var lookAt = ScreenLookTarget.frontWindow
+    @AppStorage(QuickAskFeature.Key.calendar) private var readsCalendar = true
     @State private var token = ""
     @State private var hasToken = false
     @State private var tokenProblem: String?
@@ -24,6 +26,10 @@ struct QuickAskSettings: View {
                 Text(provider == .claude && status == .signInNeeded ? "Not connected yet" : status.text(for: provider))
                     .foregroundStyle(status == .ready ? .secondary : .primary)
             }
+        }
+        Toggle(isOn: $readsCalendar) {
+            Text("Let Apple's model read your calendar")
+            Text("When you ask it, like \"am I free today at 8?\", Apple's model looks up your events and free time in the calendars Quick Calendar checks. It only reads, here on your Mac: nothing is sent anywhere, and ChatGPT and Claude are never given your calendar.")
         }
         LabeledContent("Shortcut") {
             ShortcutRecorder(combo: model.shortcut, problem: model.shortcutProblem) { model.setShortcut($0) }
@@ -140,8 +146,10 @@ struct QuickAskSettings: View {
         send your question, with the conversation so far, to OpenAI or Anthropic through their app's own command-line \
         tool, with no history or session saved on this Mac, no tools, and none of your hooks, plugins or MCP servers; \
         what OpenAI and Anthropic keep is up to their own privacy policies. Your calendar is never sent to ChatGPT or \
-        Claude: after your day is summed up in the box they're told only that it was, and On this Mac alone is given \
-        it, for a follow-up. **Look at my screen** takes one picture, only when you press it, of the front window \
+        Claude: after your day is summed up in the box, or On this Mac answers from your calendar, they're told only \
+        that it was, and On this Mac alone is given it, for a follow-up; a question about your calendar meant for \
+        them offers On this Mac instead. On this Mac reads your calendar only while its switch above is on, and only \
+        reads it. **Look at my screen** takes one picture, only when you press it, of the front window \
         or the whole display, never with Islet's own windows in it, shown over the field before it goes. It goes \
         once, with your next question: to On this Mac, it stays on your Mac; to ChatGPT or Claude, it is sent with \
         it (to ChatGPT through a private file that goes as soon as it has been read). Follow-ups don't send it \

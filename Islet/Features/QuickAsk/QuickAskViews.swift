@@ -86,7 +86,45 @@ private struct QuickAskExchangeView: View {
             }
         case .failed(let failure):
             QuickAskFailureRow(session: session, exchange: exchange, failure: failure)
+        case .offered:
+            QuickAskCalendarOffer(session: session, exchange: exchange)
         }
+    }
+}
+
+/// A question about the calendar meant for ChatGPT or Claude, not sent: that the calendar
+/// stays on this Mac, and Apple's model, which reads it here, to ask instead; or the
+/// question alone, asked anyway.
+private struct QuickAskCalendarOffer: View {
+    let session: QuickAskSession
+    let exchange: QuickAskSession.Exchange
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.islandGraphic(0.5))
+                    .accessibilityHidden(true)
+                Text("Your calendar stays on this Mac, so \(exchange.provider.title) can't see it. \(AskProvider.onDevice.name) can read it here.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.islandText(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if exchange.id == session.exchanges.last?.id, !session.isBusy {
+                HStack(spacing: 8) {
+                    InputQuietButton(title: "Ask \(AskProvider.onDevice.name)", symbol: AskProvider.onDevice.symbol) {
+                        session.askAgain(with: .onDevice)
+                    }
+                    .help("Ask Apple's model on this Mac, which reads your calendar here")
+                    InputQuietButton(title: "Ask \(exchange.provider.title) anyway", symbol: exchange.provider.symbol) {
+                        session.askAgain(with: exchange.provider)
+                    }
+                    .help("Send \(exchange.provider.title) just the question, without your calendar")
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -121,7 +159,8 @@ private struct QuickAskKeptHereRow: View {
 }
 
 /// Under an answer: Copy, and, under one from this Mac, the same question asked of
-/// ChatGPT or Claude.
+/// ChatGPT or Claude (unless it was answered from the calendar), or a way to allow
+/// calendar access when Apple's model found it off.
 private struct QuickAskAnswerActions: View {
     let session: QuickAskSession
     let exchange: QuickAskSession.Exchange
@@ -146,7 +185,17 @@ private struct QuickAskAnswerActions: View {
                         .help("Copy the answer")
                 }
             }
-            if exchange.provider == .onDevice, exchange.id == session.exchanges.last?.id,
+            // As Quick Calendar's box offers it: nothing to press when a profile restricts it.
+            if let access = exchange.calendarAccess, access != .restricted {
+                let allow = access == .undetermined
+                InputQuietButton(title: allow ? "Allow Calendar access" : "Open Privacy Settings",
+                                 symbol: allow ? "lock.open" : "gearshape") {
+                    session.ask.calendar.allowAccess()
+                }
+                .help(allow ? "Let Islet read your calendars" : "Calendar access is off in System Settings")
+            }
+            // ChatGPT and Claude can't answer from the calendar: not offered under an answer that did.
+            if exchange.provider == .onDevice, exchange.id == session.exchanges.last?.id, !exchange.fromCalendar,
                let other = QuickAskFallback.cloud(session.ask, seeing: exchange.snapshot != nil) {
                 InputQuietButton(title: "Ask \(other.name)", symbol: other.symbol) {
                     session.askAgain(with: other)
