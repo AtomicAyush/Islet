@@ -45,15 +45,24 @@ final class ClaudeAskBackend: AskBackend {
 
     var tokens: any ClaudeTokenStore { setup.tokens }
 
-    /// The Claude app keeps its tool in a folder per version; the newest.
+    /// The Claude app keeps its tool in a folder per version; the newest. The tool sits
+    /// directly in that folder, or, from 2.1.286, in a folder of its own inside it.
     nonisolated static func findBinary(
         root: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Claude/claude-code")
     ) -> URL? {
-        let versions = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
-        return versions.sorted { $0.compare($1, options: .numeric) == .orderedDescending }
-            .map { root.appendingPathComponent($0).appendingPathComponent("claude.app/Contents/MacOS/claude") }
-            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+        let files = FileManager.default
+        let versions = (try? files.contentsOfDirectory(atPath: root.path)) ?? []
+        for version in versions.sorted(by: { $0.compare($1, options: .numeric) == .orderedDescending }) {
+            let folder = root.appendingPathComponent(version)
+            let inside = ((try? files.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
+                .map { folder.appendingPathComponent($0) }
+            for place in [folder] + inside {
+                let binary = place.appendingPathComponent("claude.app/Contents/MacOS/claude")
+                if files.isExecutableFile(atPath: binary.path) { return binary }
+            }
+        }
+        return nil
     }
 
     func status() -> AskStatus {
