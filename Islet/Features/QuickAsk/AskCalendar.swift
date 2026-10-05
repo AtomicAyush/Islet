@@ -259,13 +259,14 @@ struct CalendarQuery: Equatable, Sendable {
 }
 
 /// The calendar as the tool tells it to Apple's model, in short lines: the time now and,
-/// with today among the days read, a line saying what is on now, what is next and what is
-/// still to start today; then for each day its all-day events, its timed ones (with place,
-/// calendar and the travel time before them, and today's marked as over, on now or next),
-/// its clashes, and its free time within the person's day; and, for a time asked about,
-/// whether it is free and if not what takes it. Asked for what remains, the events that are
-/// over are left out; asked for the next, that event alone, looked for up to a week on.
-/// Worked out as the Day page is (`DayPlan`), on this Mac.
+/// with today among the days read, a line saying what is on now, what is next and, unless
+/// the whole day is asked for, what is still to start today; then for each day its all-day
+/// events, its timed ones (with place, calendar and the travel time before them, and
+/// today's marked as over, on now or next), its clashes, and its free time within the
+/// person's day; and, for a time asked about, whether it is free and if not what takes it.
+/// Asked for what remains, the events that are over are left out; asked for the next, that
+/// event alone, looked for up to a week on. Worked out as the Day page is (`DayPlan`), on
+/// this Mac.
 @MainActor
 struct CalendarReading {
     let model: QuickCalendarModel
@@ -302,15 +303,18 @@ struct CalendarReading {
         guard let end = calendar.date(byAdding: .day, value: count, to: start),
               let events = model.read(from: start, to: end)
         else { return CalendarReading.noAccess }
-        // Today among the days read: where it stands, first, as the short answer.
+        // Today among the days read: where it stands, first, as the short answer. Asked for
+        // the whole day, what is left today isn't counted, so the rest isn't read as all.
         var upNext: DayEvent?
-        if start <= today, end > today {
-            guard let standing = standing(counting: true) else { return CalendarReading.noAccess }
+        let readsToday = start <= today && end > today
+        if readsToday {
+            guard let standing = standing(counting: query.scope != .all) else { return CalendarReading.noAccess }
             lines.append(standing.words)
             upNext = standing.next
         }
         let remaining = query.scope == .remaining
         if remaining { lines.append("Only what is still to come is listed: events that are over are left out.") }
+        if !remaining, readsToday { lines.append("All of today is listed, its events that are over among them.") }
         let names = calendarNames()
         var listed = 0, left = 0, clashes = 0, clashesLeft = 0
         for offset in 0..<count {
@@ -348,7 +352,8 @@ struct CalendarReading {
                 clashes += 1
                 lines.append("- Clash: " + words.sentence(clash))
             }
-            if count <= AskCalendar.maxFreeDays { lines.append(free(on: day, events: onDay, from: remaining ? now : day)) }
+            // Today's free time from now: what has gone by can't be used.
+            if count <= AskCalendar.maxFreeDays { lines.append(free(on: day, events: onDay, from: remaining || isToday ? now : day)) }
             for window in windows ?? [] { lines.append(check(window, on: day, plan: whole)) }
         }
         if left > 0 { lines.append("…and \(left) more events not listed: ask about fewer days to see them.") }
@@ -495,7 +500,7 @@ struct CalendarReading {
     }
 
     /// The free time within the person's day (Settings' Your day), from `from` on: its
-    /// start, or now for what is still to come today.
+    /// start, or now for today.
     private func free(on day: Date, events: [DayEvent], from: Date) -> String {
         let window = DayPlan.window(for: day, now: from, calendar: calendar, from: model.dayFrom, to: model.dayTo)
         let plan = DayPlan.make(events: events, window: window, travel: model.travel, now: from)
@@ -571,14 +576,17 @@ extension AskInstructions {
         var words = text + " " + moment(now, calendar: calendar, locale: locale)
         if readsCalendar {
             words += " You can read the person's calendar, on this Mac, with the readCalendar tool. Always call it before answering"
-                + " any question about their events, classes, meetings or plans (what is next, what is left today, what is on a"
-                + " day), or when they are free, busy or available, and answer only from what it returns: never make up an event."
-                + " Pass the day and the time as they said them. For their next event, call it with the scope \"next\"; for what"
-                + " they have left or remaining today, with the scope \"remaining\". A time without am or pm, like \"at 8\", can"
-                + " be the morning or the evening: the tool checks both, so answer for both unless one is clearly meant. Answer"
-                + " only what was asked, in a sentence or two: for their next event, that one event with its time and place; for"
-                + " what is left today, only the events still to come, saying of one on now that it is on now. Never mention"
-                + " events that are over unless asked about them."
+                + " any question about their events, classes, meetings or plans (what is on a day, what is next, what is left"
+                + " today), or when they are free, busy or available, and answer only from what it returns: never make up an event."
+                + " Pass the day and the time as they said them, and the scope by what they asked: \"all\" for what is on a day,"
+                + " today included (\"what's on today\", \"what do I have today\", \"my schedule today\"), which asks for the"
+                + " whole day; \"remaining\" only when they ask what is left, remaining or still to come today; \"next\" only for"
+                + " their next event. A time without am or pm, like \"at 8\", can be the morning or the evening: the tool checks"
+                + " both, so answer for both unless one is clearly meant. Answer only what was asked, briefly: for what is on a day,"
+                + " every event of it in order, saying which of today's are over, and of one on now that it is on now; for their"
+                + " next event, that one event with its time and place; for what is left today, only the events still to come,"
+                + " saying of one on now that it is on now. Leave out the events that are over only when asked what is next or"
+                + " what is left."
         }
         return words
     }
@@ -604,14 +612,14 @@ extension AskInstructions {
 @available(macOS 26, *)
 struct CalendarTool: Tool {
     let name = "readCalendar"
-    let description = "Reads the person's calendar on this Mac: their next event, what is left today, the events on a day or a few days, their free time, and whether a time asked about is free. It only reads."
+    let description = "Reads the person's calendar on this Mac: the events on a day or a few days, their next event, what is left today, their free time, and whether a time asked about is free. It only reads."
     let read: @MainActor @Sendable (CalendarQuery) -> String
 
     @Generable
     struct Arguments {
         @Guide(description: "The day: \"today\", \"tomorrow\", a weekday such as \"friday\" or \"next monday\", \"this week\", \"the weekend\", or a date as YYYY-MM-DD")
         var day: String
-        @Guide(description: "How much to read: \"next\" for the next event alone, \"remaining\" for what is still to come today, \"all\" for the whole day. Leave out for all")
+        @Guide(description: "How much to read: \"all\" for the whole day, as for what is on a day or their schedule, today's too; \"remaining\" only for what is left or still to come today; \"next\" for the next event alone. Leave out for all")
         var scope: String?
         @Guide(description: "How many days to read from that day; leave out for just that day. At most 31")
         var days: Int?

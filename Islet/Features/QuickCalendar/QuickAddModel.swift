@@ -220,12 +220,13 @@ final class QuickCalendarModel {
     }
 
     /// The day `day` falls on, as it stands at `now`: today's from now on, and the whole
-    /// of the person's day for any other, one gone by too.
-    func plan(on day: Date, at now: Date) -> DayPlan {
+    /// of the person's day for any other, one gone by too. `whole`, today's is the whole of
+    /// it too, its events that are over among the rest, with its free time from now on.
+    func plan(on day: Date, at now: Date, whole: Bool = false) -> DayPlan {
         let start = calendar.startOfDay(for: day)
         let seen = start < calendar.startOfDay(for: now) ? start : now
-        let window = DayPlan.window(for: start, now: seen, calendar: calendar, from: dayFrom, to: dayTo)
-        return DayPlan.make(events: events(on: start), window: window, travel: travel, now: seen)
+        let window = DayPlan.window(for: start, now: whole ? start : seen, calendar: calendar, from: dayFrom, to: dayTo)
+        return DayPlan.make(events: events(on: start), window: window, travel: travel, now: seen, freeFrom: seen)
     }
 
     private static let links = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)

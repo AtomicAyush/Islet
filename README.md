@@ -210,17 +210,20 @@ second; only timed events that aren't declined, cancelled or shown as free count
 calendars Settings checks (all but Birthdays unless you leave some out). Each clash today or
 tomorrow is told once on a card while the island is resting ("Only 10 minutes to get from Gym
 to Café for Coffee"), unless Tell me about clashes is off; a clash already shown in the box as
-the event was typed isn't told again. Typing "summarise my day", "what's on tomorrow" or the
-like in the box, in either mode, shows the same summary above the field; in Ask mode it joins
-the conversation, and straight after it "what about tomorrow", "and Friday?", "next Monday",
-"the day after" or "yesterday?" sums up that day the same way. It is recognised by fixed rules
-before anything is sent anywhere, and worked out on this Mac: your calendar is never sent to
-ChatGPT or Claude. A follow-up asked of On this Mac ("am I free at 3?") is given the summary, so
-Apple's on-device model can answer it without anything leaving your Mac; ChatGPT and Claude are
-told only that a summary was shown here and stays private, in its place and in that of On this
-Mac's answers from it, and the box says so over their answer. "Ask ChatGPT anyway" (or whoever
-answers) sends only the words you typed. On this Mac can also read your calendar itself when you
-ask it about it (see Your calendar, to On this Mac, under Quick Ask).
+the event was typed isn't told again. Typing "summarise my day", "what's on tomorrow", "what do
+I have on Friday?", "anything on Wed?", "how's tomorrow looking?" or the like in the box, in
+either mode, shows the same summary above the field; "what's on today", "what do I have today"
+or "my schedule today" shows the whole of today, its events that are over dimmed among the rest,
+with the free time still from now. In Ask mode it joins the conversation, and straight after it
+"what about Thurs", "and Friday?", "next Monday", "tmrw?", "the day after" or "yesterday?" sums
+up that day the same way. It is recognised by fixed rules before anything is sent anywhere, and
+worked out on this Mac: your calendar is never sent to ChatGPT or Claude. A follow-up asked of
+On this Mac ("am I free at 3?") is given the summary, so Apple's on-device model can answer it
+without anything leaving your Mac; ChatGPT and Claude are told only that a summary was shown
+here and stays private, in its place and in that of On this Mac's answers from it, and the box
+says so over their answer. "Ask ChatGPT anyway" (or whoever answers) sends only the words you
+typed. On this Mac can also read your calendar itself when you ask it about it (see Your
+calendar, to On this Mac, under Quick Ask).
 
 **Weather.** The temperature on the home page beside a symbol for the sky, with the day's high
 and low and, when rain is on the way, when it should start: "Rain in about 20 min", "Rain
@@ -552,14 +555,16 @@ your day, the travel time Quick Calendar allows before an event with a place (sa
 and whether a time you asked about is free. Its instructions say what day and time it is as you ask
 and in which time zone, so "today", "tomorrow morning" and "this Friday" are the right days; an hour
 said without am or pm ("at 8") is checked for the morning and the evening, and the answer covers
-both unless it's clear which you meant. The tool only reads: nothing it can do adds, changes or
-deletes an event (adding one is still only Quick Calendar's Add), and what it reads stays with
-Apple's model on this Mac. With calendar access off it says so, and the box offers the button to
-allow it. A question like that meant for ChatGPT or Claude isn't sent: the box says your calendar
-stays on this Mac and offers Ask Apple's model in one click, or asking them the question alone
-anyway. An answer made from your calendar is never passed on to them in a follow-up (they're told
-only that there was one), and ChatGPT or Claude isn't offered under it. Settings › Quick Ask › Let
-Apple's model read your calendar turns it off (it's on unless you do, since nothing leaves the Mac).
+both unless it's clear which you meant. Asked what's on a day, today included, it gives the whole
+day and says which events are over; asked what's left today, only what's still to come; asked
+what's next, that one event. The tool only reads: nothing it can do adds, changes or deletes an
+event (adding one is still only Quick Calendar's Add), and what it reads stays with Apple's model
+on this Mac. With calendar access off it says so, and the box offers the button to allow it. A
+question like that meant for ChatGPT or Claude isn't sent: the box says your calendar stays on this
+Mac and offers Ask Apple's model in one click, or asking them the question alone anyway. An answer
+made from your calendar is never passed on to them in a follow-up (they're told only that there was
+one), and ChatGPT or Claude isn't offered under it. Settings › Quick Ask › Let Apple's model read
+your calendar turns it off (it's on unless you do, since nothing leaves the Mac).
 
 Islet keeps nothing. Your questions and their answers stay in memory while the island is open,
 for follow-ups, and are gone when it closes — nothing is saved, logged, or put on the clipboard

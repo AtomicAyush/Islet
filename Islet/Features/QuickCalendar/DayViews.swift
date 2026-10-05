@@ -268,11 +268,13 @@ private struct DayRow: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(.islandText(0.5))
             case .event(let event):
-                mark(Circle().fill(.islandAccent(.quickCalendar)).frame(width: 6, height: 6))
-                time(words.format.range(event.start, event.end), alpha: 0.6)
+                // In the whole of today, the events that are over are quieter.
+                let ended = plan.hasEnded(event)
+                mark(Circle().fill(.islandAccent(.quickCalendar)).frame(width: 6, height: 6).opacity(ended ? 0.5 : 1))
+                time(words.format.range(event.start, event.end), alpha: ended ? 0.45 : 0.6)
                 Text(Clashes.named(event))
                     .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.islandText(0.95))
+                    .foregroundStyle(.islandText(ended ? 0.55 : 0.95))
                     .layoutPriority(1)
                 if event.isOnline {
                     Image(systemName: "video.fill")
@@ -317,22 +319,24 @@ struct DaySummaryAnswer: View {
     let model: QuickCalendarModel
     /// The day summed up: any day, gone by or to come.
     let day: Date
+    /// All of today, its events that are over among the rest, rather than from now on.
+    let whole: Bool
     let anyway: InputAnyway?
 
     /// The day as the box shows it, in words, for a follow-up asked of the model on this
     /// Mac: the date, and every row read out.
-    static func words(model: QuickCalendarModel, day: Date) -> String {
+    static func words(model: QuickCalendarModel, day: Date, whole: Bool) -> String {
         let format = QuickCalendarFormat(model: model)
         guard model.access == .granted else {
             return "\(format.longDay(day)): Calendar isn't allowed to be read, so the day wasn't summed up."
         }
-        return "\(format.longDay(day)), from Calendar. " + DayWords(format: format).spoken(model.plan(on: day, at: model.now()))
+        return "\(format.longDay(day)), from Calendar. " + DayWords(format: format).spoken(model.plan(on: day, at: model.now(), whole: whole))
     }
 
     var body: some View {
         let words = DayWords(format: QuickCalendarFormat(model: model))
         VStack(alignment: .leading, spacing: 6) {
-            let plan = model.access == .granted ? model.plan(on: day, at: model.now()) : nil
+            let plan = model.access == .granted ? model.plan(on: day, at: model.now(), whole: whole) : nil
             if let plan {
                 Text(words.headline(plan))
                     .font(.system(size: 12.5, weight: .semibold))
