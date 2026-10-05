@@ -16,14 +16,16 @@ final class ChatGPTModel {
         case working
         /// Only agents are at work, the replies done.
         case agents
+        /// Only a goal keeps it at work, between the turns Codex starts itself.
+        case goal
 
         /// A session's own mark.
-        init(_ state: ChatGPTSessionState) {
-            switch state {
+        init(_ session: ChatGPTSession) {
+            switch session.state {
             case .working: self = .working
             case .needsPermission: self = .needsPermission
             case .waitingForInput: self = .waitingForInput
-            case .idle: self = .agents
+            case .idle: self = session.agentsAtWork.isEmpty ? .goal : .agents
             }
         }
     }
@@ -45,10 +47,14 @@ final class ChatGPTModel {
     var displayed: ChatGPTSession? { shown.first }
     /// The agents at work in every session shown.
     var runningAgentCount: Int { shown.reduce(0) { $0 + $1.agentsAtWork.count } }
-    /// How far the displayed session's plan has got; `nil` without one.
-    var planFraction: Double? { displayed?.planFraction }
+    /// How far the sessions shown have got, on average, of those with a measure of it;
+    /// `nil` when none has one.
+    var fraction: Double? {
+        let fractions = shown.compactMap(\.progress?.fraction)
+        return fractions.isEmpty ? nil : fractions.reduce(0, +) / Double(fractions.count)
+    }
 
-    var mark: Mark? { displayed.map { Mark($0.state) } }
+    var mark: Mark? { displayed.map(Mark.init) }
     /// Whether a session is waiting on the person: it is then the one displayed.
     var needsYou: Bool { displayed?.state.needsYou ?? false }
 

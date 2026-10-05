@@ -4,18 +4,22 @@ import SwiftUI
 /// ChatGPT at work, beside the notch: a speech bubble left of the camera while a chat or
 /// a Codex thread works on a reply, a raised hand while one waits for permission, a
 /// question mark while one asks something, and right of it how long the turn has been
-/// going, or while only its agents are at work, how many beside a spinner. In the bubble,
-/// the mark sits in a ring that fills as the turn's plan gets done. Opened, a row for
-/// each session: its project (or for a plain chat, the start of the prompt), what it is
-/// doing and for how long, what was asked, its plan as a checklist, and the agents it
-/// has sent off, with what each is doing. Clicking a session brings forward the app it
-/// runs in, and in the ChatGPT app, the chat itself.
+/// going; or while agents are at work, how many, beside a ring filling as its plan or
+/// its agents get done, else a spinner. In the bubble, the mark sits in that ring while
+/// there is one. Opened, a row for each session:
+/// its project (or for a plain chat, the start of the prompt), what it is doing and for
+/// how long, what was asked, the turn's steps so far, its goal, its plan as a checklist,
+/// the agents it has sent off, with what each is doing, and the commands it has left
+/// running. Clicking a session brings forward the app it runs in, and in the ChatGPT
+/// app, the chat itself.
 ///
 /// ChatGPT says what it is doing through Codex's hooks, and `Scripts/chatgpt-hook.sh`
 /// keeps a file per session for Islet (`ChatGPTSessionMonitor`), alongside the banners
 /// it puts up. Without the hooks, and until the person trusts them in ChatGPT, there are
 /// no files, and nothing shows. A turn that fails fires no hook; its end is read from the
-/// thread's rollout file (`ChatGPTRollout`).
+/// thread's rollout file (`ChatGPTRollout`), and so is the end of a command left
+/// running that no hook reports. A thread's goal and its queued prompts are read from
+/// Codex's own databases (`ChatGPTCodexData`), read-only.
 ///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead, as Claude Code does. There it gives way to the Sound
@@ -92,6 +96,9 @@ final class ChatGPTFeature: Feature {
             FeaturePreview(title: "Several chats and agents") { [weak self] in
                 self?.preview(ChatGPTSamples.several(now: Date()))
             },
+            FeaturePreview(title: "Chat with tasks at work") { [weak self] in
+                self?.preview(ChatGPTSamples.progress(now: Date()))
+            },
         ]
     }
 
@@ -152,19 +159,27 @@ final class ChatGPTActivity: IslandActivity {
     let name = "ChatGPT"
     var spokenStatus: String? {
         guard let session = model.displayed else { return nil }
+        var parts: [String]
         switch session.state {
         case .needsPermission: return "Needs permission"
         case .waitingForInput: return "Has a question"
         case .working:
-            var parts = [session.record.step.map(ChatGPTToolWords.doing) ?? "Working"]
+            parts = [session.record.step.map(ChatGPTToolWords.doing) ?? "Working"]
             if !session.plan.isEmpty {
                 parts.append("\(session.record.planDone) of \(session.plan.count) plan steps done")
             }
-            return parts.joined(separator: ", ")
         case .idle:
-            let count = model.runningAgentCount
-            return count == 1 ? "1 agent at work" : "\(count) agents at work"
+            parts = []
         }
+        // The agents at work and how far they have got, as the compact island reads them,
+        // its plan said already. Commands left running are left to the opened page.
+        let agents = model.runningAgentCount
+        if agents > 0 {
+            parts.append(ChatGPTText.background(agents: agents, fraction: session.plan.isEmpty ? model.fraction : nil))
+        } else if session.state == .idle {
+            parts.append("Working on the goal")
+        }
+        return parts.joined(separator: ", ")
     }
     let priority = ActivityPriority.background
     let symbol = "text.bubble.fill"

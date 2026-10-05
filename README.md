@@ -378,17 +378,28 @@ was started to do.
 bubble breathes left of the camera and the turn's time counts up right of it. While it waits for
 your permission the bubble turns orange with a hand at its corner, and while it has asked you
 something, with a question mark there instead, never to be taken for Claude Code's, and the time
-counts how long it has waited; once the reply is done and only the agents it sent off are at
-work, how many beside a spinner. In the bubble beside music, a ring round the speech bubble
-fills as the turn's plan gets done. Opened, there is a row for each chat: its project (or the
-start of what you asked, for a plain chat outside a project), what it is doing ("Running swift",
-"Editing Store.swift and 2 more") and for how long, what you asked, the turn's plan as a
-checklist ("3 of 7 done"), and each agent it has sent off, by the task it was given, with what
-it is doing and how many steps it has taken. A plain chat that uses no tools shows for the few
-seconds of its reply. Click a chat to bring forward the app it runs in — the ChatGPT app, open
-at that chat, or the terminal or editor Codex runs in. Like Claude Code, it sits in the bubble
-beside music or a timer, behind the Sound Mixer unless a chat is waiting for you. ChatGPT tells
-Islet all this through Codex's hooks, with the script in `Scripts/` (see
+counts how long it has waited. While agents are at work, how many sits right of the camera in
+place of the time, beside a ring that fills as the chat gets on where there is a measure of it
+(its plan's steps done, else its agents done), or beside a spinner without one; the ring round
+the speech bubble in the bubble beside music fills the same way. Commands left running are not
+counted there, as Claude Code's are not, so a chat that once started a server keeps its time.
+Opened, there is a row for each chat: its project (or the start of
+what you asked, for a plain chat outside a project), what it is doing ("Running swift", "Editing
+Store.swift and 2 more") and for how long, with how many follow-ups wait their turn ("2
+queued"); what you asked; the turn's steps so far ("14 steps · swift, Store.swift, the computer
++3"); the thread's goal, with a bar of its tokens used where it has a budget, and whether it is
+paused, blocked or done; the turn's plan as a checklist with a bar ("3 of 7 done"); each agent
+it has sent off, by the task it was given or the nickname Codex gave it, with what it is doing,
+how many steps it has taken or how far its own plan has got, and "quiet 12 min" once it has been
+silent for ten minutes; and each command it has left running, by its program, with how long it has run.
+A command left running is listed until it ends, or until Codex goes, but never keeps a chat on
+show by itself: a server can run for days. One you were asked to allow is listed only once Codex
+shows it running, since one you declined never ran. A plain chat that uses no tools shows for the few
+seconds of its reply, and one with an active goal stays on show while Codex carries on towards
+it between the turns it starts itself. Click a chat to bring forward the app it runs in — the
+ChatGPT app, open at that chat, or the terminal or editor Codex runs in. Like Claude Code, it
+sits in the bubble beside music or a timer, behind the Sound Mixer unless a chat is waiting for
+you. ChatGPT tells Islet all this through Codex's hooks, with the script in `Scripts/` (see
 [ChatGPT hooks](#chatgpt-hooks)); nothing shows until the hooks are added and you have trusted
 them in ChatGPT. The hooks say nothing when a turn fails or you decline a permission, so Islet
 looks further: a turn the thread's rollout file says has ended is over, a chat whose Codex has
@@ -962,15 +973,24 @@ chat's file, UserPromptSubmit marks it working, PreToolUse and PostToolUse say w
 under way and carry the turn's plan, PermissionRequest and a question put to you mark it
 waiting, Stop and Interrupt mark it done, and SubagentStart and SubagentStop follow its agents.
 The two tool events run in the background, since they come with every tool; one arriving late or
-out of order never undoes a later event. The script keeps no command, patch, question, tool
-input or output, agent's reply or model, only the program a command runs and the first file a
-patch changes; nor a plain chat's folder, which ChatGPT names after its prompt. Codex waits for
-most of the hooks, so the script is quick, prints nothing and always succeeds. It needs `jq`,
-part of macOS from 15 on (`brew install jq` before that). It keeps the last 200 or so events
-other than tools' in `.hook-log.jsonl` beside the chats' files, a prompt and a reply by their
-length alone, and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing them. Its header
-lists what each chat's file holds. A new version of the script is installed by copying it over
-the old one; the hooks' lines never change, since a changed hook has to be trusted again.
+out of order never undoes a later event. From the same events the script keeps the turn's steps
+so far (`history`), the commands the chat has left running (`shells`), how far each agent's own
+plan has got, and the folder Codex keeps its files in (`codexHome`); a prompt that steers a turn
+under way carries it on, and a turn Codex starts by itself to carry on towards a goal counts as
+a new one. The script keeps no command, patch, question, tool input or output, what was typed
+into a command left running, agent's message, reply or plan steps, or model, only the program a
+command runs and the first file a patch changes; nor a plain chat's folder, which ChatGPT names
+after its prompt. What no hook says, Islet reads for itself, read-only: the end of a command
+left running from the thread's rollout file (its id alone, and whether the call's output begins by
+saying it is still running), and from Codex's own databases in
+that folder, the thread's goal (its objective's first words, its state and what it has used) and
+how many follow-ups wait in its queue, never their words. Codex waits for most of the hooks, so
+the script is quick, prints nothing and always succeeds. It needs `jq`, part of macOS from 15 on
+(`brew install jq` before that). It keeps the last 200 or so events other than tools' in
+`.hook-log.jsonl` beside the chats' files, a prompt and a reply by their length alone, and
+`ISLET_NOTIFY_DRY=1` prints its banners instead of showing them. Its header lists what each
+chat's file holds. A new version of the script is installed by copying it over the old one; the
+hooks' lines never change, since a changed hook has to be trusted again.
 
 ## Layout of the code
 

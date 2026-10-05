@@ -36,7 +36,7 @@ struct ChatGPTStep: Equatable, Sendable {
         case wait
         /// A picture being looked at.
         case image
-        /// The thread's goal being set or read.
+        /// The thread's goal being set, read or marked done.
         case goal
         /// Anything else; the name is the tool's.
         case other
@@ -67,16 +67,91 @@ struct ChatGPTAgent: Equatable, Identifiable, Sendable {
     var id: String
     /// Codex's word for the sort of agent: "default", "explorer", "worker".
     var type: String = ""
-    /// The task name it was sent off with ("fix_tests"), or "".
+    /// The task name it was sent off with ("fix_tests"), or the nickname Codex gave it
+    /// ("Fermat"), or "".
     var name: String = ""
     var isRunning = true
     var firstSeen: Date
     var ended: Date?
     var step: ChatGPTStep?
     var steps = 0
+    /// How many steps of its own plan are done, and how many it has; `nil` until it has
+    /// written one. The hook keeps no more of its plan than that.
+    var planDone: Int?
+    var planTotal: Int?
+    /// When the hook last heard from it: its start, or one of its tools starting or
+    /// ending. Between its tools it has no step, so this is all that says it is busy.
+    var seen: Date?
 
     /// When it last did anything the hook saw.
-    var lastSign: Date { [firstSeen, ended, step?.started].compactMap { $0 }.max() ?? firstSeen }
+    var lastSign: Date { [firstSeen, ended, step?.started, seen].compactMap { $0 }.max() ?? firstSeen }
+
+    /// How far its own plan has got; `nil` without one.
+    var planFraction: Double? {
+        guard let planTotal, planTotal > 0 else { return nil }
+        return min(1, Double(planDone ?? 0) / Double(planTotal))
+    }
+
+    /// How long it has gone without a sign, at `now`, once that is ten minutes or more;
+    /// `nil` before then, or once it has finished. It may be waiting on a long command,
+    /// or stuck.
+    func quiet(at now: Date) -> TimeInterval? {
+        guard isRunning else { return nil }
+        let quiet = now.timeIntervalSince(lastSign)
+        return quiet >= ChatGPTLiveness.quietAfter ? quiet : nil
+    }
+}
+
+/// One of the turn's steps so far, as the hook keeps them: a run of the same step,
+/// counted once.
+struct ChatGPTHistoryEntry: Equatable, Sendable {
+    var kind: ChatGPTStep.Kind
+    var name: String
+    var count = 0
+    /// How many times in a row.
+    var n = 1
+}
+
+/// A command the chat left running: one still under way once another tool started, or
+/// the turn stopped. The hook keeps only the program it runs.
+struct ChatGPTShell: Equatable, Identifiable, Sendable {
+    /// The call's id, as the rollout names it once it ends.
+    var id: String
+    var name: String
+    var started: Date
+    /// When it was seen to be left running.
+    var since: Date
+    /// Whether it had been asked permission for. One declined looks the same to the hook
+    /// as one let run, so it is listed only once the rollout shows it running.
+    var asked = false
+}
+
+/// A thread's goal, as Codex keeps it in its own database: what it is, how it stands,
+/// and how much it has used.
+struct ChatGPTGoal: Equatable, Sendable {
+    enum Status: String, Sendable {
+        case active
+        case paused
+        case blocked
+        case usageLimited = "usage_limited"
+        case budgetLimited = "budget_limited"
+        case complete
+    }
+
+    /// Its objective's first words, plain: the person's own, or ChatGPT's.
+    var title: String
+    var status: Status
+    /// The tokens it may use, where it was given a budget.
+    var budget: Int?
+    var used = 0
+    var seconds = 0
+    var updated: Date
+
+    /// How much of its budget it has used; `nil` without one.
+    var fraction: Double? {
+        guard let budget, budget > 0 else { return nil }
+        return min(1, Double(used) / Double(budget))
+    }
 }
 
 /// One session's file, as `Scripts/chatgpt-hook.sh` writes it. Its header lists the
@@ -112,6 +187,12 @@ struct ChatGPTSessionRecord: Equatable, Identifiable, Sendable {
     var steps = 0
     var plan: [ChatGPTPlanStep] = []
     var agents: [ChatGPTAgent] = []
+    /// Where Codex keeps its own files, as a full path; "" when the hook did not say.
+    var codexHome: String = ""
+    /// The turn's steps so far, oldest first.
+    var history: [ChatGPTHistoryEntry] = []
+    /// The chat's commands left running, as far as the hook knows.
+    var shells: [ChatGPTShell] = []
 
     /// When the turn on show began: the prompt's time, or failing that the state's.
     var turnStart: Date { turnStarted ?? since }
@@ -124,7 +205,7 @@ struct ChatGPTSessionRecord: Equatable, Identifiable, Sendable {
 extension ChatGPTSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
         case sessionId, project, cwd, transcriptPath, hostApp, pid, pidStarted, state, since, turnId, turnStarted
-        case updated, prompt, reply, step, steps, plan, agents
+        case updated, prompt, reply, step, steps, plan, agents, codexHome, history, shells
     }
 
     init(from decoder: Decoder) throws {
@@ -156,6 +237,11 @@ extension ChatGPTSessionRecord: Decodable {
         steps = max(0, (try? c.decodeIfPresent(Int.self, forKey: .steps)) ?? 0)
         plan = ((try? c.decodeIfPresent([Lenient<ChatGPTPlanStep>].self, forKey: .plan)) ?? []).compactMap(\.value)
         agents = ((try? c.decodeIfPresent([Lenient<ChatGPTAgent>].self, forKey: .agents)) ?? []).compactMap(\.value)
+        let home = (try? c.decodeIfPresent(String.self, forKey: .codexHome)) ?? ""
+        codexHome = home.hasPrefix("/") ? home : ""
+        history = ((try? c.decodeIfPresent([Lenient<ChatGPTHistoryEntry>].self, forKey: .history)) ?? [])
+            .compactMap(\.value)
+        shells = ((try? c.decodeIfPresent([Lenient<ChatGPTShell>].self, forKey: .shells)) ?? []).compactMap(\.value)
     }
 }
 
@@ -189,7 +275,7 @@ extension ChatGPTPlanStep: Decodable {
 
 extension ChatGPTAgent: Decodable {
     private enum Keys: String, CodingKey {
-        case id, type, name, status, firstSeen, ended, step, steps
+        case id, type, name, status, firstSeen, ended, step, steps, planDone, planTotal, seen
     }
 
     init(from decoder: Decoder) throws {
@@ -204,6 +290,47 @@ extension ChatGPTAgent: Decodable {
             .map(Date.init(timeIntervalSince1970:))
         step = (try? c.decodeIfPresent(Lenient<ChatGPTStep>.self, forKey: .step))?.value
         steps = max(0, (try? c.decodeIfPresent(Int.self, forKey: .steps)) ?? 0)
+        planDone = (try? c.decodeIfPresent(Int.self, forKey: .planDone)).flatMap { $0 }.map { max(0, $0) }
+        planTotal = (try? c.decodeIfPresent(Int.self, forKey: .planTotal)).flatMap { $0 }.map { max(0, $0) }
+        seen = (try? c.decodeIfPresent(Double.self, forKey: .seen)).flatMap { $0 }
+            .map(Date.init(timeIntervalSince1970:))
+    }
+}
+
+extension ChatGPTHistoryEntry: Decodable {
+    private enum Keys: String, CodingKey {
+        case kind, name, count, n
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        kind = ChatGPTStep.Kind(rawValue: (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? "") ?? .other
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
+        count = max(0, (try? c.decodeIfPresent(Int.self, forKey: .count)) ?? 0)
+        n = max(1, (try? c.decodeIfPresent(Int.self, forKey: .n)) ?? 1)
+    }
+}
+
+extension ChatGPTShell: Decodable {
+    private enum Keys: String, CodingKey {
+        case id, name, started, since, asked
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = try c.decode(String.self, forKey: .id)
+        guard !id.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "No id")
+        }
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
+        let started = (try? c.decodeIfPresent(Double.self, forKey: .started)).flatMap { $0 }
+        let since = (try? c.decodeIfPresent(Double.self, forKey: .since)).flatMap { $0 } ?? started
+        guard let since else {
+            throw DecodingError.dataCorruptedError(forKey: .since, in: c, debugDescription: "No times")
+        }
+        self.started = Date(timeIntervalSince1970: started ?? since)
+        self.since = Date(timeIntervalSince1970: since)
+        asked = (try? c.decodeIfPresent(Bool.self, forKey: .asked)) ?? false
     }
 }
 
@@ -288,6 +415,135 @@ enum ChatGPTRollout {
         }
         return nil
     }
+
+    // MARK: Commands' ends
+
+    /// How far back a rollout not read before is read for commands' ends, and the most
+    /// read at once: a command's end holds all it printed.
+    static let commandLookBack: Int64 = 4 * 1024 * 1024
+    static let commandReadLimit: Int64 = 8 * 1024 * 1024
+    /// How much further back a rollout not read before is searched, a piece at a time,
+    /// for the calls of the commands listed: an end lies somewhere after its call, and a
+    /// turn or two of long output can push it past the first look.
+    static let commandSearchLimit: Int64 = 64 * 1024 * 1024
+    /// How many of the latest ends, and of the latest seen running, are kept.
+    static let commandEndsKept = 256
+    private static let runningMark = Data("Process running with session ID".utf8)
+
+    /// What a rollout says of commands, read as it grows: those that have ended (left to
+    /// exit on their own with no hook to say so, stopped by Codex at an interrupt or when
+    /// the app cleans up its background terminals, or never started, a call declined) and
+    /// those still running once their call returned. Called off the main thread. `known`
+    /// is the last read, carried on from; `calls` the commands listed, which a rollout not
+    /// read before is searched back for.
+    static func commandEnds(path: String, known: ChatGPTCommandEnds?, calls: [String] = []) -> ChatGPTCommandEnds? {
+        guard !path.isEmpty,
+              let read = ClaudeFollowedFile.read(path, known: known?.file, lookBack: commandLookBack,
+                                                 limit: commandReadLimit)
+        else { return nil }
+        var ends = read.fresh ? ChatGPTCommandEnds() : (known ?? ChatGPTCommandEnds())
+        ends.file = read.file
+        let lines = read.fresh && read.cut ? earlierLines(path: path, before: read.file.offset, calls: calls) : read.lines
+        for line in lines {
+            guard let sign = commandSign(in: line) else { continue }
+            ends.ended.removeAll { $0 == sign.id }
+            ends.running.removeAll { $0 == sign.id }
+            if sign.running { ends.running.append(sign.id) } else { ends.ended.append(sign.id) }
+        }
+        let listed = Set(calls)
+        ends.ended = trimmed(ends.ended, keeping: listed)
+        ends.running = trimmed(ends.running, keeping: listed)
+        return ends
+    }
+
+    /// The latest `commandEndsKept` of `ids`, those listed kept before any other.
+    private static func trimmed(_ ids: [String], keeping listed: Set<String>) -> [String] {
+        guard ids.count > commandEndsKept else { return ids }
+        var excess = ids.count - commandEndsKept
+        return ids.filter { id in
+            guard excess > 0, !listed.contains(id) else { return true }
+            excess -= 1
+            return false
+        }.suffix(commandEndsKept).map { $0 }
+    }
+
+    /// The whole lines of a rollout up to `end`, read from far enough back to hold every
+    /// one of `calls` (or their ends, or the file's start), and at least `commandLookBack`;
+    /// at most `commandSearchLimit`. Read back a piece at a time, only lines that could
+    /// say a command ended or kept running are kept.
+    static func earlierLines(path: String, before end: Int64, calls: [String]) -> [Data] {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
+        defer { try? handle.close() }
+        var unseen = Set(calls.map { Data("\"\($0)\"".utf8) })
+        let newline = UInt8(ascii: "\n")
+        let piece: Int64 = 4 * 1024 * 1024
+        var pieces: [[Data]] = []
+        var upTo = end
+        // A piece's first line, cut by its start, is read whole with the piece before.
+        var carry = Data()
+        while upTo > 0 {
+            let from = max(0, upTo - piece)
+            try? handle.seek(toOffset: UInt64(from))
+            guard var data = try? handle.read(upToCount: Int(upTo - from)) else { break }
+            data.append(carry)
+            var parts = data.split(separator: newline, omittingEmptySubsequences: false)
+            carry = from > 0 && !parts.isEmpty ? Data(parts.removeFirst()) : Data()
+            // A line longer than a search is let go.
+            if carry.count > Int(commandReadLimit) { carry = Data() }
+            var kept: [Data] = []
+            for part in parts where !part.isEmpty {
+                let line = Data(part)
+                for call in unseen where line.range(of: call) != nil { unseen.remove(call) }
+                if line.range(of: Data(#""CommandExecution""#.utf8)) != nil
+                    || line.range(of: Data(#""function_call_output""#.utf8)) != nil {
+                    kept.append(line)
+                }
+            }
+            pieces.append(kept)
+            upTo = from
+            if unseen.isEmpty, end - upTo >= commandLookBack { break }
+            if end - upTo >= commandSearchLimit { break }
+        }
+        return pieces.reversed().flatMap { $0 }
+    }
+
+    /// The command `line` says something of, and whether it is running: an end recorded
+    /// as a CommandExecution item, or the output its call returned, which begins by
+    /// saying whether the process is still running. Of such a line only the id is taken,
+    /// and of an output only whether its first lines say so: never the command, nor what
+    /// it printed.
+    static func commandSign(in line: Data) -> (id: String, running: Bool)? {
+        if line.range(of: Data(#""CommandExecution""#.utf8)) != nil,
+           let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+           object["type"] as? String == "event_msg",
+           let payload = object["payload"] as? [String: Any],
+           payload["type"] as? String == "item_completed",
+           let item = payload["item"] as? [String: Any],
+           item["type"] as? String == "CommandExecution",
+           let id = item["id"] as? String, !id.isEmpty {
+            return (id, false)
+        }
+        guard line.range(of: Data(#""function_call_output""#.utf8)) != nil,
+              let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              object["type"] as? String == "response_item",
+              let payload = object["payload"] as? [String: Any],
+              payload["type"] as? String == "function_call_output",
+              let id = payload["call_id"] as? String, !id.isEmpty
+        else { return nil }
+        let output = payload["output"] as? String
+            ?? (payload["output"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.first ?? ""
+        // The process's state is said before what it printed.
+        let head = Data(output.prefix(200).components(separatedBy: "\nOutput:").first?.utf8 ?? "".utf8)
+        return (id, head.range(of: runningMark) != nil)
+    }
+}
+
+/// What a rollout says of commands, by their calls' ids, the latest last: those ended,
+/// and those whose call returned with them still running; and where reading it got to.
+struct ChatGPTCommandEnds: Equatable, Sendable {
+    var file = ClaudeFollowedFile()
+    var ended: [String] = []
+    var running: [String] = []
 }
 
 // MARK: - What is shown
@@ -299,6 +555,13 @@ struct ChatGPTSession: Equatable, Identifiable, Sendable {
     var state: ChatGPTSessionState
     /// Its agents still at work: running, as the hook says, and not gone quiet.
     var agentsAtWork: [ChatGPTAgent] = []
+    /// Its commands left running, the oldest first: those the hook listed that the
+    /// rollout has not seen end, once left a moment.
+    var terminals: [ChatGPTShell] = []
+    /// The thread's goal, as Codex's database last said; `nil` without one.
+    var goal: ChatGPTGoal?
+    /// How many prompts wait in its queue.
+    var queuedCount = 0
     var id: String { record.id }
 
     /// The agents listed under it: while the turn goes on, those at work and those
@@ -314,6 +577,38 @@ struct ChatGPTSession: Equatable, Identifiable, Sendable {
     var planFraction: Double? {
         plan.isEmpty ? nil : Double(record.planDone) / Double(plan.count)
     }
+
+    /// The turn's steps so far, while it goes on.
+    var history: [ChatGPTHistoryEntry] { state == .idle ? [] : record.history }
+    /// The prompts waiting their turn, while one goes on.
+    var queued: Int { state == .idle ? 0 : queuedCount }
+    /// How far the session has got, by the best measure there is: its plan; else, while
+    /// any is at work, how many of the turn's agents are done, of two or more. `nil`
+    /// without either. A goal's use of its token budget is no such measure: a goal may
+    /// be met with most of it left, or run out of it unmet.
+    var progress: ChatGPTProgress? {
+        if !plan.isEmpty { return ChatGPTProgress(done: record.planDone, total: plan.count, source: .plan) }
+        let atWork = Set(agentsAtWork.map(\.id))
+        let counted = record.agents.filter { atWork.contains($0.id) || !$0.isRunning }
+        if !atWork.isEmpty, counted.count >= 2 {
+            return ChatGPTProgress(done: counted.filter { !$0.isRunning }.count, total: counted.count, source: .agents)
+        }
+        return nil
+    }
+}
+
+/// How far a session has got: so many of so many, of its plan's steps or its agents.
+struct ChatGPTProgress: Equatable, Sendable {
+    enum Source: Equatable, Sendable {
+        case plan
+        case agents
+    }
+
+    var done: Int
+    var total: Int
+    var source: Source
+
+    var fraction: Double { total > 0 ? min(1, max(0, Double(done) / Double(total))) : 0 }
 }
 
 /// Which sessions are live, from their files, their rollouts and their processes.
@@ -325,6 +620,11 @@ struct ChatGPTSession: Equatable, Identifiable, Sendable {
 /// ended is over. A turn whose hooks and rollout have been quiet for ten minutes is
 /// over; an hour, while a tool is under way and Codex is still there (a long build,
 /// say). An agent that has gone as quiet is taken to have stopped.
+///
+/// A session is shown while it is under way, while its agents are at work, and while a
+/// goal keeps Codex at it between the turns it starts itself. Its commands left running
+/// are listed under it, but never keep it shown by themselves: a server may run for
+/// days. One ends when its hook or the rollout says so, or its Codex goes.
 enum ChatGPTLiveness {
     /// A turn silent this long, in its hooks and its rollout, is taken to be over.
     static let staleAfter: TimeInterval = 10 * 60
@@ -332,6 +632,14 @@ enum ChatGPTLiveness {
     static let longStepStaleAfter: TimeInterval = 60 * 60
     /// A session's file this old is ignored: its session ended without saying so.
     static let forgottenAfter: TimeInterval = 24 * 3600
+    /// An agent silent this long is marked as quiet, as long as a turn is given. Less
+    /// would mark an agent simply running a test or a build.
+    static let quietAfter: TimeInterval = staleAfter
+    /// A command is listed as left running only after this: its end, which the hook
+    /// hears in the background, may land a moment after the next tool's start.
+    static let terminalSettle: TimeInterval = 2
+    /// An active goal updated this recently keeps its session shown between turns.
+    static let goalFreshFor: TimeInterval = 2 * 60
 
     static func isForgotten(_ record: ChatGPTSessionRecord, now: Date) -> Bool {
         now.timeIntervalSince(record.updated) > forgottenAfter
@@ -373,21 +681,49 @@ enum ChatGPTLiveness {
         }
     }
 
+    /// The session's commands left running: those its file lists, less those `ended`
+    /// (by the rollout), once left for `terminalSettle`; one that was asked permission
+    /// for only once the rollout has it `running`, since one declined never ran. A
+    /// session whose Codex has gone has none.
+    static func terminals(
+        _ record: ChatGPTSessionRecord, ended: Set<String>, running: Set<String> = [], process: Bool?, now: Date
+    ) -> [ChatGPTShell] {
+        guard process != false else { return [] }
+        return record.shells
+            .filter { !ended.contains($0.id) && (!$0.asked || running.contains($0.id))
+                && now.timeIntervalSince($0.since) >= terminalSettle }
+            .sorted { $0.started < $1.started }
+    }
+
+    /// Whether `goal` keeps its session shown: active, updated in the last two minutes,
+    /// and its Codex not gone.
+    static func goalKeepsShown(_ goal: ChatGPTGoal?, process: Bool?, now: Date) -> Bool {
+        guard let goal, goal.status == .active, process != false else { return false }
+        return now.timeIntervalSince(goal.updated) <= goalFreshFor
+    }
+
     /// The sessions to show, in the order they are shown: those waiting for permission
     /// first, then those waiting for an answer, the longest waiting first; then those
-    /// working, the longest going first; then those with only agents at work, the oldest
-    /// first. The first is the one the compact island speaks for.
+    /// working, the longest going first; then those with only agents or a goal at work,
+    /// the oldest first. The first is the one the compact island speaks for.
     static func sessions(
         _ records: [ChatGPTSessionRecord], rollouts: [String: ChatGPTRolloutProbe] = [:],
-        processes: [String: Bool] = [:], now: Date
+        processes: [String: Bool] = [:], commandEnds: [String: Set<String>] = [:],
+        commandsRunning: [String: Set<String>] = [:], goals: [String: ChatGPTGoal] = [:], queued: [String: Int] = [:], now: Date
     ) -> [ChatGPTSession] {
         let shown = records.compactMap { record -> ChatGPTSession? in
             guard !isForgotten(record, now: now), processes[record.id] != false else { return nil }
             let process = processes[record.id]
             let state = state(of: record, rollout: rollouts[record.id], process: process, now: now)
             let agents = agentsAtWork(record, process: process, now: now)
-            guard state != .idle || !agents.isEmpty else { return nil }
-            return ChatGPTSession(record: record, state: state, agentsAtWork: agents)
+            let goal = goals[record.id]
+            guard state != .idle || !agents.isEmpty || goalKeepsShown(goal, process: process, now: now)
+            else { return nil }
+            return ChatGPTSession(
+                record: record, state: state, agentsAtWork: agents,
+                terminals: terminals(record, ended: commandEnds[record.id] ?? [],
+                                     running: commandsRunning[record.id] ?? [], process: process, now: now),
+                goal: goal, queuedCount: queued[record.id] ?? 0)
         }
         return shown.sorted { a, b in
             let (ra, rb) = (rank(a.state), rank(b.state))
@@ -399,7 +735,8 @@ enum ChatGPTLiveness {
     }
 
     static func sessions(_ snapshot: ChatGPTSessionSnapshot, now: Date) -> [ChatGPTSession] {
-        sessions(snapshot.records, rollouts: snapshot.rollouts, processes: snapshot.processes, now: now)
+        sessions(snapshot.records, rollouts: snapshot.rollouts, processes: snapshot.processes,
+                 commandEnds: snapshot.commandEnds, commandsRunning: snapshot.commandsRunning, goals: snapshot.goals, queued: snapshot.queued, now: now)
     }
 
     private static func rank(_ state: ChatGPTSessionState) -> Int {
@@ -426,8 +763,9 @@ enum ChatGPTLiveness {
         /// agents at work, so a turn that fails or goes quiet is seen to end.
         case closely
         /// Every minute: a session's file says it is under way, or has agents running,
-        /// while it is not shown, and it comes back if it carries on; or a session that
-        /// ended without saying so is let go once a day old.
+        /// or its thread has an active goal, while it is not shown, and it comes back if
+        /// it carries on; or a session that ended without saying so is let go once a day
+        /// old.
         case loosely
     }
 
@@ -435,8 +773,8 @@ enum ChatGPTLiveness {
     static func watch(_ snapshot: ChatGPTSessionSnapshot, now: Date) -> Watch? {
         if !sessions(snapshot, now: now).isEmpty { return .closely }
         let hidden = snapshot.records.contains {
-            ($0.state != .idle || !$0.runningAgents.isEmpty) && !isForgotten($0, now: now)
-                && snapshot.processes[$0.id] != false
+            ($0.state != .idle || !$0.runningAgents.isEmpty || snapshot.goals[$0.id]?.status == .active)
+                && !isForgotten($0, now: now) && snapshot.processes[$0.id] != false
         }
         return hidden ? .loosely : nil
     }
@@ -462,16 +800,37 @@ enum ChatGPTToolWords {
         case .spawn: return "Starting an agent"
         case .wait: return "Waiting for agents"
         case .image: return "Looking at an image"
-        case .goal: return "Setting a goal"
+        case .goal: return "Working on the goal"
         case .other:
+            if let words = agentTools[bare(name)] { return words }
             let readable = readable(name)
             return readable.isEmpty ? "Working" : "Using \(readable)"
         }
     }
 
+    /// The tools for agents that are neither a spawn nor a wait, by name.
+    private static let agentTools = [
+        "list_agents": "Checking on agents",
+        "send_message": "Messaging an agent",
+        "send_input": "Messaging an agent",
+        "followup_task": "Giving an agent more to do",
+        "interrupt_agent": "Stopping an agent",
+        "close_agent": "Closing an agent",
+        "resume_agent": "Resuming an agent",
+    ]
+
+    /// A tool's name without the namespace Codex glues to the front of the tools for
+    /// agents: "collaborationlist_agents" as "list_agents".
+    static func bare(_ name: String) -> String {
+        for prefix in ["collaboration", "multi_agent_v1"] where name.hasPrefix(prefix) && name.count > prefix.count {
+            return String(name.dropFirst(prefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        }
+        return name
+    }
+
     /// A tool's or a task's name as words: "write_stdin" as "write stdin".
     static func readable(_ name: String) -> String {
-        name.replacingOccurrences(of: "_", with: " ")
+        bare(name).replacingOccurrences(of: "_", with: " ")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }

@@ -66,16 +66,36 @@
 #   plan            the turn's plan, as its latest update_plan left it:
 #                   [{step, status}], status pending, in_progress or completed
 #   agents          the agents the session has sent off: [{id, type, name, status
-#                   (running or done), firstSeen, ended, step, steps}]
-#   pending         agents asked for and not yet started, by the name they were given:
-#                   [{name, t}]
+#                   (running or done), firstSeen, ended, step, steps, planDone,
+#                   planTotal, seen}], planDone and planTotal how far its own plan has
+#                   got, once it has one, and seen when it last started or used a tool;
+#                   those done are kept till the next prompt
+#   pending         agents asked for and not yet started, by the name they were given,
+#                   and where a spawn's end said which it started, its id: [{name, t, id}]
 #   doneIds         the latest tools to finish, since their events can arrive out of
 #                   order
 #   endedAgents     the latest agents to stop, so that a tool of theirs finishing after
 #                   them does not bring them back
+#   codexHome       the folder Codex keeps its own files in ($CODEX_HOME, or ~/.codex),
+#                   where Islet reads the thread's goal and queued prompts, read-only;
+#                   "" when not a full path
+#   history         the turn's steps so far, oldest first, a run of the same one counted
+#                   once: [{kind, name, count, n}], as a step's, at most 12
+#   shells          the chat's commands left running, after another tool started or the
+#                   turn stopped: [{id, name, started, since, asked}], name the program,
+#                   since when it was left, and asked whether permission was asked for it,
+#                   for one declined never ran (Islet lists it only once the rollout says
+#                   it is running); at most 8, those asked for let go first. A turn's end
+#                   leaves them running; their own end, an interrupt or a new session ends
+#                   them
+#   turns           the latest turns seen, so that a tool from one Codex started itself
+#                   (carrying on towards a goal, with no prompt) is told from a late one
+# A field is only ever added: the version goes up only if one comes to mean something
+# else.
 # Never kept: a command (only the program it runs), a patch or a file's folder, what a
-# tool was given or gave back, a question, what a permission is asked for, an agent's
-# reply, the model, or a plain chat's folder.
+# tool was given or gave back, what was typed into a command left running, a question,
+# what a permission is asked for, an agent's message or reply, its plan's steps, the
+# model, or a plain chat's folder.
 #
 # It has to be quick, and must never fail the hook: Codex waits for most of them, and
 # takes anything printed by some as a decision. So nothing is printed (but a dry run's
@@ -333,16 +353,41 @@ program='
   # started in.
   | ($isTool and $agent == ""
      and ($over != "" or ($current != "" and $turn != "" and $turn != $current))) as $late
+  # A v1 agent starting comes as a prompt carrying its id: it is the agent starting, not
+  # a prompt of the chat, and is taken as SubagentStart is.
+  | ($kind == "prompt" and $agent != "") as $agentPrompt
+  | (if $agentPrompt then "agent-start" else $kind end) as $kind
+  # A tool or a stop of the chat from a turn never seen is from one Codex started itself,
+  # carrying on towards a goal with no prompt: a new turn, where one from a turn seen
+  # before is late.
+  | ($p.turns // [] | if type == "array" then map(strings) else [] end) as $turns
+  | ($agent == "" and ($isTool or $kind == "stop") and $over != "" and $turn != "" and $turn != $current
+     and ($turns | index([$turn]) | not)) as $selfStart
+  # A prompt into the turn under way steers it: the turn goes on.
+  | ($kind == "prompt" and $turn != "" and $turn == $current and $over == "") as $steer
+  | (($kind == "prompt" and ($steer | not)) or $selfStart) as $fresh
+  # A command left running may end in a later turn, or after the last.
+  | ($p.shells // [] | if type == "array" then map(objects) else [] end) as $shells
+  | ($late and ($selfStart | not) and (($kind == "tool-end" and ($shells | map(.id) | index($use))) | not)) as $late
+  | (if $selfStart then "" else $current end) as $current
+  | (if $selfStart then "" else $over end) as $over
+  # Where Codex keeps its own files: only a full path.
+  | ($ENV.CODEX_HOME // "" | if . == "" and ($ENV.HOME // "") != "" then $ENV.HOME + "/.codex" else . end
+     | if startswith("/") then sub("(?<=.)/+$"; "") else "" end) as $codexHome
   | ($isTool and ($tool | toolkind) == "ask") as $question
   | (if $isTool then ($in | step($use; $t)) else null end) as $call
   | ($p.step | if type == "object" then . else null end) as $was
   | if ($kind == "stop" and $again) or $late then null, "", "" else
 
   # Who is waiting on you, and on what.
+  # The step under way is the call asked for only if it started a moment before: the ask
+  # can land before the start of its call, with a command left under way since earlier.
   ($agents | map(select(.id == $agent)) | first) as $asker
   | (if $kind == "permission" then
        {state: "needsPermission", since: $t, askedBy: $agent,
-        askId: ((if $agent == "" then $was else ($asker.step // null) end)
+        askId: ((if $agent == "" then
+                   ($was | if type == "object" and (.started | type) == "number" and .started >= $t - 1 then . else null end)
+                 else ($asker.step // null) end)
                 | if type == "object" then (.id // "" | text) else "" end)}
      elif $kind == "tool-start" and $question and ($done | index([$use]) | not) then
        {state: "waitingForInput", since: $t, askedBy: $agent, askId: $use}
@@ -366,26 +411,63 @@ program='
 
   # The chat itself: its step, how many it has taken, and its plan.
   | ($isTool and $agent == "") as $mine
-  | (if $kind == "prompt" or $kind == "stop" or $kind == "interrupt" or ($kind == "start" and ($compacted | not)) then null
+  | (if ($fresh and ($isTool | not)) or $kind == "stop" or $kind == "interrupt" or ($kind == "start" and ($compacted | not)) then null
      elif $mine and $kind == "tool-start" and ($done | index([$use]) | not) then $call
      elif $mine and $kind == "tool-end" and ($was.id // null) == $use then null
      else $was end) as $step
-  | (if $kind == "prompt" or ($kind == "start" and ($compacted | not)) then 0
-     elif $mine and $kind == "tool-start" then ($p.steps // 0 | if type == "number" then . + 1 else 1 end)
-     else ($p.steps // 0 | if type == "number" then . else 0 end) end) as $steps
-  | (if $kind == "prompt" or ($kind == "start" and ($compacted | not)) then []
-     elif $mine and $kind == "tool-end" and $call.kind == "plan" then ($in | planned)
+  | ((if $fresh or ($kind == "start" and ($compacted | not)) then 0
+      else ($p.steps // 0 | if type == "number" then . else 0 end) end)
+     + (if $mine and $kind == "tool-start" then 1 else 0 end)) as $steps
+  | (if $mine and $kind == "tool-end" and $call.kind == "plan" then ($in | planned)
+     elif $fresh or ($kind == "start" and ($compacted | not)) then []
      else list($p.plan) end) as $plan
+  # The steps of the turn so far, a run of the same one counted once.
+  | (if $fresh or ($kind == "start" and ($compacted | not)) then [] else list($p.history) end
+     | if $mine and $kind == "tool-start" then
+         (.[-1] // {}) as $last
+         | if ($last.kind // "") == $call.kind and ($last.name // "") == $call.name
+           then .[-1].n = (($last.n // 1) + 1) | .[-1].count = $call.count
+           else . + [{kind: $call.kind, name: $call.name, count: $call.count, n: 1}] end
+       else . end
+     | .[-12:]) as $history
+  # Its commands left running: the one under way once another tool starts, or the turn
+  # stops, before its own end has come. Codex stops them at an interrupt. One the chat
+  # was still waiting for permission for may have been declined, which no hook says;
+  # where the call asked for is not known, one started well before the ask was not it.
+  | ($was | if type == "object" and .kind == "shell" and (.id // "" | text) != "" then . else null end) as $left
+  | ($shells
+     | if $left != null and (($mine and $kind == "tool-start" and $use != $left.id) or $kind == "stop")
+          and ($done | index([$left.id]) | not) and (map(.id) | index($left.id) | not)
+       then . + [{id: $left.id, name: ($left.name // "" | text), started: ($left.started // $t), since: $t,
+                  asked: ($old == "needsPermission" and $askedBy == ""
+                          and (if $askId == "" then ($left.started // $t | if type == "number" then . else $t end) >= $since - 1
+                               else $askId == $left.id end))}]
+       else . end
+     | if $kind == "tool-end" and $use != "" then map(select(.id != $use)) else . end
+     | if $kind == "interrupt" or ($kind == "start" and ($compacted | not)) then [] else . end
+     | if length > 8 then (map(select(.asked == true)) + map(select(.asked != true))) else . end
+     | .[-8:]) as $shells
 
   # Agents: started, working, stopped; named by the spawn call that asked for them.
   | ($in | given | if type == "object" then .task_name // .name // "" else "" end | text | plain(40)) as $asked
-  | (if $kind == "tool-start" and $call.kind == "spawn" and $asked != "" then
+  # The end of a v1 spawn says which agent it started, and the nickname Codex gave it.
+  | (if $kind == "tool-end" and $agent == "" and $call.kind == "spawn" then
+       ($in.tool_response | if type == "string" then (try fromjson catch null) else . end
+        | if type == "object" then {id: (.agent_id | text), name: (.nickname | text | plain(40))} else null end)
+     else null end // {id: "", name: ""}) as $spawned
+  | (if $spawned.id != "" and $spawned.name != "" then
+       (if ($agents | map(.id) | index($spawned.id)) then
+          {agents: ($agents | map(if .id == $spawned.id and (.name // "") == "" then .name = $spawned.name else . end)),
+           pending: $pending}
+        else {agents: $agents, pending: ($pending + [{name: $spawned.name, t: $t, id: $spawned.id}] | .[-8:])} end)
+     elif $kind == "tool-start" and $call.kind == "spawn" and $asked != "" then
        ($agents | map(select(.status == "running" and (.name // "") == "" and (.firstSeen // 0) >= $t))
         | sort_by(.firstSeen) | first) as $unnamed
        | if $unnamed then {agents: ($agents | map(if .id == $unnamed.id then .name = $asked else . end)), pending: $pending}
          else {agents: $agents, pending: ($pending + [{name: $asked, t: $t}] | .[-8:])} end
      elif $kind == "agent-start" and $agent != "" then
-       ($pending | to_entries | map(select((.value.t // 0) <= $t)) | first) as $pair
+       (($pending | to_entries | map(select((.value.id // "") == $agent)) | first)
+        // ($pending | to_entries | map(select((.value.id // "") == "" and (.value.t // 0) <= $t)) | first)) as $pair
        | ($agents | map(select(.id == $agent)) | first) as $have
        | if $have and (($have.name // "") != "" or $pair == null) then {agents: $agents, pending: $pending}
          elif $have then
@@ -395,7 +477,9 @@ program='
                                    status: "running", firstSeen: $t, ended: null, step: null, steps: 0}]),
                pending: (if $pair then ($pending | del(.[$pair.key])) else $pending end)} end
        # One started again after it stopped is running again.
-       | .agents |= map(if .id == $agent and .status != "running" then .status = "running" | .ended = null else . end)
+       | .agents |= map(if .id == $agent then (if .status != "running" then .status = "running" | .ended = null
+                                               else . end) | .seen = $t
+                        else . end)
      elif $kind == "agent-stop" and $agent != "" then
        (if ($agents | map(.id) | index($agent)) then
           {agents: ($agents | map(if .id == $agent then .status = "done" | .ended = $t | .step = null else . end)),
@@ -411,13 +495,19 @@ program='
        | map(if .id != $agent or .status != "running" then .
              elif $kind == "tool-start" then
                .steps = ((.steps // 0) + 1) | if ($done | index([$use])) then . else .step = $call end
-             elif (.step.id // null) == $use then .step = null
-             else . end)
+             else
+               # Its own plan, as how many of its steps are done; never their words.
+               (if $call.kind == "plan" then ($in | planned) as $own
+                  | .planDone = ($own | map(select(.status == "completed")) | length) | .planTotal = ($own | length)
+                else . end)
+               | if (.step.id // null) == $use then .step = null else . end end)
+       # Heard from: between its tools it has no step to say it is busy.
+       | map(if .id == $agent and .status == "running" then .seen = $t else . end)
        | {agents: ., pending: $pending}
      elif $kind == "start" and ($compacted | not) then {agents: [], pending: []}
-     elif $kind == "prompt" then {agents: ($agents | map(select(.status == "running"))), pending: []}
-     elif $kind == "stop" or $kind == "interrupt" then
-       {agents: ($agents | map(select(.status == "running"))), pending: $pending}
+     # Those done are let go at the next turn: kept till then, past the end of this one,
+     # they say how many of its agents are done.
+     elif $fresh then {agents: ($agents | map(select(.status == "running"))), pending: []}
      else {agents: $agents, pending: $pending} end) as $team
   # At most a dozen, those still running kept first.
   | ($team.agents | if length > 12 then (map(select(.status == "running")) + map(select(.status != "running")))[0:12]
@@ -445,10 +535,10 @@ program='
                    else null end),
       state: $w.state,
       since: $w.since,
-      turnId: (if $kind == "prompt" then $turn
+      turnId: (if $kind == "prompt" or $selfStart then $turn
                elif $current == "" and $mine then $turn
                else $current end),
-      turnStarted: (if $kind == "prompt" then $t
+      turnStarted: (if $fresh then $t
                     elif ($p.turnStarted | type) == "number" then $p.turnStarted
                     elif $current == "" and $mine then $t
                     else null end),
@@ -468,13 +558,18 @@ program='
       plan: $plan,
       agents: $team_agents,
       pending: $team.pending,
-      doneIds: (if $kind == "prompt" then []
-                elif $kind == "tool-end" and $use != "" then ($done + [$use] | .[-16:])
+      doneIds: (if $kind == "tool-end" and $use != "" then ((if $fresh then [] else $done end) + [$use] | .[-16:])
+                elif $fresh then []
                 else $done end),
       endedAgents: (if $kind == "agent-stop" and $agent != "" then ($gone - [$agent] + [$agent] | .[-16:])
                     elif $kind == "agent-start" and $agent != "" then $gone - [$agent]
                     elif $kind == "start" and ($compacted | not) then []
-                    else $gone end)
+                    else $gone end),
+      codexHome: $codexHome,
+      history: $history,
+      shells: $shells,
+      turns: (if $turn != "" and ($kind == "prompt" or $selfStart or $agentPrompt) then ($turns - [$turn] + [$turn] | .[-8:])
+              else $turns end)
     } as $state
 
   # A banner, for the three that want you: its words, and the same as a URL query.

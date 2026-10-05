@@ -258,7 +258,8 @@ extension ChatGPTFeature {
         SettingsSearchTerms(
             labels: ["Show what you asked", "Hooks", "Last heard from ChatGPT"],
             keywords: ["chatgpt", "codex", "openai", "gpt", "hooks.json", "hooks", "trust", "approve", "agents",
-                       "subagents", "plan", "chats", "prompt", "coding"]
+                       "subagents", "plan", "chats", "prompt", "coding", "progress", "tasks", "terminals",
+                       "background commands", "goal", "queued"]
         )
     }
 }

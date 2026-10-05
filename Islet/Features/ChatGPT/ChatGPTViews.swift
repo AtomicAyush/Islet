@@ -9,7 +9,8 @@ extension FeatureTint {
 
 enum ChatGPTLayout {
     /// Room right of the notch for the turn's time, to an hour and past it (smaller), or
-    /// for the agents' count beside a spinner.
+    /// for the count of tasks at work beside a spinner, or beside a ring filling as the
+    /// sessions get on.
     static let trailingWidth: CGFloat = 58
     static let compactSpinner: CGFloat = 16
     static let compactSymbol: CGFloat = 15
@@ -19,7 +20,8 @@ enum ChatGPTLayout {
     static let minimalRingInset: CGFloat = 0.1
     static let minimalRingMark: CGFloat = 0.75
 
-    // The opened page: a row per session, its plan and its agents under it.
+    // The opened page: a row per session; under it the turn's steps so far, the goal, the
+    // plan, the agents and the commands left running.
     static let topInset: CGFloat = 4
     static let bottomInset: CGFloat = 2
     static let rowPadding: CGFloat = 5
@@ -34,6 +36,15 @@ enum ChatGPTLayout {
     /// An agent's line: its task and for how long; and under it what it is doing.
     static let agentHeight: CGFloat = 17
     static let agentDetailHeight: CGFloat = 15
+    /// The line of the turn's steps so far, under what was asked.
+    static let historyHeight: CGFloat = 15
+    /// The goal's line; and under it, where it has a budget, how much of it is used.
+    static let goalHeight: CGFloat = 17
+    static let goalDetailHeight: CGFloat = 15
+    /// A command left running: what it runs, and for how long.
+    static let terminalHeight: CGFloat = 17
+    /// The width of a progress bar.
+    static let barWidth: CGFloat = 76
     /// The tallest the page grows before its rows scroll, as for Claude Code: as tall as
     /// the island leaves room for under a notch 40 points deep.
     static let maxPageHeight: CGFloat = 244
@@ -60,10 +71,20 @@ enum ChatGPTLayout {
         return count == 0 ? 0 : sectionTop + CGFloat(count) * (agentHeight + agentDetailHeight)
     }
 
+    static func goalHeight(_ session: ChatGPTSession) -> CGFloat {
+        guard let goal = session.goal else { return 0 }
+        return sectionTop + goalHeight + (goal.budget == nil ? 0 : goalDetailHeight)
+    }
+
+    static func terminalsHeight(_ session: ChatGPTSession) -> CGFloat {
+        session.terminals.isEmpty ? 0 : sectionTop + CGFloat(session.terminals.count) * terminalHeight
+    }
+
     static func rowHeight(_ session: ChatGPTSession, showsText: Bool) -> CGFloat {
         var height = 2 * rowPadding + titleHeight
         if ChatGPTText.detail(session, showsText: showsText) != nil { height += textHeight }
-        return height + planHeight(session) + agentsHeight(session)
+        if ChatGPTText.history(session) != nil { height += historyHeight }
+        return height + goalHeight(session) + planHeight(session) + agentsHeight(session) + terminalsHeight(session)
     }
 
     static func listHeight(_ sessions: [ChatGPTSession], showsText: Bool) -> CGFloat {
@@ -76,8 +97,8 @@ enum ChatGPTLayout {
     static var listLimit: CGFloat { maxPageHeight - topInset }
 
     /// Where each line of the rows begins, from the top of the list, in the order the
-    /// rows show them: each session's title and what was asked, its plan's lines, then
-    /// its agents' lines.
+    /// rows show them: each session's title, what was asked and its steps so far; its
+    /// goal's lines, its plan's, its agents', then its commands left running.
     static func lineTops(_ sessions: [ChatGPTSession], showsText: Bool) -> [CGFloat] {
         var tops: [CGFloat] = []
         var rowTop: CGFloat = 0
@@ -89,6 +110,12 @@ enum ChatGPTLayout {
             }
             line(titleHeight)
             if ChatGPTText.detail(session, showsText: showsText) != nil { line(textHeight) }
+            if ChatGPTText.history(session) != nil { line(historyHeight) }
+            if let goal = session.goal {
+                y += sectionTop
+                line(goalHeight)
+                if goal.budget != nil { line(goalDetailHeight) }
+            }
             if !session.plan.isEmpty {
                 y += sectionTop
                 line(planHeaderHeight)
@@ -100,6 +127,10 @@ enum ChatGPTLayout {
                     line(agentHeight)
                     line(agentDetailHeight)
                 }
+            }
+            if !session.terminals.isEmpty {
+                y += sectionTop
+                for _ in session.terminals { line(terminalHeight) }
             }
             rowTop += rowHeight(session, showsText: showsText) + sessionSpacing
         }
@@ -159,13 +190,13 @@ enum ChatGPTText {
     }
 
     /// How a session stands, in words: what it is doing ("Running swift"), or that it is
-    /// waiting on you, or that only its agents are at work.
+    /// waiting on you, or that only its agents, or its goal, are at work.
     static func status(_ session: ChatGPTSession) -> String {
         switch session.state {
         case .working: session.record.step.map(doing) ?? "Working"
         case .needsPermission: "Needs permission"
         case .waitingForInput: "Has a question"
-        case .idle: "Agents at work"
+        case .idle: session.agentsAtWork.isEmpty && session.goal != nil ? "Working on the goal" : "Agents at work"
         }
     }
 
@@ -208,9 +239,11 @@ enum ChatGPTText {
         return name.isEmpty ? "Agent" : "Agent · \(name)"
     }
 
-    /// What an agent is doing, and how far it has gone: "Running cargo · 12 steps".
+    /// What an agent is doing, and how far it has gone: "Running cargo · 12 steps", or
+    /// with a plan of its own, "2 of 5 done · Running cargo".
     static func agentDoing(_ agent: ChatGPTAgent) -> String {
         let doing = !agent.isRunning ? "Finished" : agent.step.map(Self.doing) ?? (agent.steps > 0 ? "Working" : "Starting")
+        if let total = agent.planTotal, total > 0 { return "\(agent.planDone ?? 0) of \(total) done · \(doing)" }
         guard agent.steps > 0 else { return doing }
         return "\(doing) · " + (agent.steps == 1 ? "1 step" : "\(agent.steps) steps")
     }
@@ -218,6 +251,101 @@ enum ChatGPTText {
     /// The compact island's count, read out.
     static func agents(_ count: Int) -> String {
         count == 1 ? "1 agent at work" : "\(count) agents at work"
+    }
+
+    /// How long a name in the steps so far may be.
+    static let historyNameLimit = 18
+
+    /// The turn's steps so far, while it goes on and has taken two or more: how many,
+    /// and the latest programs, files and tools among them, "14 steps · swift,
+    /// Store.swift, the computer +3".
+    static func history(_ session: ChatGPTSession) -> String? {
+        let steps = session.record.steps
+        guard !session.history.isEmpty, steps >= 2 else { return nil }
+        var names: [String] = []
+        for entry in session.history.reversed() {
+            let name: String
+            switch entry.kind {
+            case .shell, .patch: name = oneLine(entry.name)
+            case .mcp: name = entry.name == "cua_repl" ? "the computer" : oneLine(entry.name)
+            default: continue
+            }
+            if !name.isEmpty, !names.contains(name) { names.append(name) }
+        }
+        var line = "\(steps) steps"
+        guard !names.isEmpty else { return line }
+        line += " · " + names.prefix(3).map { middle($0, historyNameLimit) }.joined(separator: ", ")
+        if names.count > 3 { line += " +\(names.count - 3)" }
+        return line
+    }
+
+    /// `text` cut to `limit` characters in its middle: "AVeryLong…Name.swift".
+    static func middle(_ text: String, _ limit: Int) -> String {
+        guard text.count > limit, limit > 2 else { return text }
+        let head = (limit - 1) / 2
+        return String(text.prefix(head)) + "…" + String(text.suffix(limit - 1 - head))
+    }
+
+    /// A command left running: "Running npm".
+    static func terminal(_ shell: ChatGPTShell) -> String {
+        let name = oneLine(shell.name)
+        return name.isEmpty ? "Running a command" : "Running " + middle(name, stepNameLimit)
+    }
+
+    /// How a goal stands, in a word or two.
+    static func goalStatus(_ goal: ChatGPTGoal) -> String {
+        switch goal.status {
+        case .active: "Goal"
+        case .paused: "Paused"
+        case .blocked: "Blocked"
+        case .usageLimited: "Usage limit"
+        case .budgetLimited: "Budget reached"
+        case .complete: "Done"
+        }
+    }
+
+    /// A goal's use of its budget: "12k of 50k tokens".
+    static func tokens(_ used: Int, of budget: Int) -> String {
+        "\(shortCount(used)) of \(shortCount(budget)) tokens"
+    }
+
+    /// A count of tokens, short: 850, 1.5k, 12k, 1.2M.
+    static func shortCount(_ value: Int) -> String {
+        func short(_ number: Double, _ unit: String) -> String {
+            number < 10 && number != number.rounded(.down)
+                ? String(format: "%.1f%@", number, unit) : "\(Int(number))\(unit)"
+        }
+        switch value {
+        case ..<1000: return "\(max(0, value))"
+        case ..<1_000_000: return short((Double(value) / 100).rounded(.down) / 10, "k")
+        default: return short((Double(value) / 100_000).rounded(.down) / 10, "M")
+        }
+    }
+
+    /// How long a goal has been worked on: "45 s", "12 min", "1 h 5 min".
+    static func duration(_ seconds: Int) -> String {
+        if seconds < 60 { return "\(max(0, seconds)) s" }
+        let minutes = seconds / 60
+        return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
+    }
+
+    /// How long an agent has gone without a sign: "quiet 4 min".
+    static func quiet(_ interval: TimeInterval) -> String {
+        let minutes = Int(interval / 60)
+        return minutes < 60 ? "quiet \(minutes) min" : "quiet \(minutes / 60) h \(minutes % 60) min"
+    }
+
+    /// Prompts waiting their turn: "2 queued".
+    static func queued(_ count: Int) -> String { "\(count) queued" }
+
+    /// The compact island's count and ring, read out: "2 agents at work, 40 percent done".
+    static func background(agents: Int, fraction: Double?) -> String {
+        var label = agents > 0 ? ChatGPTText.agents(agents) : ""
+        if let fraction {
+            let done = "\(Int((fraction * 100).rounded())) percent done"
+            label = label.isEmpty ? done : label + ", " + done
+        }
+        return label
     }
 
     static func oneLine(_ text: String) -> String {
@@ -228,7 +356,7 @@ enum ChatGPTText {
 // MARK: - Marks
 
 /// The island's mark for what ChatGPT is doing: a speech bubble that breathes while it
-/// works, still while only agents are at work, and while it waits on you, the bubble in
+/// works, still while only agents or a goal are at work, and while it waits on you, the bubble in
 /// orange with a hand or a question mark at its corner, so it is never taken for Claude
 /// Code's hand or question beside it. Ordinary symbols, never ChatGPT's logo, in the
 /// island's ink or the accent.
@@ -251,7 +379,7 @@ struct ChatGPTMarkView: View {
                     ClaudeBreathingSymbol(name: "text.bubble.fill", pointSize: pointSize, ink: .accent(.chatGPT))
                         .transition(.opacity)
                 }
-            case .agents?:
+            case .agents?, .goal?:
                 glyph("text.bubble.fill", .islandAccent(.chatGPT))
             case nil:
                 EmptyView()
@@ -297,6 +425,7 @@ struct ChatGPTMarkView: View {
         case .waitingForInput?: "ChatGPT has a question"
         case .working?: "ChatGPT working"
         case .agents?: "ChatGPT agents at work"
+        case .goal?: "ChatGPT working on a goal"
         case nil: ""
         }
     }
@@ -355,8 +484,11 @@ struct ChatGPTCompactLeading: View {
     }
 }
 
-/// Right of the notch: how long the turn on show has been going, or how long it has been
-/// waiting on you; or while only agents are at work, how many beside a spinner.
+/// Right of the notch: how long a session has been waiting on you; or while agents are
+/// at work, how many, beside a ring filling as the sessions get on where there is a
+/// measure of it, else a spinner; or else how long the turn on show has been going, or
+/// a spinner while only a goal keeps it at work. Commands left running are listed only
+/// when it is opened, as Claude Code's are: a server may run for days.
 struct ChatGPTCompactTrailing: View {
     let model: ChatGPTModel
 
@@ -364,7 +496,30 @@ struct ChatGPTCompactTrailing: View {
         GeometryReader { proxy in
             Group {
                 if let session = model.displayed {
-                    if let start = ChatGPTText.timerStart(session) {
+                    let count = model.runningAgentCount
+                    let fraction = model.fraction
+                    if !session.state.needsYou, count > 0 {
+                        HStack(spacing: 5) {
+                            if fraction == nil || count > 1 {
+                                Text("\(count)")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.islandText(0.6))
+                                    .fixedSize()
+                            }
+                            Group {
+                                if let fraction {
+                                    ChatGPTPlanRing(fraction: fraction, lineWidth: 2.5)
+                                } else {
+                                    ChatGPTSpinner(lineWidth: 2.5)
+                                }
+                            }
+                            .frame(width: ChatGPTLayout.compactSpinner, height: ChatGPTLayout.compactSpinner)
+                        }
+                        .padding(.trailing, ChatGPTLayout.trailingInset(rowHeight: proxy.size.height))
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(ChatGPTText.background(agents: count, fraction: fraction))
+                    } else if let start = ChatGPTText.timerStart(session) {
                         Text(start, style: .timer)
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .monospacedDigit()
@@ -373,18 +528,11 @@ struct ChatGPTCompactTrailing: View {
                             .minimumScaleFactor(0.6)
                             .padding(.trailing, 6)
                     } else {
-                        HStack(spacing: 5) {
-                            Text("\(model.runningAgentCount)")
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .monospacedDigit()
-                                .foregroundStyle(.islandText(0.6))
-                                .fixedSize()
-                            ChatGPTSpinner(lineWidth: 2.5)
-                                .frame(width: ChatGPTLayout.compactSpinner, height: ChatGPTLayout.compactSpinner)
-                        }
-                        .padding(.trailing, ChatGPTLayout.trailingInset(rowHeight: proxy.size.height))
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(ChatGPTText.agents(model.runningAgentCount))
+                        ChatGPTSpinner(lineWidth: 2.5)
+                            .frame(width: ChatGPTLayout.compactSpinner, height: ChatGPTLayout.compactSpinner)
+                            .padding(.trailing, ChatGPTLayout.trailingInset(rowHeight: proxy.size.height))
+                            .accessibilityElement()
+                            .accessibilityLabel("Working on the goal")
                     }
                 }
             }
@@ -394,14 +542,14 @@ struct ChatGPTCompactTrailing: View {
 }
 
 /// In the bubble, or folded into the island: the mark, inside a ring filling as the
-/// plan gets done, while there is one.
+/// sessions get on, while any has a measure of it: its plan or its agents.
 struct ChatGPTMinimal: View {
     let model: ChatGPTModel
 
     var body: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
-            let fraction = model.planFraction
+            let fraction = model.fraction
             ZStack {
                 if let fraction {
                     ChatGPTPlanRing(fraction: fraction, lineWidth: 2)
@@ -513,7 +661,7 @@ private struct ChatGPTSessionRow: View {
         Button(action: open) {
             HStack(alignment: .top, spacing: 9) {
                 // The status beside the title says the same, in words.
-                ChatGPTMarkView(mark: ChatGPTModel.Mark(session.state), pointSize: 12)
+                ChatGPTMarkView(mark: ChatGPTModel.Mark(session), pointSize: 12)
                     .frame(width: 18, height: ChatGPTLayout.titleHeight)
                     .accessibilityHidden(true)
 
@@ -537,6 +685,20 @@ private struct ChatGPTSessionRow: View {
                             .frame(height: ChatGPTLayout.textHeight, alignment: .leading)
                     }
 
+                    if let history = ChatGPTText.history(session) {
+                        Text(history)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.islandText(0.45))
+                            .lineLimit(1)
+                            .frame(height: ChatGPTLayout.historyHeight, alignment: .leading)
+                            .accessibilityLabel("Steps so far: \(history)")
+                    }
+
+                    if let goal = session.goal {
+                        ChatGPTGoalRow(goal: goal)
+                            .padding(.top, ChatGPTLayout.sectionTop)
+                    }
+
                     if !session.plan.isEmpty {
                         ChatGPTPlanList(session: session)
                             .padding(.top, ChatGPTLayout.sectionTop)
@@ -546,6 +708,15 @@ private struct ChatGPTSessionRow: View {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(session.agentsShown) { agent in
                                 ChatGPTAgentRow(agent: agent)
+                            }
+                        }
+                        .padding(.top, ChatGPTLayout.sectionTop)
+                    }
+
+                    if !session.terminals.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(session.terminals) { terminal in
+                                ChatGPTTerminalRow(terminal: terminal)
                             }
                         }
                         .padding(.top, ChatGPTLayout.sectionTop)
@@ -567,6 +738,13 @@ private struct ChatGPTSessionRow: View {
         HStack(spacing: 0) {
             Text(ChatGPTText.status(session))
                 .foregroundStyle(ChatGPTText.style(session.state))
+            if session.queued > 0 {
+                Text(" · ")
+                    .foregroundStyle(.islandText(0.35))
+                    .accessibilityHidden(true)
+                Text(ChatGPTText.queued(session.queued))
+                    .foregroundStyle(.islandText(0.55))
+            }
             if let start = ChatGPTText.timerStart(session) {
                 Text(" · ")
                     .foregroundStyle(.islandText(0.35))
@@ -582,18 +760,23 @@ private struct ChatGPTSessionRow: View {
     }
 }
 
-/// The turn's plan as a checklist: how many steps are done, then a line a step, a tick
-/// for each one done and a dotted ring for the one under way.
+/// The turn's plan as a checklist: a bar and how many steps are done, then a line a step,
+/// a tick for each one done and a dotted ring for the one under way.
 private struct ChatGPTPlanList: View {
     let session: ChatGPTSession
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(ChatGPTText.planHeader(session))
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.islandText(0.42))
-                .frame(height: ChatGPTLayout.planHeaderHeight, alignment: .leading)
-                .accessibilityLabel("Plan, \(ChatGPTText.planHeader(session))")
+            HStack(spacing: 7) {
+                ChatGPTProgressBar(fraction: session.planFraction ?? 0)
+                    .frame(width: ChatGPTLayout.barWidth, height: 3)
+                Text(ChatGPTText.planHeader(session))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.islandText(0.42))
+            }
+            .frame(height: ChatGPTLayout.planHeaderHeight, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Plan, \(ChatGPTText.planHeader(session))")
             ForEach(Array(session.plan.enumerated()), id: \.offset) { _, step in
                 HStack(spacing: 6) {
                     icon(step.status)
@@ -636,7 +819,9 @@ private struct ChatGPTPlanList: View {
 }
 
 /// An agent the session has sent off: the task it was given, and for how long; under it,
-/// what it is doing now and how many steps it has taken. A tick once it has finished.
+/// what it is doing now and how many steps it has taken, or how far its own plan has got,
+/// with a ring filling as it does. A tick once it has finished; a tag once it has gone
+/// quiet.
 private struct ChatGPTAgentRow: View {
     let agent: ChatGPTAgent
 
@@ -644,7 +829,9 @@ private struct ChatGPTAgentRow: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Group {
-                    if agent.isRunning {
+                    if agent.isRunning, let fraction = agent.planFraction {
+                        ChatGPTPlanRing(fraction: fraction, lineWidth: 1.8)
+                    } else if agent.isRunning {
                         ChatGPTSpinner(lineWidth: 1.5)
                     } else {
                         Image(systemName: "checkmark.circle.fill")
@@ -668,15 +855,148 @@ private struct ChatGPTAgentRow: View {
             }
             .frame(height: ChatGPTLayout.agentHeight)
 
-            Text(ChatGPTText.agentDoing(agent))
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.islandText(0.5))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.leading, 16)
-                .frame(height: ChatGPTLayout.agentDetailHeight, alignment: .top)
+            // The hook's files are read again every few seconds anyway; the clock only
+            // moves the quiet time on while they stay the same.
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                HStack(spacing: 7) {
+                    Text(ChatGPTText.agentDoing(agent))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.islandText(0.5))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    if let quiet = agent.quiet(at: context.date) {
+                        ChatGPTTaskTag(text: ChatGPTText.quiet(quiet), style: .islandHueText(.warning))
+                    }
+                }
+            }
+            .padding(.leading, 16)
+            .frame(height: ChatGPTLayout.agentDetailHeight, alignment: .top)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The thread's goal: its objective's first words, how it stands and how long it has
+/// been worked on; under it, where it has a budget, a bar of how much is used.
+private struct ChatGPTGoalRow: View {
+    let goal: ChatGPTGoal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: goal.status == .complete ? "checkmark.circle.fill" : "target")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.islandGraphic(0.45))
+                    .frame(width: 10, height: 10)
+                Text(goal.title.isEmpty ? "Goal" : goal.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.islandText(goal.status == .active ? 0.8 : 0.6))
+                    .lineLimit(1)
+                switch goal.status {
+                case .active, .complete:
+                    if !goal.title.isEmpty || goal.status == .complete {
+                        Text(ChatGPTText.goalStatus(goal))
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(.islandText(0.35))
+                            .fixedSize()
+                    }
+                case .paused, .blocked, .usageLimited, .budgetLimited:
+                    ChatGPTTaskTag(text: ChatGPTText.goalStatus(goal), style: .islandHueText(.warning))
+                }
+                Spacer(minLength: 6)
+                if goal.seconds > 0 {
+                    Text(ChatGPTText.duration(goal.seconds))
+                        .font(.system(size: 11, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(.islandText(0.42))
+                        .fixedSize()
+                }
+            }
+            .frame(height: ChatGPTLayout.goalHeight)
+
+            if let budget = goal.budget {
+                HStack(spacing: 7) {
+                    ChatGPTProgressBar(fraction: goal.fraction ?? 0)
+                        .frame(width: ChatGPTLayout.barWidth, height: 3)
+                    Text(ChatGPTText.tokens(goal.used, of: budget))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.islandText(0.42))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                }
+                .padding(.leading, 16)
+                .frame(height: ChatGPTLayout.goalDetailHeight, alignment: .top)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A command the chat left running: the program it runs, and for how long.
+private struct ChatGPTTerminalRow: View {
+    let terminal: ChatGPTShell
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal.fill")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.islandGraphic(0.45))
+                .frame(width: 10, height: 10)
+            Text(ChatGPTText.terminal(terminal))
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.islandText(0.6))
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            ChatGPTTaskTimer(since: terminal.started)
+        }
+        .frame(height: ChatGPTLayout.terminalHeight)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// How far a plan or a goal has got, as a thin bar in the accent.
+private struct ChatGPTProgressBar: View {
+    let fraction: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.islandDecorative(0.14))
+                Capsule().fill(.islandAccent(.chatGPT))
+                    .frame(width: max(proxy.size.height, proxy.size.width * min(1, max(0, fraction))))
+            }
+        }
+        .animation(.easeInOut(duration: 0.5), value: fraction)
+    }
+}
+
+/// How long a task has been going, or nothing where that is not known.
+private struct ChatGPTTaskTimer: View {
+    let since: Date
+
+    var body: some View {
+        if since > .distantPast {
+            Text(since, style: .timer)
+                .font(.system(size: 11, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(.islandText(0.42))
+                .fixedSize()
+        }
+    }
+}
+
+/// A word or two in colour on a task's line: an agent gone quiet, a goal held up.
+private struct ChatGPTTaskTag: View {
+    let text: String
+    let style: IslandStyle
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(style)
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
@@ -706,6 +1026,7 @@ struct ChatGPTSettingsView: View {
         } label: {
             Text("Hooks")
             Text("Copy Scripts/chatgpt-hook.sh from Islet's source to ~/.codex/hooks/islet-notify.sh and add these hooks to ~/.codex/hooks.json, after any already there. ChatGPT runs them only once you trust them: in the ChatGPT app, Settings › Hooks (Reload hooks, then Trust beside each of Islet's), or with the /\u{2060}hooks command in Codex. If ChatGPT offers to import from Claude Code, leave its hooks out, or each chat shows twice. Islet never changes ~/.codex.")
+            Text("Plan steps and a goal's title are ChatGPT's own words (or yours, for a goal you set), kept short and plain. Of each step only the program it runs, the file it changes or the tool it uses is kept, never the command, the change or what came back. Goals and queued follow-ups are read, read-only, from Codex's own files: a goal's title, state and use, and how many follow-ups wait, never their words.")
         }
 
         LabeledContent("Last heard from ChatGPT") {
