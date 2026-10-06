@@ -364,13 +364,11 @@ struct DownloadsSettingsView: View {
     let found: ([URL]) -> Void
     /// Called when PDFs saved from Print are turned on or off.
     var printedChanged: () -> Void = {}
-    /// Called once macOS has asked about the folders below, for Spotlight to be asked
-    /// again.
-    var accessAsked: () -> Void = {}
+    /// What macOS lets Islet see of the folders PDFs saved from Print are found in.
+    let access: FolderAccessModel
     @AppStorage(DownloadsPrefs.showFinished) private var showFinished = true
     @AppStorage(DownloadsPrefs.showPrinted) private var showPrinted = true
     @State private var folders: [URL] = DownloadFolders.downloads.map { [$0] } ?? []
-    @State private var isAsking = false
 
     var body: some View {
         Toggle(isOn: $showFinished) {
@@ -383,13 +381,7 @@ struct DownloadsSettingsView: View {
         }
         .onChange(of: showPrinted) { printedChanged() }
         if showPrinted {
-            LabeledContent {
-                Button("Ask macOS") { askForFolders() }
-                    .disabled(isAsking)
-            } label: {
-                Text("Desktop, Documents and iCloud Drive")
-                Text("Spotlight tells Islet only of PDFs in folders macOS lets it see, and macOS asks you first. Click to be asked about these three now; a folder Islet may already see isn't asked about again.")
-            }
+            PrintFolderAccessRow(model: access)
         }
         LabeledContent {
             Text(folders.map(DownloadFolders.abbreviated).joined(separator: "\n"))
@@ -406,20 +398,153 @@ struct DownloadsSettingsView: View {
     }
 
     static let printedExplanation = "A PDF made with ⌘P, then PDF › Save as PDF, in any app, or with Save as PDF in a browser's print preview, comes up in the same card, saying Saved, wherever in your home folder you save it, a couple of seconds after (longer for a long document). PDFs copied, moved, unzipped, synced, downloaded or edited don't show, nor do ones apps make for themselves, or ones with a password to open. Islet hears of them from Spotlight; with Spotlight off, only ones saved to the folders below show."
+}
 
-    /// Looks into each folder, off the main thread, which is what has macOS ask whether
-    /// Islet may; only ever on the click.
-    private func askForFolders() {
-        isAsking = true
-        Task {
-            await Task.detached(priority: .userInitiated) {
-                let home = FileManager.default.homeDirectoryForCurrentUser
-                for folder in ["Desktop", "Documents", "Library/Mobile Documents/com~apple~CloudDocs"] {
-                    _ = try? FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(folder).path)
+/// Whether macOS lets Islet see the Desktop, Documents and iCloud Drive, where Spotlight
+/// finds PDFs saved from Print, and the button that has it ask. With Full Disk Access
+/// there is nothing to ask. Otherwise, once asked, it says what macOS decided about each,
+/// and where to change a folder macOS was told Islet may not see, as macOS asks only once.
+struct PrintFolderAccessRow: View {
+    let model: FolderAccessModel
+
+    var body: some View {
+        LabeledContent {
+            control
+        } label: {
+            Text("Desktop, Documents and iCloud Drive")
+            Text(explanation)
+        }
+        .task { await model.recheck() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.recheck() }
+        }
+    }
+
+    /// What the row offers, beside what macOS decided.
+    enum Action: Equatable {
+        /// Full Disk Access: nothing to ask, so only a tick.
+        case none
+        /// Not yet known whether Islet has Full Disk Access, for the moment it takes to look.
+        case checking
+        case ask
+        /// macOS may be asking, or a click is being checked: the button gives way to word
+        /// that Islet is waiting, for long enough to be seen.
+        case waiting
+        case openSettings
+        case checkAgain
+    }
+
+    var action: Action {
+        if model.hasFullDiskAccess == true { return .none }
+        if model.isAsking { return .waiting }
+        if !model.hasAnswers { return model.hasFullDiskAccess == nil ? .checking : .ask }
+        return model.refused.isEmpty ? .checkAgain : .openSettings
+    }
+
+    @ViewBuilder private var control: some View {
+        switch action {
+        case .none:
+            Label {
+                Text("Full Disk Access")
+            } icon: {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(SystemHue.success.system)
+            }
+            .foregroundStyle(.secondary)
+        case .checking:
+            ProgressView().controlSize(.small)
+        case .ask:
+            Button("Ask macOS") { Task { await model.ask() } }
+        case .waiting, .openSettings, .checkAgain:
+            VStack(alignment: .trailing, spacing: 6) {
+                ForEach(PrintFolder.allCases, id: \.self) { folder in
+                    FolderVerdict(folder: folder, access: model.verdicts[folder], isAsking: model.asking == folder)
                 }
-            }.value
-            isAsking = false
-            accessAsked()
+                switch action {
+                case .waiting:
+                    Text(model.asking == nil ? "Checking…" : "Waiting for macOS…")
+                        .foregroundStyle(.secondary)
+                case .openSettings:
+                    Button("Open Privacy Settings…") { FilesAndFoldersSettings.open() }
+                default:
+                    Button("Check again") { Task { await model.ask() } }
+                        .buttonStyle(.link)
+                }
+            }
+        }
+    }
+
+    var explanation: String {
+        if model.hasFullDiskAccess == true {
+            return "Islet has Full Disk Access, so it sees PDFs saved anywhere in your home folder, and there's nothing for macOS to ask."
+        }
+        if model.asking != nil {
+            return "If macOS asks whether Islet may see a folder, answer it to carry on."
+        }
+        guard model.hasAnswers else {
+            return "Spotlight tells Islet only of PDFs in folders macOS lets it see. Click to have macOS ask about these three; it asks about each only once."
+        }
+        let refused = model.refused
+        if !refused.isEmpty {
+            let switches = PrintFolder.list(refused.map(\.settingName))
+            return "macOS asks only once. In Privacy & Security › Files & Folders, turn on \(switches) under Islet."
+        }
+        let seen = PrintFolder.allCases.filter { model.verdicts[$0] == .allowed }.map(\.name)
+        let missing = PrintFolder.allCases.filter { model.verdicts[$0] == .missing }.map(\.name)
+        var words = seen.isEmpty ? "" : "Islet can see \(PrintFolder.list(seen))."
+        if !missing.isEmpty {
+            if !words.isEmpty { words += " " }
+            words += missing.count == 1 ? "There's no \(missing[0]) folder on this Mac." : "\(PrintFolder.list(missing)) aren't on this Mac."
+        }
+        return words
+    }
+}
+
+/// One folder's answer from macOS: a symbol in the colour of what it means, and a word or
+/// two.
+struct FolderVerdict: View {
+    let folder: PrintFolder
+    let access: FolderAccess?
+    let isAsking: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text("\(folder.name): \(words)")
+                .foregroundStyle(.secondary)
+            if isAsking {
+                ProgressView().controlSize(.mini)
+                    .frame(width: 14, height: 14)
+            } else {
+                Image(systemName: symbol)
+                    .foregroundStyle(colour)
+                    .frame(width: 14, height: 14)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    var words: String {
+        if isAsking { return "asking" }
+        switch access {
+        case .allowed?: return "allowed"
+        case .notAllowed?: return "not allowed"
+        case .missing?: return "not there"
+        case nil: return "not asked yet"
+        }
+    }
+
+    private var symbol: String {
+        switch access {
+        case .allowed?: "checkmark.circle.fill"
+        case .notAllowed?: "xmark.circle.fill"
+        case .missing?, nil: "minus.circle"
+        }
+    }
+
+    private var colour: Color {
+        switch access {
+        case .allowed?: SystemHue.success.system
+        case .notAllowed?: SystemHue.warning.system
+        case .missing?, nil: .secondary
         }
     }
 }

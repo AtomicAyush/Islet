@@ -293,10 +293,11 @@ extension DownloadsFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
             labels: ["Show finished downloads", "Show PDFs saved from Print", "Desktop, Documents and iCloud Drive",
-                     "Follows downloads into"],
+                     "Ask macOS", "Open Privacy Settings…", "Check again", "Follows downloads into"],
             keywords: ["safari", "chrome", "firefox", "browser", "progress", "download folder", "delete", "remove", "trash",
                        "upload", "print", "printed", "printing", "pdf", "save as pdf", "print to pdf", "⌘P", "cmd p",
-                       "command p", "brave", "export", "saved"]
+                       "command p", "brave", "export", "saved", "permission", "access", "privacy", "files and folders",
+                       "full disk access", "icloud", "desktop", "documents"]
         )
     }
 }

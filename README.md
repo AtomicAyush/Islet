@@ -470,11 +470,13 @@ printed within the hour, by a copy that makes one (`cp` does) or a script, can l
 and show. A PDF with a password to open doesn't show, as nothing can be read of it, nor does a
 print that takes more than five minutes to write. Spotlight tells Islet only of folders macOS
 lets it see, and without asking: Settings › Downloads has a button to be asked about the
-Desktop, Documents and iCloud Drive. Your Downloads folder (and Safari's) is also watched
-directly, and a new PDF there is read, so Brave's Save as PDF, which saves there, shows within a
-second, and still shows with Spotlight turned off; elsewhere, nothing is seen while Spotlight is
-off. A live Spotlight query costs nothing while nothing is saved. Turn it off with Show PDFs
-saved from Print.
+Desktop, Documents and iCloud Drive, which then says what macOS decided about each. macOS asks
+only once, so a folder refused there is turned on in Privacy & Security › Files & Folders, which
+the row opens; with Full Disk Access there is nothing to ask, and the row says so. Your
+Downloads folder (and Safari's) is also watched directly, and a new PDF there is read, so
+Brave's Save as PDF, which saves there, shows within a second, and still shows with Spotlight
+turned off; elsewhere, nothing is seen while Spotlight is off. A live Spotlight query costs
+nothing while nothing is saved. Turn it off with Show PDFs saved from Print.
 
 **File Copies.** While Finder copies something big (to an external drive, a network share,
 another folder), moves it to another disk or duplicates it, what it is copying sits left of the

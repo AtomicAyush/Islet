@@ -16,9 +16,9 @@
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Islet sets the volume of each app separately by passing its sound through at the level you choose.</string>
 	<key>NSDesktopFolderUsageDescription</key>
-	<string>Islet shows a screenshot you have just taken, from the folder the Screenshot app saves to.</string>
+	<string>Islet shows a screenshot you have just taken, from the folder the Screenshot app saves to, and a PDF you have just saved from Print.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>Islet shows a screenshot you have just taken, when the Screenshot app saves to a folder in Documents.</string>
+	<string>Islet shows a screenshot you have just taken, when the Screenshot app saves to a folder in Documents, and a PDF you have just saved from Print.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Islet shows your downloads as they arrive, and the file once one has finished.</string>
 	<key>NSLocationUsageDescription</key>

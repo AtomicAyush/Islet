@@ -54,6 +54,8 @@ final class DownloadsFeature: Feature {
     static let endDelay: TimeInterval = 0.6
 
     let model = DownloadsModel()
+    /// What macOS lets Islet see of the folders PDFs saved from Print are found in.
+    let folderAccess: FolderAccessModel
     private let monitor: DownloadMonitor
     private let printed: PrintedPDFWatcher
     private let files: DownloadFileActions
@@ -85,11 +87,12 @@ final class DownloadsFeature: Feature {
     private var savedFiles: [String: FileStamp] = [:]
 
     /// Tests give a watcher for PDFs saved from Print on folders of their own, file
-    /// actions that leave Finder and the person's files alone, and defaults of their own.
+    /// actions that leave Finder and the person's files alone, defaults of their own, and
+    /// made-up answers about the folders macOS lets Islet see.
     init(
         monitor: DownloadMonitor? = nil, printed: PrintedPDFWatcher? = nil, startingFolders: [URL]? = nil,
         folders: @escaping () -> [URL] = DownloadFolders.all, files: DownloadFileActions = .system,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard, folderAccess: FolderAccessModel.Probe = .live
     ) {
         let monitor = monitor ?? DownloadMonitor()
         let printed = printed ?? PrintedPDFWatcher()
@@ -99,6 +102,8 @@ final class DownloadsFeature: Feature {
         self.folders = folders
         self.files = files
         self.defaults = defaults
+        self.folderAccess = FolderAccessModel(probe: folderAccess, defaults: defaults)
+        self.folderAccess.refreshed = { [weak printed] in printed?.refresh() }
         model.onChange = { [weak self] in self?.sync() }
         monitor.onChange = { [weak self] items in self?.model.update(items) }
         monitor.onFinished = { [weak self] file in self?.finished(file) }
@@ -167,7 +172,7 @@ final class DownloadsFeature: Feature {
                 self.printed.watch(folders)
             },
             printedChanged: { [weak self] in self?.followPrinted() },
-            accessAsked: { [weak self] in self?.printed.refresh() }
+            access: folderAccess
         ))
     }
 
@@ -574,6 +579,9 @@ final class DownloadsActivity: IslandActivity {
 enum DownloadsPrefs {
     static let showFinished = "downloads.showFinished"
     static let showPrinted = "downloads.showPrinted"
+    /// What macOS decided about each of the folders PDFs saved from Print are seen in, at
+    /// the last look; there once the person has first asked (`FolderAccessModel`).
+    static let folderAccess = "downloads.folderAccess"
 
     static func bool(_ key: String, default value: Bool, in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: key) as? Bool ?? value

@@ -27,6 +27,26 @@ enum SystemHue: String, CaseIterable, Sendable, Hashable {
         }
     }
 
+    /// The system's own colour of this hue, which macOS fits to a window's light or dark
+    /// appearance: for Settings, where the island's tuning does not apply.
+    var system: Color {
+        switch self {
+        case .red: .red
+        case .orange: .orange
+        case .yellow: .yellow
+        case .green: .green
+        case .mint: .mint
+        case .teal: .teal
+        case .cyan: .cyan
+        case .blue: .blue
+        case .indigo: .indigo
+        case .purple: .purple
+        case .pink: .pink
+        case .brown: .brown
+        case .gray: .gray
+        }
+    }
+
     // What each hue means, so a call site says why it is coloured.
     static let success = SystemHue.green
     static let charging = SystemHue.green
