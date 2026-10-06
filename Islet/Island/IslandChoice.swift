@@ -63,9 +63,22 @@ extension IslandViewModel {
     /// element of its own, and whose actions the folded icon and the count would take
     /// on too.
     var compactAccessibilityActions: [NSAccessibilityCustomAction] {
-        compactOwnChoices.map { choice in
+        approvalActions + compactOwnChoices.map { choice in
             NSAccessibilityCustomAction(name: choice.title) { [weak self] in
                 self?.choose(choice)
+                return self != nil
+            }
+        }
+    }
+
+    /// For each agent asking a permission the island can answer, an action that opens
+    /// the island on its page. Only to review it: Allow and Deny are the card's own.
+    private var approvalActions: [NSAccessibilityCustomAction] {
+        guard !isExpanded else { return [] }
+        let approvals = ApprovalCenter.shared
+        return ApprovalAgent.allCases.filter { approvals.front(for: $0) != nil }.map { agent in
+            NSAccessibilityCustomAction(name: "Review \(agent.name)'s request") { [weak self] in
+                self?.expand(focus: agent == .claude ? "claudeCode" : "chatGPT")
                 return self != nil
             }
         }

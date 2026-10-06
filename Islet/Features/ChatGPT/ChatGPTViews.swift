@@ -145,6 +145,18 @@ enum ChatGPTLayout {
         return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= listLimit } ?? listLimit
     }
 
+    /// The page's height with an approval card above the rows, the rows given what is
+    /// left: no taller than any page, which the island's window has no room beyond.
+    static let maxApprovalPageHeight: CGFloat = maxPageHeight
+
+    static func pageHeight(for sessions: [ChatGPTSession], showsText: Bool, approval: ApprovalItem?, waiting: Int = 0,
+                           isPrivate: Bool = false) -> CGFloat {
+        guard let approval else { return pageHeight(for: sessions, showsText: showsText) }
+        let block = ApprovalLayout.height(for: approval, waiting: waiting, isPrivate: isPrivate)
+        guard !sessions.isEmpty else { return topInset + block + bottomInset }
+        return min(topInset + block + pageHeight(for: sessions, showsText: showsText), maxApprovalPageHeight)
+    }
+
     static func pageHeight(for sessions: [ChatGPTSession], showsText: Bool) -> CGFloat {
         let list = listHeight(sessions, showsText: showsText)
         guard list > listLimit else { return min(topInset + list + bottomInset, maxPageHeight) }
@@ -477,8 +489,17 @@ struct ChatGPTPlanRing: View {
 /// Left of the notch: the mark.
 struct ChatGPTCompactLeading: View {
     let model: ChatGPTModel
+    var approvals: ApprovalCenter? = nil
 
     var body: some View {
+        if let approvals, !model.isPreviewing, approvals.front(for: .chatgpt) != nil {
+            ApprovalCompactLeading(center: approvals, agent: .chatgpt)
+        } else {
+            usual
+        }
+    }
+
+    private var usual: some View {
         ChatGPTMarkView(mark: model.mark, pointSize: ChatGPTLayout.compactSymbol)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -491,8 +512,17 @@ struct ChatGPTCompactLeading: View {
 /// when it is opened, as Claude Code's are: a server may run for days.
 struct ChatGPTCompactTrailing: View {
     let model: ChatGPTModel
+    var approvals: ApprovalCenter? = nil
 
     var body: some View {
+        if let approvals, !model.isPreviewing, approvals.front(for: .chatgpt) != nil {
+            ApprovalCompactTrailing(center: approvals, agent: .chatgpt)
+        } else {
+            usual
+        }
+    }
+
+    private var usual: some View {
         GeometryReader { proxy in
             Group {
                 if let session = model.displayed {
@@ -545,8 +575,17 @@ struct ChatGPTCompactTrailing: View {
 /// sessions get on, while any has a measure of it: its plan or its agents.
 struct ChatGPTMinimal: View {
     let model: ChatGPTModel
+    var approvals: ApprovalCenter? = nil
 
     var body: some View {
+        if let approvals, !model.isPreviewing, approvals.front(for: .chatgpt) != nil {
+            ApprovalMinimal()
+        } else {
+            usual
+        }
+    }
+
+    private var usual: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
             let fraction = model.fraction
@@ -571,6 +610,7 @@ struct ChatGPTMinimal: View {
 /// the app it runs in.
 struct ChatGPTExpanded: View {
     let model: ChatGPTModel
+    var approvals: ApprovalCenter? = nil
     let open: (ChatGPTSession) -> Void
     @AppStorage(ChatGPTPrefs.showPrompt) private var showsText = true
     /// How deep the fade at the head of the rows is: as far as they are scrolled down,
@@ -580,6 +620,29 @@ struct ChatGPTExpanded: View {
     private static let listSpace = "chatGPTList"
 
     var body: some View {
+        if let approvals, !model.isPreviewing, let card = approvals.card(for: .chatgpt) {
+            // The request above the rows, which get what room is left.
+            let block = ApprovalLayout.height(for: card.item, waiting: approvals.waiting(for: .chatgpt).count,
+                                              isPrivate: approvals.isPrivate)
+            VStack(spacing: 0) {
+                ApprovalBlock(center: approvals, item: card.item, decided: card.decided) { request in
+                    _ = ChatGPTHostApps.open(request.hostApp, session: request.sessionId)
+                }
+                .id(card.item.id)
+                .frame(height: block, alignment: .top)
+                .padding(.top, ChatGPTLayout.topInset)
+                if !model.shown.isEmpty {
+                    list.frame(maxHeight: max(0, ChatGPTLayout.maxApprovalPageHeight - block - ChatGPTLayout.topInset * 2))
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        } else {
+            list
+        }
+    }
+
+    @ViewBuilder
+    private var list: some View {
         let sessions = model.shown
         let height = ChatGPTLayout.visibleHeight(sessions, showsText: showsText)
         let scrolls = ChatGPTLayout.listHeight(sessions, showsText: showsText) > height + 0.5
@@ -1007,7 +1070,49 @@ struct ChatGPTSettingsView: View {
     @AppStorage(ChatGPTPrefs.showPrompt) private var showPrompt = true
     @State private var copied = false
 
+    @AppStorage(ChatGPTPrefs.approveFromIsland) private var approveFromIsland = true
+    @AppStorage(ChatGPTPrefs.openForApproval) private var openForApproval = true
+    @AppStorage(ChatGPTPrefs.approvalWait) private var approvalWait = ChatGPTPrefs.defaultApprovalWait
+    @State private var copiedLine = false
+
     var body: some View {
+        Toggle(isOn: $approveFromIsland) {
+            Text("Approve from the island")
+            Text("When ChatGPT asks permission while you're at the Mac and in another app, the island shows what it wants to do, with Allow, Deny and Answer in ChatGPT. ChatGPT asks in the app if you don't answer in time; nothing is allowed without your click.")
+        }
+
+        Toggle(isOn: $openForApproval) {
+            Text("Open the island for each request")
+            Text("The island opens on the request by itself, once, unless you're presenting, the screen is locked or ChatGPT is in front, and closes again after 12 seconds unless you move the pointer into it.")
+        }
+        .disabled(!approveFromIsland)
+
+        ApprovalKeyRow(agent: .chatgpt)
+
+        Picker(selection: $approvalWait) {
+            ForEach(ChatGPTPrefs.approvalWaits, id: \.self) { seconds in
+                Text("\(seconds) seconds").tag(seconds)
+            }
+        } label: {
+            Text("Wait in the island")
+            Text("ChatGPT waits for the island before asking in the app. The hook line Copy Hooks gives lets it wait only 8 seconds; for longer, use the line below.")
+        }
+
+        LabeledContent {
+            Button(copiedLine ? "Copied" : "Copy Line") {
+                ChatGPTHooks.copyLongerWait()
+                copiedLine = true
+            }
+            .task(id: copiedLine) {
+                guard copiedLine else { return }
+                try? await Task.sleep(for: .seconds(2))
+                copiedLine = false
+            }
+        } label: {
+            Text("Wait longer for ChatGPT")
+            Text("Put this PermissionRequest hook in place of Islet's in ~/.codex/hooks.json. ChatGPT will ask you to trust the hook again once. Anything your shell's profile prints when ChatGPT runs a hook gets in the way of the answer, so keep it quiet.")
+        }
+
         Toggle(isOn: $showPrompt) {
             Text("Show what you asked")
             Text("Under each chat in the opened island, its latest prompt, or the start of ChatGPT's reply once it's done; a chat outside a project goes by its prompt. Off, chats show by project alone.")

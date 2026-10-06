@@ -57,9 +57,10 @@ extension IslandTheme {
     /// A mark filled with `colour` and a word or symbol on it: the colour, fitted to the
     /// island, and the label in black or white, whichever reads on it (the fill moving
     /// away from the label if neither does). The default theme keeps the colour as it is
-    /// and the label white, as the island always drew them.
+    /// and the label white, as the island always drew them, but on the ink itself (a
+    /// feature without a colour of its own), where the label is black.
     func filledMark(_ colour: RGB) -> (fill: Color, label: Color) {
-        if isDefault { return (colour.color, inkColor) }
+        if isDefault { return (colour.color, colour == ink ? .black : inkColor) }
         let pair = onFill(fitted(colour))
         return (pair.fill.color, pair.label.color)
     }

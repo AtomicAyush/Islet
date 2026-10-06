@@ -21,6 +21,11 @@ import SwiftUI
 /// running that no hook reports. A thread's goal and its queued prompts are read from
 /// Codex's own databases (`ChatGPTCodexData`), read-only.
 ///
+/// A permission a chat asks shows on its page as a card with Allow, Deny and Answer in
+/// ChatGPT, when the hook offers it to Islet (`ApprovalCenter`). Codex asks in the app
+/// only once the hook gives up, so the card lasts only as long as the hook waits; the
+/// chat then shows as working once the island has answered.
+///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead, as Claude Code does. There it gives way to the Sound
 /// Mixer, but for while a session is waiting on the person.
@@ -37,9 +42,14 @@ final class ChatGPTFeature: Feature {
 
     let model = ChatGPTModel()
     let monitor: ChatGPTSessionMonitor
+    /// Where permissions asked are answered from the island; `nil` leaves them to
+    /// ChatGPT, as in tests.
+    let approvals: ApprovalCenter?
     private let clock: () -> Date
     private let openHost: @MainActor (_ bundleID: String, _ session: String) -> Bool
-    private lazy var activity = ChatGPTActivity(model: model) { [weak self] session in self?.open(session) }
+    private lazy var activity = ChatGPTActivity(model: model, approvals: approvals) { [weak self] session in
+        self?.open(session)
+    }
 
     private var isRunning = false
     private var published: ChatGPTActivity.Published?
@@ -47,15 +57,17 @@ final class ChatGPTFeature: Feature {
     private var defaultsObserver: NSObjectProtocol?
 
     /// Tests give a monitor on a folder of their own, a clock, and a stand-in for
-    /// bringing an app forward.
+    /// bringing an app forward; the app gives the shared approvals.
     init(
         monitor: ChatGPTSessionMonitor? = nil,
         clock: @escaping () -> Date = Date.init,
-        openHost: @escaping @MainActor (_ bundleID: String, _ session: String) -> Bool = ChatGPTHostApps.open
+        openHost: @escaping @MainActor (_ bundleID: String, _ session: String) -> Bool = ChatGPTHostApps.open,
+        approvals: ApprovalCenter? = nil
     ) {
         self.monitor = monitor ?? ChatGPTSessionMonitor(now: clock)
         self.clock = clock
         self.openHost = openHost
+        self.approvals = approvals
         model.onChange = { [weak self] in self?.sync() }
         self.monitor.onChange = { [weak self] snapshot in self?.received(snapshot) }
     }
@@ -66,9 +78,17 @@ final class ChatGPTFeature: Feature {
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.sync() }
+            MainActor.assumeIsolated {
+                self?.updateApprovals()
+                self?.sync()
+            }
         }
         monitor.start()
+        if let approvals {
+            approvals.chatGPTRecords = { [weak monitor] in monitor?.snapshot.records ?? [] }
+            observeApprovals()
+        }
+        updateApprovals()
     }
 
     func stop() {
@@ -76,8 +96,46 @@ final class ChatGPTFeature: Feature {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
         monitor.stop()
+        updateApprovals()
         model.update([], lastHeard: model.lastHeard)
         sync()
+    }
+
+    /// Takes ChatGPT's requests while running with the setting on, for as long as
+    /// Settings says.
+    private func updateApprovals() {
+        guard let approvals else { return }
+        approvals.waits.chatGPT = ChatGPTPrefs.approvalWaitSeconds
+        approvals.setAccepting(.chatgpt, isRunning && ChatGPTPrefs.approvesFromIsland)
+    }
+
+    /// Re-publishes the activity as cards come and go, and works out the sessions again
+    /// as answers settle.
+    private func observeApprovals() {
+        guard let approvals, isRunning else { return }
+        withObservationTracking {
+            _ = approvals.items
+            _ = approvals.settled
+            _ = approvals.decided
+            _ = approvals.held
+            _ = approvals.isPrivate
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.received(self.monitor.snapshot)
+                    self.sync()
+                    self.openForRequest()
+                    self.observeApprovals()
+                }
+            }
+        }
+    }
+
+    /// Opens the island on the page for a request just come, as Settings asks.
+    private func openForRequest() {
+        guard let approvals, isRunning, ChatGPTPrefs.opensForApproval, let item = approvals.front(for: .chatgpt) else { return }
+        ApprovalOpening.open(for: item, page: activity.id, center: approvals)
     }
 
     func settingsView() -> AnyView? {
@@ -105,6 +163,8 @@ final class ChatGPTFeature: Feature {
     // MARK: Island
 
     private func received(_ snapshot: ChatGPTSessionSnapshot) {
+        var snapshot = snapshot
+        if let approvals { snapshot.records = snapshot.records.map { approvals.settle($0) } }
         let sessions = ChatGPTLiveness.sessions(snapshot, now: clock())
         model.update(isRunning ? sessions : [], lastHeard: snapshot.lastHeard)
     }
@@ -112,7 +172,7 @@ final class ChatGPTFeature: Feature {
     /// Puts up, re-publishes or ends the activity to match the model and the settings.
     private func sync() {
         let center = ActivityCenter.shared
-        let wanted = !model.shown.isEmpty && (isRunning || model.isPreviewing)
+        let wanted = (!model.shown.isEmpty || activity.approval != nil) && (isRunning || model.isPreviewing)
         if wanted {
             let current = activity.published
             if !center.isShowing(id: activity.id) || current != published {
@@ -153,6 +213,7 @@ final class ChatGPTActivity: IslandActivity {
     struct Published: Equatable {
         var expanded: CGFloat
         var rank: Int
+        var priority: ActivityPriority
     }
 
     let id = "chatGPT"
@@ -181,33 +242,49 @@ final class ChatGPTActivity: IslandActivity {
         }
         return parts.joined(separator: ", ")
     }
-    let priority = ActivityPriority.background
+    /// In the background, but urgent while it asks a permission the island can answer:
+    /// the hand then shows beside the notch whatever else is on.
+    var priority: ActivityPriority { asking ? .urgent : .background }
     let symbol = "text.bubble.fill"
     /// Its page shows what each session was asked, as its hooks' banners do.
     var personal: PersonalContent? { .messages }
     let model: ChatGPTModel
+    let approvals: ApprovalCenter?
     let open: (ChatGPTSession) -> Void
 
-    init(model: ChatGPTModel, open: @escaping (ChatGPTSession) -> Void) {
+    init(model: ChatGPTModel, approvals: ApprovalCenter? = nil, open: @escaping (ChatGPTSession) -> Void) {
         self.model = model
+        self.approvals = approvals
         self.open = open
     }
 
     var published: Published {
-        Published(expanded: ChatGPTLayout.pageHeight(for: model.shown, showsText: ChatGPTPrefs.showsPrompt),
-                  rank: rank)
+        Published(expanded: ChatGPTLayout.pageHeight(for: model.shown, showsText: ChatGPTPrefs.showsPrompt,
+                                                        approval: approval,
+                                                        waiting: approvals?.waiting(for: .chatgpt).count ?? 0,
+                                                        isPrivate: approvals?.isPrivate ?? false),
+                  rank: rank, priority: priority)
     }
+
+    /// ChatGPT's front request, while one is on show and no preview runs.
+    var approval: ApprovalItem? {
+        guard !model.isPreviewing else { return nil }
+        return approvals?.card(for: .chatgpt)?.item
+    }
+
+    /// Whether a request waits for an answer in the island.
+    var asking: Bool { !model.isPreviewing && approvals?.front(for: .chatgpt) != nil }
 
     /// Behind the Sound Mixer for the bubble while sessions work, so a prompt does not
     /// push it out each time; ahead of it while one waits on you, so the hand shows.
-    var rank: Int { model.needsYou ? 1 : -1 }
+    var rank: Int { model.needsYou || approval != nil ? 1 : -1 }
     var compactTrailingWidth: CGFloat? { ChatGPTLayout.trailingWidth }
     var expandedHeight: CGFloat { published.expanded }
 
-    func compactLeading() -> AnyView { AnyView(ChatGPTCompactLeading(model: model)) }
-    func compactTrailing() -> AnyView { AnyView(ChatGPTCompactTrailing(model: model)) }
-    func minimal() -> AnyView { AnyView(ChatGPTMinimal(model: model)) }
-    func expanded() -> AnyView { AnyView(ChatGPTExpanded(model: model, open: open)) }
+    func compactLeading() -> AnyView { AnyView(ChatGPTCompactLeading(model: model, approvals: approvals)) }
+    func compactTrailing() -> AnyView { AnyView(ChatGPTCompactTrailing(model: model, approvals: approvals)) }
+    func minimal() -> AnyView { AnyView(ChatGPTMinimal(model: model, approvals: approvals)) }
+    func expanded() -> AnyView { AnyView(ChatGPTExpanded(model: model, approvals: approvals, open: open)) }
 }
 
 /// Bringing a session's app forward. The ChatGPT app opens the chat itself from its own
@@ -240,6 +317,28 @@ enum ChatGPTPrefs {
     static let showPrompt = "chatGPT.showPrompt"
 
     static var showsPrompt: Bool { UserDefaults.standard.object(forKey: showPrompt) as? Bool ?? true }
+
+    /// Whether permissions ChatGPT asks are shown in the island to answer there. On
+    /// unless turned off: the hook, and the key beside it, are what opt in.
+    static let approveFromIsland = "chatGPT.approveFromIsland"
+
+    static var approvesFromIsland: Bool { UserDefaults.standard.object(forKey: approveFromIsland) as? Bool ?? true }
+
+    /// Whether the island opens by itself for each permission asked.
+    static let openForApproval = "chatGPT.openForApproval"
+
+    static var opensForApproval: Bool { UserDefaults.standard.object(forKey: openForApproval) as? Bool ?? true }
+
+    /// How long, in seconds, ChatGPT may wait for the island before asking in the app,
+    /// as far as the hook line's timeout allows.
+    static let approvalWait = "chatGPT.approvalWait"
+    static let approvalWaits = [15, 30, 60]
+    static let defaultApprovalWait = 30
+
+    static var approvalWaitSeconds: Int {
+        let seconds = UserDefaults.standard.object(forKey: approvalWait) as? Int ?? defaultApprovalWait
+        return approvalWaits.contains(seconds) ? seconds : defaultApprovalWait
+    }
 }
 
 /// The hooks Codex needs in `~/.codex/hooks.json`, as Settings copies them and the
@@ -250,7 +349,8 @@ enum ChatGPTPrefs {
 ///
 /// The lines never change: Codex asks the person to trust a hook again whenever its
 /// command, timeout or place changes. A new version of the script is copied over the old
-/// one instead.
+/// one instead. The one exception is the person's own choice to let ChatGPT wait longer
+/// for the island (`longerWaitJSON`), which they trust once.
 enum ChatGPTHooks {
     static let script = "$HOME/.codex/hooks/islet-notify.sh"
     static let events: [(event: String, kind: String, timeout: Int, async: Bool)] = [
@@ -279,5 +379,25 @@ enum ChatGPTHooks {
     static func copy(to pasteboard: NSPasteboard = .general) {
         pasteboard.clearContents()
         pasteboard.setString(settingsJSON, forType: .string)
+    }
+
+    /// How long ChatGPT lets the permission hook wait on the longer line.
+    static let longerTimeout = 90
+
+    /// The permission hook on a line that lets it wait for the island: a timeout long
+    /// enough for Settings' longest wait, said to the hook so it ends in time, a status
+    /// while it waits, and the script by its whole path through `bash -p`, which takes
+    /// no shell functions from the environment Codex was started with.
+    static func longerWaitJSON(home: String = FileManager.default.homeDirectoryForCurrentUser.path) -> String {
+        let path = home + "/.codex/hooks/islet-notify.sh"
+        return "{\n  \"hooks\": {\n"
+            + #"    "PermissionRequest": [{ "hooks": [{ "type": "command", "timeout": \#(longerTimeout),"# + "\n"
+            + #"      "statusMessage": "Waiting for your answer in Islet","# + "\n"
+            + #"      "command": "/bin/bash -p \"\#(path)\" permission --timeout \#(longerTimeout)" }] }]"# + "\n  }\n}\n"
+    }
+
+    static func copyLongerWait(to pasteboard: NSPasteboard = .general) {
+        pasteboard.clearContents()
+        pasteboard.setString(longerWaitJSON(), forType: .string)
     }
 }

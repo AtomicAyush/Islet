@@ -140,6 +140,18 @@ enum ClaudeCodeLayout {
         return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= listLimit } ?? listLimit
     }
 
+    /// The page's height with an approval card above the rows, the rows given what is
+    /// left: no taller than any page, which the island's window has no room beyond.
+    static let maxApprovalPageHeight: CGFloat = maxPageHeight
+
+    static func pageHeight(for sessions: [ClaudeSession], showsText: Bool, approval: ApprovalItem?, waiting: Int = 0,
+                           isPrivate: Bool = false) -> CGFloat {
+        guard let approval else { return pageHeight(for: sessions, showsText: showsText) }
+        let block = ApprovalLayout.height(for: approval, waiting: waiting, isPrivate: isPrivate)
+        guard !sessions.isEmpty else { return topInset + block + bottomInset }
+        return min(topInset + block + pageHeight(for: sessions, showsText: showsText), maxApprovalPageHeight)
+    }
+
     static func pageHeight(for sessions: [ClaudeSession], showsText: Bool) -> CGFloat {
         let list = listHeight(sessions, showsText: showsText)
         guard list > listLimit else { return min(topInset + list + bottomInset, maxPageHeight) }
@@ -521,8 +533,17 @@ struct ClaudeProgressBar: View {
 /// Left of the notch: the mark.
 struct ClaudeCodeCompactLeading: View {
     let model: ClaudeCodeModel
+    var approvals: ApprovalCenter? = nil
 
     var body: some View {
+        if let approvals, !model.isPreviewing, approvals.front(for: .claude) != nil {
+            ApprovalCompactLeading(center: approvals, agent: .claude)
+        } else {
+            usual
+        }
+    }
+
+    private var usual: some View {
         ClaudeCodeMarkView(mark: model.mark, pointSize: ClaudeCodeLayout.compactSymbol)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -534,8 +555,17 @@ struct ClaudeCodeCompactLeading: View {
 /// has got, how many beside a spinner.
 struct ClaudeCodeCompactTrailing: View {
     let model: ClaudeCodeModel
+    var approvals: ApprovalCenter? = nil
 
     var body: some View {
+        if let approvals, !model.isPreviewing, approvals.front(for: .claude) != nil {
+            ApprovalCompactTrailing(center: approvals, agent: .claude)
+        } else {
+            usual
+        }
+    }
+
+    private var usual: some View {
         GeometryReader { proxy in
             Group {
                 let count = model.backgroundCount
@@ -581,8 +611,17 @@ struct ClaudeCodeCompactTrailing: View {
 /// run whose files say how far they have got.
 struct ClaudeCodeMinimal: View {
     let model: ClaudeCodeModel
+    var approvals: ApprovalCenter? = nil
 
     var body: some View {
+        if let approvals, !model.isPreviewing, approvals.front(for: .claude) != nil {
+            ApprovalMinimal()
+        } else {
+            usual
+        }
+    }
+
+    private var usual: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
             let fraction = model.workflowFraction
@@ -607,6 +646,7 @@ struct ClaudeCodeMinimal: View {
 /// the app it runs in.
 struct ClaudeCodeExpanded: View {
     let model: ClaudeCodeModel
+    var approvals: ApprovalCenter? = nil
     let open: (ClaudeSession) -> Void
     @AppStorage(ClaudeCodePrefs.showPrompt) private var showsText = true
     /// How deep the fade at the head of the rows is: as far as they are scrolled down,
@@ -616,6 +656,29 @@ struct ClaudeCodeExpanded: View {
     private static let listSpace = "claudeCodeList"
 
     var body: some View {
+        if let approvals, !model.isPreviewing, let card = approvals.card(for: .claude) {
+            // The request above the rows, which get what room is left.
+            let block = ApprovalLayout.height(for: card.item, waiting: approvals.waiting(for: .claude).count,
+                                              isPrivate: approvals.isPrivate)
+            VStack(spacing: 0) {
+                ApprovalBlock(center: approvals, item: card.item, decided: card.decided) { request in
+                    _ = ClaudeHostApps.activate(request.hostApp)
+                }
+                .id(card.item.id)
+                .frame(height: block, alignment: .top)
+                .padding(.top, ClaudeCodeLayout.topInset)
+                if !model.shown.isEmpty {
+                    list.frame(maxHeight: max(0, ClaudeCodeLayout.maxApprovalPageHeight - block - ClaudeCodeLayout.topInset * 2))
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        } else {
+            list
+        }
+    }
+
+    @ViewBuilder
+    private var list: some View {
         let sessions = model.shown
         let height = ClaudeCodeLayout.visibleHeight(sessions, showsText: showsText)
         // The rows' heights are worked out line by line, each line a fixed height, so
@@ -1016,7 +1079,23 @@ struct ClaudeCodeSettingsView: View {
     @AppStorage(ClaudeCodePrefs.showPrompt) private var showPrompt = true
     @State private var copied = false
 
+    @AppStorage(ClaudeCodePrefs.approveFromIsland) private var approveFromIsland = true
+    @AppStorage(ClaudeCodePrefs.openForApproval) private var openForApproval = true
+
     var body: some View {
+        Toggle(isOn: $approveFromIsland) {
+            Text("Approve from the island")
+            Text("When Claude Code asks permission, the island shows what it wants to do, with Allow, Deny and Answer in Claude. Claude's own prompt still works; nothing is allowed without your click.")
+        }
+
+        Toggle(isOn: $openForApproval) {
+            Text("Open the island for each request")
+            Text("The island opens on the request by itself, once, unless you're presenting, the screen is locked or Claude is in front, and closes again after 12 seconds unless you move the pointer into it.")
+        }
+        .disabled(!approveFromIsland)
+
+        ApprovalKeyRow(agent: .claude)
+
         Toggle(isOn: $showPrompt) {
             Text("Show what you asked")
             Text("Under each session in the opened island, its latest prompt, or the start of Claude's reply once it's done; a session outside a project goes by its prompt. Off, sessions show by project alone.")
@@ -1035,6 +1114,7 @@ struct ClaudeCodeSettingsView: View {
         } label: {
             Text("Hooks")
             Text("Claude Code tells Islet what it's doing through hooks. Copy Scripts/claude-code-hook.sh from Islet's source to ~/.claude/hooks/islet-notify.sh, then add the copied hooks to ~/.claude/settings.json. Until then, nothing shows. Copy the script again after updating Islet: hooks an older copy doesn't know are left out until you do.")
+            Text("For approving from the island, the PermissionRequest hook waits up to 10 minutes and runs the script through bash -p. With an older line, whose timeout is 10 seconds, a request stays in the island only about 9 seconds before Claude Code stops waiting for it.")
         }
 
         LabeledContent("Last heard from Claude Code") {

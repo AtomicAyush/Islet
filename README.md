@@ -361,7 +361,8 @@ quiet for ten minutes while Claude waits on nothing (a long build keeps it going
 you give shows as soon as Claude Code uses the tool, or starts the command you allowed, and a
 denial once the agent that asked carries on; without the PermissionRequest and tool hooks, it
 shows only once the approved command or agent next writes, so for a long command the hand
-stays until it is done.
+stays until it is done. A permission Claude asks can be answered in the island itself, with
+Allow and Deny on its page (see [Approving from the island](#approving-from-the-island)).
 
 How far the background work has got comes from the files Claude Code keeps beside the
 session's transcript in `~/.claude/projects`: each workflow run's journal of agents started and
@@ -405,7 +406,8 @@ them in ChatGPT. The hooks say nothing when a turn fails or you decline a permis
 looks further: a turn the thread's rollout file says has ended is over, a chat whose Codex has
 quit is over, and so is a turn quiet for ten minutes (an hour while a tool runs, for a long
 build). Its banners, a reply done, a permission or a question, show only while the app it runs
-in is not in front.
+in is not in front. A permission ChatGPT asks while you're in another app can be answered in the
+island too (see [Approving from the island](#approving-from-the-island)).
 
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
@@ -861,8 +863,8 @@ installed Settings leaves those hooks out of what it copies.
       "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" start" }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "timeout": 10,
       "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" prompt" }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "timeout": 10,
-      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" permission" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "timeout": 600,
+      "command": "/bin/bash -p \"/Users/you/.claude/hooks/islet-notify.sh\" permission --timeout 600" }] }],
     "Notification": [{ "hooks": [{ "type": "command", "timeout": 10,
       "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" notification" }] }],
     "PostToolUse": [{ "hooks": [{ "type": "command", "timeout": 10, "async": true,
@@ -881,11 +883,15 @@ installed Settings leaves those hooks out of what it copies.
 }
 ```
 
-Each hook hands the script its kind of event. SessionStart and SessionEnd make and delete the
-session's file, UserPromptSubmit marks it working, Notification says when Claude needs your
+The PermissionRequest hook names the script by its whole path, your home folder's in place of
+`/Users/you` (Copy Hooks fills it in), and runs it through `bash -p`, which takes no shell
+functions from the environment Claude Code was started in; its long timeout is how long the
+island may wait for your answer. Each hook hands the script its kind of event. SessionStart and
+SessionEnd make and delete the session's file, UserPromptSubmit marks it working, Notification says when Claude needs your
 permission or an answer, and Stop marks it done. PermissionRequest notes each permission asked
-(the tool, the agent that asked, and for a command a fingerprint, never the command) and prints
-nothing, so the asking stays Claude Code's; the session shows "Needs permission" only once
+(the tool, the agent that asked, and for a command a fingerprint, never the command); it prints
+nothing, so the asking stays Claude Code's, unless you answer it in the island
+([Approving from the island](#approving-from-the-island)); the session shows "Needs permission" only once
 Claude Code's Notification says it is still waiting, a few seconds on. Claude Code says nothing
 when you answer, so the next word from that tool or agent does: PostToolUse or
 PostToolUseFailure once the tool has been used, the agent stopping or carrying on (all a denial
@@ -985,12 +991,90 @@ left running from the thread's rollout file (its id alone, and whether the call'
 saying it is still running), and from Codex's own databases in
 that folder, the thread's goal (its objective's first words, its state and what it has used) and
 how many follow-ups wait in its queue, never their words. Codex waits for most of the hooks, so
-the script is quick, prints nothing and always succeeds. It needs `jq`, part of macOS from 15 on
+the script is quick, prints nothing (but an answer given in the island) and always succeeds. It needs `jq`, part of macOS from 15 on
 (`brew install jq` before that). It keeps the last 200 or so events other than tools' in
 `.hook-log.jsonl` beside the chats' files, a prompt and a reply by their length alone, and
 `ISLET_NOTIFY_DRY=1` prints its banners instead of showing them. Its header lists what each
 chat's file holds. A new version of the script is installed by copying it over the old one; the
-hooks' lines never change, since a changed hook has to be trusted again.
+hooks' lines stay as they are, since a changed hook has to be trusted again (only the longer wait
+for approving from the island changes one, if you choose it).
+
+### Approving from the island
+
+When Claude Code or ChatGPT asks permission (to run a command, write or edit a file, fetch a
+page or use a tool from an MCP server), the island can show the request on the agent's page and
+take your answer there. It shows what is asked in full: the command or the file's new content
+line by line, numbered, with `↩` where a long line wraps; every setting the tool was given; the
+folder, the app and any subagent asking, with the branch and when the session started; and the
+agent's own words about it, never taken for Islet's. A hand stands beside the notch with
+"Allow?" ("Answer?" where Allow isn't offered; for ChatGPT, the seconds left), and the island
+opens on the
+request by itself once, unless you're presenting, the screen is locked, the app that asks is in
+front or you're already using the island; it closes after 12 seconds unless you move the pointer
+into it. Several requests queue behind the one shown ("1 of 3", and a row of those waiting that
+brings each forward); while the pointer is in the island the one in front never changes under
+it. Nothing makes a sound, and the card never takes the keyboard.
+
+- **Answer in the app** brings the app that asked forward, where its own prompt is waiting.
+  Claude's prompt shows at the same moment and still works; answering there takes the card away.
+- **Deny** tells the agent no, as the app would. It's there only while Islet can sign answers
+  (see below).
+- **Allow** works only for a click of yours on it: the card must have been on screen a moment,
+  you must have moved onto Allow from outside it and rested there (a pointer already on Allow
+  when the card comes must leave it first), and seen the whole request (a long one says "Scroll
+  to read it all" until you have). A click another program makes, or one through a window
+  over the island, is refused. VoiceOver and Switch Control get the card's buttons too, with the
+  whole request read out first. There is no Always allow: each request is answered once.
+
+Allow isn't offered, only Deny and Answer in the app, for a request that writes to a place that
+runs things or approves them (shell start-up files, `~/Library/LaunchAgents`, git hooks,
+`~/.claude`, `~/.codex`, Islet's own folder, however the disk would spell them, `~/.CLAUDE` or
+`~/.zſhrc`, and through any linked folder) or writes through a link leading out of the project,
+holds characters you couldn't see (shown as their code, such as `‹U+202E›`), fetches an address
+that could be read two ways (with a backslash, or a name and `@` before the host), carries a
+setting the island has no layout for, or comes from an app that doesn't take its prompt away
+once answered. While Presentation Mode is on or the screen is shared, the card says only that
+the agent needs permission. Questions an agent asks you, and plans to approve, are always left
+to the app.
+
+**Setting it up.** Copy the new script over the old one (as in
+[Claude Code hooks](#claude-code-hooks) and [ChatGPT hooks](#chatgpt-hooks)), then in Settings →
+Activities → Claude Code (or ChatGPT) click **Set Up** beside Approvals key. Islet keeps a
+signing key in your login keychain and writes its public half to `islet-approvals.pub` beside
+the hook script; the hook takes only answers signed with it, so a program that can write into
+Islet's folder still can't answer for you. The first Set Up always makes a new key, in place of
+anything already in the keychain under its name, and setting up the other agent writes out
+the same key only. Islet signs only while each file holds its own key: if one changed, Settings
+says so, the island offers only Answer in the app, and **Reset Key** makes a new one. For Claude Code, paste Copy
+Hooks' PermissionRequest entry in place of the old one, whose 10-second timeout lets a request
+stay only about 9 seconds; new sessions pick it up, and nothing needs trusting.
+
+ChatGPT asks in the app only once the hook gives up, so a request waits in the island only
+briefly, and not at all while you're away, locked, presenting or in ChatGPT; one you haven't
+looked at in the island for 12 seconds while you work in another app goes back to ChatGPT
+then. Claude Code in a terminal is treated the same way, waiting at most 30 seconds, until it
+is known whether its own prompt shows while the hook waits. With the hook line
+as it is, it waits 8 seconds and needs no new trust. To wait longer (15, 30 or 60 seconds,
+Settings → ChatGPT → Wait in the island), paste **Copy Line**'s PermissionRequest entry in place
+of Islet's in `~/.codex/hooks.json` and trust it once more in ChatGPT, since a changed line has
+to be:
+
+```json
+{
+  "hooks": {
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "timeout": 90,
+      "statusMessage": "Waiting for your answer in Islet",
+      "command": "/bin/bash -p \"/Users/you/.codex/hooks/islet-notify.sh\" permission --timeout 90" }] }]
+  }
+}
+```
+
+Anything your shell's start-up files print when an app runs a hook gets in the way of the
+answer, so keep them quiet for scripts. Turn **Approve from the island** off in either agent's
+settings to leave every request to its app again; the hook then waits for nothing. An earlier
+test build may have left an item called "Islet approvals key" in your login keychain; it isn't
+used, and you can delete it in Keychain Access. After setting up, a Keychain prompt about the
+approvals key is unexpected: deny it and reset the key.
 
 ## Layout of the code
 

@@ -82,14 +82,32 @@
 # none is left the session is working again, or idle if its turn has ended. Without the
 # PermissionRequest hook nothing is noted, and the Notification's mark lasts the turn.
 #
+# Approving from the island: once a permission asked is noted, and while Islet is
+# running and willing, the request is offered to Islet, which shows it in the island
+# with Allow, Deny and Answer in the app. The hook waits for Islet's answer, checks it
+# is signed with the approvals key whose public half sits beside this script
+# (islet-approvals.pub, written by Islet only when you click for it) and was given for
+# exactly this request, and hands Claude Code the decision. Anything else, including no
+# answer in time, prints nothing, and Claude Code asks in the app as it always has.
+# Under the Claude app both ask at once and the first answer wins; elsewhere the hook
+# waits only briefly, and not at all while you are away or busy elsewhere.
+# `permission --timeout N` names the hook line's timeout, 10 seconds where it is not
+# given. The command itself is written only into the request, for Islet to show, and
+# the request is deleted as the hook ends.
+#
 # It has to be quick, and must never fail the hook: Claude Code waits for it before
 # sending a prompt, and adds anything it prints then to the prompt. So nothing is
-# printed (but a dry run's banners), and it always exits 0; a PermissionRequest hook
-# that prints nothing leaves the asking to Claude Code. A tool's use comes after every
-# tool call of every agent, so for a session with nothing asked it ends at once.
+# printed (but a dry run's banners), except the permission kind's answer, and it always
+# exits 0; a PermissionRequest hook that prints nothing leaves the asking to Claude
+# Code. A tool's use comes after every tool call of every agent, so for a session with
+# nothing asked it ends at once.
 export LC_ALL=en_US.UTF-8
+# The tools from fixed places, not from whatever PATH Claude Code was started with.
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin
 kind="$1"
 input="$(cat)"
+# Only the permission kind may answer, on what was stdout; nothing else reaches it.
+if [ "$kind" = permission ]; then exec 3>&1; trap 'exit 0' TERM INT HUP; else exec 3>&-; fi
 [ -z "$ISLET_NOTIFY_DRY" ] && exec >/dev/null
 dir="${ISLET_CLAUDE_STATE_DIR:-$HOME/Library/Application Support/Islet/Claude Code/Sessions}"
 # A tool's use in a session with nothing asked ends here: its file's one line says so.
@@ -186,6 +204,346 @@ show() { # title subtitle symbol tint [style]
   open -g "islet://banner?title=$(enc "$1")&subtitle=$(enc "$2")&symbol=$3&tint=$4&style=${5:-compact}&activity=claudeCode" 2>/dev/null
 }
 
+# The agent this script speaks for, to the approval block below.
+approval_agent=claude
+# --- islet approval: begin ---
+# Offering a permission asked to Islet, as the header says. Islet's folder,
+#   ~/Library/Application Support/Islet/Approvals   (0700, made by Islet only)
+#     presence.json      Islet is running, and what it will be asked
+#     Requests/<id>.json written here, never rewritten, deleted as the hook ends
+#     Answers/<id>.json  written by Islet, signed, never overwritten
+#     Passed/<session>/  ChatGPT's requests left to the app, each by the first 16 hex
+#                        digits of its digest and nothing more
+# The same in both of Islet's hook scripts. The script sets approval_agent (claude or
+# chatgpt), and session, project and approval_pending (the fingerprint the session's
+# file notes the request by, or "") before asking. The home folder comes from the
+# directory service and the tools from fixed places, not from the environment the
+# agent hands the hook. Only the harness's copy of this script reads the test settings
+# below.
+approval_test_overrides=0
+approval_allow='{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+approval_deny='{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Islet by the person using this Mac. Don'"'"'t retry it or find another way to do it; ask them how to go on."}}}'
+# Hosts whose own prompt runs alongside the hook and is withdrawn by its answer.
+approval_listed_hosts=" com.anthropic.claudefordesktop "
+approval_jq=""
+for approval_tool in /usr/bin/jq /opt/homebrew/bin/jq /usr/local/bin/jq; do
+  [ -x "$approval_tool" ] && { approval_jq="$approval_tool"; break; }
+done
+approval_overridden() { [ "$approval_test_overrides" = 1 ] && [ -n "$1" ]; }
+approval_home() {
+  if approval_overridden "$ISLET_APPROVAL_HOME"; then printf '%s' "$ISLET_APPROVAL_HOME"; return; fi
+  local line
+  line="$(/usr/bin/dscl . -read "/Users/$(/usr/bin/id -un)" NFSHomeDirectory 2>/dev/null)" || return 1
+  line="${line#NFSHomeDirectory: }"
+  [ "${line:0:1}" = / ] && printf '%s' "$line"
+}
+# A process number as a file may give one: decimal, 2 to 99999.
+approval_int() { [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$1" -ge 2 ]; }
+# When process $1 started, in seconds since 1970.
+approval_started() {
+  local s
+  s="$(LC_ALL=C /bin/ps -o lstart= -p "$1" 2>/dev/null)" || return 1
+  s="${s%"${s##*[![:space:]]}"}"
+  LC_ALL=C /bin/date -j -f '%a %b %e %T %Y' "$s" +%s 2>/dev/null
+}
+# The bytes of file $1, if it is a regular file of yours, not a link, at most $2 bytes,
+# with none of the mode bits $3 set (077 unless given). Opened without following a link
+# or waiting on a pipe, and checked on what was opened.
+approval_read() {
+  /usr/bin/perl -e '
+    use Fcntl; my ($path, $most, $mask) = @ARGV;
+    sysopen(my $f, $path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK) or exit 1;
+    my @s = stat($f);
+    exit 1 unless @s && -f _ && $s[4] == $< && ($s[2] & oct($mask)) == 0 && $s[7] <= $most;
+    local $/; my $d = <$f> // ""; exit 1 if length($d) > $most; print $d;' "$1" "$2" "${3:-077}" 2>/dev/null
+}
+# A folder of yours, not a link, that only you can use.
+approval_dir_ok() {
+  [ -d "$1" ] && [ ! -L "$1" ] && [ "$(/usr/bin/stat -f '%u %Lp' "$1" 2>/dev/null)" = "$(/usr/bin/id -u) 700" ]
+}
+# The approvals key, as PEM, from islet-approvals.pub beside this script: found from the
+# script's own path, and used only when it and its folder are yours and no one else can
+# write to them, since whoever can change it could change this script too.
+approval_key() {
+  local here key
+  here="$(CDPATH='' cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$here/islet-approvals.pub" ] && [ ! -L "$here/islet-approvals.pub" ] || return 1
+  [ "$(/usr/bin/stat -f '%u' "$here" 2>/dev/null)" = "$(/usr/bin/id -u)" ] || return 1
+  (( (8#$(/usr/bin/stat -f '%Lp' "$here") & 8#022) == 0 )) || return 1
+  key="$(approval_read "$here/islet-approvals.pub" 200 022)" || return 1
+  key="${key%$'\n'}"
+  # A P-256 public key, DER SubjectPublicKeyInfo: 91 bytes, 124 base64 characters.
+  [[ "$key" =~ ^MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE[A-Za-z0-9+/]{86}==$ ]] || return 1
+  printf -- '-----BEGIN PUBLIC KEY-----\n%s\n%s\n-----END PUBLIC KEY-----\n' "${key:0:64}" "${key:64}"
+}
+# Islet's presence, if it is valid: a file of yours naming a running process that
+# started when it says. Sets approval_presence and approval_islet.
+approval_presence_ok() {
+  local text pid started start
+  text="$(approval_read "$approval_dir/presence.json" 4096)" || return 1
+  read -r pid started <<< "$(printf '%s' "$text" | "$approval_jq" -r '
+    [(.pid | if type == "number" and . == floor then tostring else "-" end),
+     (.started | if type == "number" then floor | tostring else "-" end)] | join(" ")' 2>/dev/null)"
+  approval_int "$pid" && [[ "$started" =~ ^[0-9]{1,12}$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  start="$(approval_started "$pid")" || return 1
+  (( start - started <= 2 && started - start <= 2 )) || return 1
+  approval_presence="$text" approval_islet="$pid"
+}
+# Seconds since the keyboard, pointer or trackpad was last used.
+approval_idle_seconds() {
+  if approval_overridden "$ISLET_APPROVAL_IDLE"; then printf '%s' "$ISLET_APPROVAL_IDLE"; return; fi
+  /usr/sbin/ioreg -c IOHIDSystem -d 4 2>/dev/null | /usr/bin/awk '/HIDIdleTime/ { print int($NF / 1000000000); exit }'
+}
+# The agent's process (the hook's parent past any shell), whether it was started to
+# ask through its host (--permission-prompt-tool stdio), and the app it runs in, past
+# Claude Code's own processes and the Claude app's disclaimer helper. Sets
+# approval_agent_pid, approval_stdio, approval_host_id and approval_host_name.
+approval_host() {
+  local at="$PPID" line parent comm args app _
+  approval_agent_pid="" approval_stdio=0 approval_host_id="" approval_host_name=""
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    approval_int "$at" || return 0
+    line="$(LC_ALL=C /bin/ps -o ppid=,comm= -p "$at" 2>/dev/null)" || return 0
+    read -r parent comm <<< "$line"
+    case "${comm##*/}" in
+      sh|bash|zsh|dash|ksh|fish|env|login|-sh|-bash|-zsh) at="$parent"; continue ;;
+    esac
+    if [ -z "$approval_agent_pid" ]; then
+      approval_agent_pid="$at"
+      args="$(LC_ALL=C /bin/ps -ww -o args= -p "$at" 2>/dev/null)"
+      case " $args " in *" --permission-prompt-tool stdio "*|*" --permission-prompt-tool=stdio "*) approval_stdio=1 ;; esac
+    else
+      case "$comm" in
+        */claude-code/*|*/disclaimer) ;;
+        /*.app/Contents/*)
+          app="${comm%%.app/Contents/*}.app"
+          approval_host_id="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist" 2>/dev/null)"
+          approval_host_name="${app##*/}"; approval_host_name="${approval_host_name%.app}"
+          return 0 ;;
+      esac
+    fi
+    at="$parent"
+  done
+}
+# Whether a card is up for session $1: a request of its whose hook is still running.
+# The Notification that permission is needed then puts up no banner.
+approval_live() {
+  local home dir file text sid pid
+  [ -n "$approval_jq" ] && home="$(approval_home)" || return 1
+  dir="$home/Library/Application Support/Islet/Approvals/Requests"
+  for file in "$dir"/*.json; do
+    [[ "${file##*/}" =~ ^[0-9a-f]{32}\.json$ ]] || continue
+    text="$(approval_read "$file" 300000)" || continue
+    read -r sid pid <<< "$(printf '%s' "$text" | "$approval_jq" -r '
+      [(.sessionId | strings), (.hookPid | numbers | tostring)] | join(" ")' 2>/dev/null)"
+    [ -n "$sid" ] && [ "$sid" = "$1" ] && approval_int "$pid" && kill -0 "$pid" 2>/dev/null && return 0
+  done
+  return 1
+}
+# Removes this hook's request and answer, whatever ends it.
+approval_files=()
+approval_cleanup() { [ "${#approval_files[@]}" -gt 0 ] && /bin/rm -f "${approval_files[@]}" 2>/dev/null; }
+# Islet's answer in $1, if it is one this hook can take: its own, for exactly what was
+# shown, in time, and signed with the approvals key. Sets approval_decision to allow or
+# deny; anything else leaves it pass.
+approval_verify() {
+  local text id digest decision answered sig pem now
+  text="$(approval_read "$1" 1024)" || return 0
+  IFS=$'\t' read -r id digest decision answered sig <<< "$(printf '%s' "$text" | "$approval_jq" -r '
+    def plain: if type == "string" and (test("[\t\n\r]") | not) and . != "" then . else "-" end;
+    [(.id | plain), (.digest | plain), (.decision | plain),
+     (.answered | if type == "number" and . == floor then tostring else "-" end), (.sig | plain)]
+    | join("\t")' 2>/dev/null)"
+  [ "$id" = "$approval_id" ] && [ "$digest" = "$approval_digest" ] || return 0
+  case "$decision" in allow|deny) ;; *) return 0 ;; esac
+  [[ "$answered" =~ ^[0-9]{1,12}$ ]] || return 0
+  now="$(/bin/date +%s)"
+  (( approval_created <= answered && answered <= approval_deadline && now <= approval_deadline )) || return 0
+  [[ "$sig" =~ ^[A-Za-z0-9+/]{6,96}={0,2}$ ]] && [ "${#sig}" -ge 8 ] && [ "${#sig}" -le 96 ] || return 0
+  pem="$(approval_key)" || return 0
+  printf '%s' "v1|$id|$digest|$decision|$answered" | /usr/bin/openssl dgst -sha256 -verify <(printf '%s\n' "$pem") \
+    -signature <(printf '%s' "$sig" | /usr/bin/base64 -D 2>/dev/null) >/dev/null 2>&1 || return 0
+  approval_decision="$decision"
+}
+# Whether file $1 has Codex answer what it asks with its own reviewer: an
+# approvals_reviewer in it other than "user".
+approval_reviewer_set() {
+  [ -f "$1" ] && /usr/bin/grep -E '^[[:space:]]*approvals_reviewer[[:space:]]*=' "$1" 2>/dev/null \
+    | /usr/bin/grep -Evq '=[[:space:]]*"user"[[:space:]]*(#.*)?$'
+}
+# Whether Codex's reviewer, not the person, answers what it asks, so that no card goes
+# ahead of it: by Codex's settings, or a project's from the agent's folder up to the
+# home folder ($1), the agent's folder being $2.
+approval_reviewed() {
+  local codex="$CODEX_HOME" at="$2"
+  [ "${codex:0:1}" = / ] || codex="$1/.codex"
+  approval_reviewer_set "$codex/config.toml" && return 0
+  while [ -n "$at" ] && [ "$at" != / ] && [ "$at" != "$1" ]; do
+    approval_reviewer_set "$at/.codex/config.toml" && return 0
+    at="${at%/*}"
+  done
+  return 1
+}
+# The policy, and how long to wait, from the host found by ancestry and the hook's
+# arguments ($2 --timeout, $3 the hook line's timeout, 10 where not given). A blocking
+# wait, or one on a line that gives its timeout, ends two seconds before that timeout,
+# counted from the hook's start (approval_ends, in $SECONDS).
+approval_policy_of() {
+  local limit=10
+  [ "$2" = --timeout ] && [[ "$3" =~ ^[1-9][0-9]{0,3}$ ]] && limit="$3"
+  approval_host
+  if [ "$approval_agent" = claude ] && [ "$approval_stdio" = 1 ]; then
+    approval_policy=concurrent approval_wait=540 approval_ends=99999
+    [ "$2" = --timeout ] && approval_ends=$((limit - 2))
+    case "$approval_listed_hosts" in *" $approval_host_id "*) approval_allows=true ;; *) approval_allows=false ;; esac
+  else
+    approval_policy=blocking approval_allows=true approval_wait=540 approval_ends=$((limit - 2))
+  fi
+  (( approval_ends - SECONDS < approval_wait )) && approval_wait=$((approval_ends - SECONDS))
+}
+# Whether to offer the permission asked to Islet, by every gate the header names, the
+# cheap ones first; returns 1 to leave it to the app. Sets the tool, the call and its
+# digest, the policy, how long to wait and where Islet's folder is; for ChatGPT, also
+# approval_mark, the Passed mark to leave should the app be left to ask.
+approval_offer() {
+  # Nothing from the environment reaches the tools that check a request or an answer:
+  # not a library jq would load from $HOME, nor a Perl or OpenSSL setting.
+  local PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/empty
+  unset PERL5OPT PERL5LIB PERLLIB PERL5DB OPENSSL_CONF CDPATH
+  approval_mark=""
+  [ -n "$approval_jq" ] || return 1
+  local home tool call bytes
+  read -r tool <<< "$(printf '%s' "$input" | "$approval_jq" -r '.tool_name | strings' 2>/dev/null)"
+  case "$approval_agent:$tool" in
+    claude:Bash|claude:Write|claude:Edit|claude:MultiEdit|claude:NotebookEdit|claude:WebFetch|claude:WebSearch) ;;
+    chatgpt:Bash|chatgpt:apply_patch|chatgpt:Edit|chatgpt:Write) ;;
+    claude:mcp__*|chatgpt:mcp__*) ;;
+    *) return 1 ;;
+  esac
+  approval_tool="$tool"
+  # A dry run says what would be offered, and goes no further.
+  if [ -n "$ISLET_NOTIFY_DRY" ]; then
+    approval_policy_of "$@"
+    echo "approval: $approval_policy $tool wait=$approval_wait" >&2
+    return 1
+  fi
+  [ -n "$session" ] && home="$(approval_home)" || return 1
+  approval_dir="$home/Library/Application Support/Islet/Approvals"
+  approval_dir_ok "$approval_dir" && approval_dir_ok "$approval_dir/Requests" \
+    && approval_dir_ok "$approval_dir/Answers" || return 1
+  approval_policy_of "$@"
+  call="$(printf '%s' "$input" | "$approval_jq" -cS '{input: .tool_input, tool: .tool_name}' 2>/dev/null)"
+  bytes="$(LC_ALL=C; printf '%s' "${#call}")"
+  [ -n "$call" ] && (( bytes <= 262144 )) || return 1
+  approval_call="$call"
+  approval_digest="$(printf '%s' "$call" | /usr/bin/openssl dgst -sha256 -r 2>/dev/null)"
+  approval_digest="${approval_digest:0:64}"
+  [[ "$approval_digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  # ChatGPT checks what was approved for the session only after this hook: a request
+  # left to it before goes to it again at once.
+  if [ "$approval_agent" = chatgpt ] && [[ "$session" =~ ^[A-Za-z0-9_-]{1,128}$ ]] \
+    && approval_dir_ok "$approval_dir/Passed"; then
+    approval_mark="$approval_dir/Passed/$session/${approval_digest:0:16}"
+    [ -e "$approval_mark" ] && return 1
+  fi
+  # Not for an agent working in your home folder, or in or around Islet's.
+  local cwd here
+  read -r cwd <<< "$(printf '%s' "$input" | "$approval_jq" -r '.cwd | strings' 2>/dev/null)"
+  [ -n "$cwd" ] && here="$(CDPATH='' cd -- "$cwd" 2>/dev/null && pwd -P)" || return 1
+  case "${here%/}/" in "${home%/}/"|"$approval_dir/"*) return 1 ;; esac
+  case "$approval_dir/" in "${here%/}/"*) return 1 ;; esac
+  approval_here="$here"
+  approval_presence_ok || return 1
+  approval_key >/dev/null || return 1
+  local accepting locked presenting captured visible frontmost waits
+  IFS=$'\t' read -r accepting locked presenting captured visible frontmost waits <<< "$(printf '%s' "$approval_presence" \
+    | "$approval_jq" -r --arg agent "$approval_agent" '
+      def flag: if . == true then "1" else "0" end;
+      [(.accepting[$agent] | flag), (.locked | flag), (.presenting | flag), (.captured | flag), (.visible | flag),
+       (.frontmost | if type == "string" and (test("[\t\n]") | not) and . != "" then . else "-" end),
+       (.wait[if $agent == "chatgpt" then "chatgpt" else "terminal" end]
+        | if type == "number" and . >= 1 and . <= 600 then floor | tostring else "30" end)] | join("\t")' 2>/dev/null)"
+  [ "$accepting" = 1 ] || return 1
+  if [ "$approval_policy" = blocking ]; then
+    # Only while you are here to answer, and not already in the app that would ask.
+    [ "$locked$presenting$captured$visible" = 0001 ] || return 1
+    [ -n "$approval_host_id" ] && [ "$frontmost" = "$approval_host_id" ] && return 1
+    [ "$(approval_idle_seconds)" -lt 120 ] 2>/dev/null || return 1
+    (( waits < approval_wait )) && approval_wait="$waits"
+  fi
+  [ "$approval_agent" = chatgpt ] && approval_reviewed "$home" "$here" && return 1
+  (( approval_wait >= 1 )) || return 1
+  return 0
+}
+# Offers the request approval_offer allowed to Islet and waits for its answer, setting
+# approval_decision, and approval_answered when Islet answered at all. Run in the
+# hook's own shell, with fd 3 closed, so a stop ends it at once and nothing it starts
+# can answer.
+approval_ask() {
+  local PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/empty
+  approval_decision=pass approval_answered=0
+  local now hook_started
+  approval_id="$(/usr/bin/od -An -N16 -tx1 /dev/urandom | /usr/bin/tr -d ' \n')"
+  [[ "$approval_id" =~ ^[0-9a-f]{32}$ ]] || return 0
+  hook_started="$(approval_started $$)" || return 0
+  # Whatever recording took since comes off the wait.
+  local wait="$approval_wait"
+  (( approval_ends - SECONDS < wait )) && wait=$((approval_ends - SECONDS))
+  (( wait >= 1 )) || return 0
+  now="$(/bin/date +%s)"
+  approval_created="$now" approval_deadline=$((now + wait))
+  local request="$approval_dir/Requests/$approval_id.json" temp="$approval_dir/Requests/.$approval_id.tmp"
+  approval_files=("$temp" "$request" "$approval_dir/Answers/$approval_id.json")
+  trap approval_cleanup EXIT
+  trap 'exit 0' TERM INT HUP
+  ( umask 077; set -C
+    printf '%s' "$input" | "$approval_jq" -c \
+      --arg id "$approval_id" --arg agent "$approval_agent" --arg policy "$approval_policy" \
+      --argjson offer "$approval_allows" --arg cwd "$approval_here" --arg project "$project" \
+      --arg hostApp "$approval_host_id" --arg hostName "$approval_host_name" \
+      --arg hookPid "$$" --arg hookStarted "$hook_started" --arg agentPid "${approval_agent_pid:-0}" \
+      --arg created "$now" --arg deadline "$approval_deadline" --arg call "$approval_call" \
+      --arg digest "$approval_digest" --arg pendingInput "$approval_pending" '
+      def text: if type == "string" then . else "" end;
+      {version: 1, id: $id, agent: $agent, policy: $policy, allowOffered: $offer,
+       sessionId: (.session_id | text), agentId: (.agent_id | text), agentType: (.agent_type | text),
+       promptId: (.prompt_id | text), turnId: (.turn_id | text), cwd: $cwd, project: $project,
+       hostApp: $hostApp, hostName: $hostName, transcriptPath: (.transcript_path | text),
+       permissionMode: (.permission_mode | text), hookPid: ($hookPid | tonumber),
+       hookStarted: ($hookStarted | tonumber), agentPid: ($agentPid | tonumber), created: ($created | tonumber),
+       deadline: ($deadline | tonumber), tool: (.tool_name | text), call: $call, digest: $digest,
+       pendingInput: $pendingInput}' > "$temp" ) 2>/dev/null || return 0
+  /bin/mv -n "$temp" "$request" 2>/dev/null && [ ! -e "$temp" ] || return 0
+  # Every quarter of a second, Islet's answer; every two, whether Islet is still there.
+  local answer="$approval_dir/Answers/$approval_id.json" ticks=0 until=$((SECONDS + wait))
+  while :; do
+    if [ -e "$answer" ] || [ -L "$answer" ]; then
+      approval_answered=1
+      approval_verify "$answer"
+      return 0
+    fi
+    (( SECONDS >= until )) && return 0
+    ticks=$((ticks + 1))
+    if (( ticks % 8 == 0 )); then
+      kill -0 "$approval_islet" 2>/dev/null || return 0
+      (( $(/bin/date +%s) >= approval_deadline )) && return 0
+    fi
+    /bin/sleep 0.25
+  done
+}
+# Leaves ChatGPT's mark that this request went to the app, in a folder of the
+# session's made here, only you able to use either.
+approval_leave() {
+  local PATH=/usr/bin:/bin:/usr/sbin:/sbin
+  [ -n "$approval_mark" ] || return 0
+  local folder="${approval_mark%/*}"
+  [ -d "$folder" ] || /bin/mkdir -m 700 "$folder" 2>/dev/null
+  approval_dir_ok "$folder" || return 0
+  ( umask 077; set -C; : > "$approval_mark" ) 2>/dev/null
+  return 0
+}
+# --- islet approval: end ---
+
 case "$kind" in
   stop)
     [ "$stop_active" = "true" ] && exit 0
@@ -201,7 +559,8 @@ case "$kind" in
     # is wanted, "use Bash" rather than "Claude needs your permission to use Bash".
     wanted="$(printf '%s' "$message" | sed -E 's/^Claude needs your permission to //; s/^Claude //')"
     case "$wants" in
-      permission_prompt) show "Needs permission" "${project:+$project · }$wanted" hand.raised.fill orange ;;
+      # Not while a card in the island already asks.
+      permission_prompt) approval_live "$session" || show "Needs permission" "${project:+$project · }$wanted" hand.raised.fill orange ;;
       idle_prompt)       show "Waiting for you" "${project:-Claude}" ellipsis.bubble.fill blue ;;
       agent_needs_input|elicitation_dialog|elicitation_url_dialog)
                          show "$(titled "Needs input")" "$message" questionmark.bubble.fill orange card ;;
@@ -500,11 +859,13 @@ if [ -n "$state" ]; then
   tmp="$dir/.$session.$$.tmp"
   { printf '%s\n' "$state" > "$tmp" && mv -f "$tmp" "$file"; } 2>/dev/null || rm -f "$tmp"
 fi
+# A permission asked waits for Islet's answer below, the session's file free meanwhile.
+[ "$kind" = permission ] && { rmdir "$lock" 2>/dev/null; trap - EXIT; }
 [ "$kind" = start ] && forget_old
 
 
-[ "${finished:-[]}" = "[]" ] && exit 0
-count="$(printf '%s' "$finished" | jq 'length' 2>/dev/null)"
+count=0
+[ "${finished:-[]}" = "[]" ] || count="$(printf '%s' "$finished" | jq 'length' 2>/dev/null)"
 if [ "${count:-0}" -gt 0 ]; then
   note workflow "$finished"
   failed="$(printf '%s' "$finished" | jq '[.[] | select(.status | test("fail|error|kill|stop"))] | length')"
@@ -525,5 +886,12 @@ if [ "${count:-0}" -gt 0 ]; then
       show "$(titled "$count workflows finished")" "$(plain "$names" 120)" checkmark.seal.fill purple card
     fi
   fi
+fi
+if [ "$kind" = permission ]; then
+  approval_pending="$given" approval_decision=pass
+  approval_offer "$@" 3>&- && approval_ask "$@" 3>&-
+  # The one answer this script ever prints.
+  case "$approval_decision" in allow) approval_out="$approval_allow" ;; deny) approval_out="$approval_deny" ;; *) approval_out="" ;; esac
+  [ -n "$approval_out" ] && printf '%s\n' "$approval_out" >&3
 fi
 exit 0

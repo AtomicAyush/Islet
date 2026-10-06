@@ -654,7 +654,8 @@ final class IslandViewModel {
         if isExpanded { collapse("click outside") }
     }
 
-    func expand(focus: String? = nil) {
+    /// Opens on `focus`, with a tap of the trackpad unless `haptic` is off.
+    func expand(focus: String? = nil, haptic: Bool = true) {
         cancelExpand()
         cancelCollapse()
         endTyping(leaving: focus)
@@ -674,9 +675,24 @@ final class IslandViewModel {
             if !isHovering { roomUnderPointer = .zero }
         }
         if !wasExpanded {
-            Haptics.tap(.alignment)
+            if haptic { Haptics.tap(.alignment) }
             NotificationCenter.default.post(name: Self.didOpenNotification, object: self)
         }
+    }
+
+    /// Opens on `focus` by itself, for something that wants to be seen now (a permission
+    /// an agent asks), and closes again after `duration` unless the pointer comes in.
+    /// Only while the island shows, shut, with the pointer away from it and nothing
+    /// typed in it or arranged on it: it never takes the island from under the person.
+    /// Returns whether it opened. It opens without the trackpad's tap: nothing was done
+    /// to it.
+    @discardableResult
+    func peek(focus: String, for duration: TimeInterval) -> Bool {
+        guard !isExpanded, !isHovering, !isTyping, !isEditingHome, !isShowingCard, !isDraggingOut, mode != .hidden
+        else { return false }
+        expand(focus: focus, haptic: false)
+        scheduleCollapse(after: duration)
+        return true
     }
 
     /// `reason` and the caller's place are logged, so an island that seems to close

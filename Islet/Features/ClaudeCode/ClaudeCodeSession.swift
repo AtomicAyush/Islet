@@ -80,6 +80,9 @@ struct ClaudePermissionRequest: Equatable, Sendable {
     /// For Bash, the first 16 hex digits of the command's SHA-256, which the hook keeps
     /// in place of the command; "" otherwise.
     var command = ""
+    /// The same of everything the tool was asked to do, which links a card in the
+    /// island to this request.
+    var input = ""
 }
 
 /// One session's file, as `Scripts/claude-code-hook.sh` writes it. Its header lists the
@@ -169,7 +172,7 @@ extension ClaudeSessionRecord: Decodable {
 
 extension ClaudePermissionRequest: Decodable {
     private enum Keys: String, CodingKey {
-        case toolUseId, agentId, tool, at, command
+        case toolUseId, agentId, tool, at, command, input
     }
 
     init(from decoder: Decoder) throws {
@@ -179,6 +182,7 @@ extension ClaudePermissionRequest: Decodable {
         tool = (try? c.decodeIfPresent(String.self, forKey: .tool)) ?? ""
         at = Date(timeIntervalSince1970: try c.decode(Double.self, forKey: .at))
         command = (try? c.decodeIfPresent(String.self, forKey: .command)) ?? ""
+        input = (try? c.decodeIfPresent(String.self, forKey: .input)) ?? ""
     }
 }
 

@@ -17,6 +17,10 @@ import SwiftUI
 /// far the background tasks have got comes from the files Claude Code keeps for them
 /// beside the session's transcript (`ClaudeTaskProgressReader`).
 ///
+/// A permission a session asks shows on its page as a card with Allow, Deny and Answer
+/// in the app, when the hook offers it to Islet (`ApprovalCenter`); the session then
+/// shows as working once the island has answered.
+///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead. There it gives way to the Sound Mixer, the other
 /// background activity, but for while a session is waiting on the person.
@@ -33,9 +37,14 @@ final class ClaudeCodeFeature: Feature {
 
     let model = ClaudeCodeModel()
     let monitor: ClaudeSessionMonitor
+    /// Where permissions asked are answered from the island; `nil` leaves them to
+    /// Claude Code, as in tests.
+    let approvals: ApprovalCenter?
     private let clock: () -> Date
     private let openHost: @MainActor (String) -> Bool
-    private lazy var activity = ClaudeCodeActivity(model: model) { [weak self] session in self?.open(session) }
+    private lazy var activity = ClaudeCodeActivity(model: model, approvals: approvals) { [weak self] session in
+        self?.open(session)
+    }
 
     private var isRunning = false
     private var published: ClaudeCodeActivity.Published?
@@ -43,15 +52,17 @@ final class ClaudeCodeFeature: Feature {
     private var defaultsObserver: NSObjectProtocol?
 
     /// Tests give a monitor on a folder of their own, a clock, and a stand-in for
-    /// bringing an app forward.
+    /// bringing an app forward; the app gives the shared approvals.
     init(
         monitor: ClaudeSessionMonitor? = nil,
         clock: @escaping () -> Date = Date.init,
-        openHost: @escaping @MainActor (String) -> Bool = ClaudeHostApps.activate
+        openHost: @escaping @MainActor (String) -> Bool = ClaudeHostApps.activate,
+        approvals: ApprovalCenter? = nil
     ) {
         self.monitor = monitor ?? ClaudeSessionMonitor(now: clock)
         self.clock = clock
         self.openHost = openHost
+        self.approvals = approvals
         model.onChange = { [weak self] in self?.sync() }
         self.monitor.onChange = { [weak self] snapshot in self?.received(snapshot) }
     }
@@ -62,9 +73,17 @@ final class ClaudeCodeFeature: Feature {
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.sync() }
+            MainActor.assumeIsolated {
+                self?.updateApprovals()
+                self?.sync()
+            }
         }
         monitor.start()
+        if let approvals {
+            approvals.claudeRecords = { [weak monitor] in monitor?.snapshot.records ?? [] }
+            observeApprovals()
+        }
+        updateApprovals()
     }
 
     func stop() {
@@ -72,8 +91,44 @@ final class ClaudeCodeFeature: Feature {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
         monitor.stop()
+        updateApprovals()
         model.update([], lastHeard: model.lastHeard)
         sync()
+    }
+
+    /// Takes Claude Code's requests while running with the setting on.
+    private func updateApprovals() {
+        guard let approvals else { return }
+        approvals.setAccepting(.claude, isRunning && ClaudeCodePrefs.approvesFromIsland)
+    }
+
+    /// Re-publishes the activity as cards come and go, and works out the sessions again
+    /// as answers settle.
+    private func observeApprovals() {
+        guard let approvals, isRunning else { return }
+        withObservationTracking {
+            _ = approvals.items
+            _ = approvals.settled
+            _ = approvals.decided
+            _ = approvals.held
+            _ = approvals.isPrivate
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.received(self.monitor.snapshot)
+                    self.sync()
+                    self.openForRequest()
+                    self.observeApprovals()
+                }
+            }
+        }
+    }
+
+    /// Opens the island on the page for a request just come, as Settings asks.
+    private func openForRequest() {
+        guard let approvals, isRunning, ClaudeCodePrefs.opensForApproval, let item = approvals.front(for: .claude) else { return }
+        ApprovalOpening.open(for: item, page: activity.id, center: approvals)
     }
 
     func settingsView() -> AnyView? {
@@ -98,6 +153,8 @@ final class ClaudeCodeFeature: Feature {
     // MARK: Island
 
     private func received(_ snapshot: ClaudeSessionSnapshot) {
+        var snapshot = snapshot
+        if let approvals { snapshot.records = snapshot.records.map { approvals.settle($0) } }
         let sessions = ClaudeLiveness.sessions(snapshot, now: clock())
         model.update(isRunning ? sessions : [], lastHeard: snapshot.lastHeard)
     }
@@ -105,7 +162,7 @@ final class ClaudeCodeFeature: Feature {
     /// Puts up, re-publishes or ends the activity to match the model and the settings.
     private func sync() {
         let center = ActivityCenter.shared
-        let wanted = !model.shown.isEmpty && (isRunning || model.isPreviewing)
+        let wanted = (!model.shown.isEmpty || activity.approval != nil) && (isRunning || model.isPreviewing)
         if wanted {
             let current = activity.published
             if !center.isShowing(id: activity.id) || current != published {
@@ -145,6 +202,7 @@ final class ClaudeCodeActivity: IslandActivity {
     struct Published: Equatable {
         var expanded: CGFloat
         var rank: Int
+        var priority: ActivityPriority
     }
 
     let id = "claudeCode"
@@ -156,33 +214,49 @@ final class ClaudeCodeActivity: IslandActivity {
         guard let fraction = model.workflowFraction else { return working }
         return "\(working), \(Int((fraction * 100).rounded())) percent done"
     }
-    let priority = ActivityPriority.background
+    /// In the background, but urgent while it asks a permission the island can answer:
+    /// the hand then shows beside the notch whatever else is on.
+    var priority: ActivityPriority { asking ? .urgent : .background }
     let symbol = "sparkle"
     /// Its page shows what each session is doing and asking, as its hooks' banners do.
     var personal: PersonalContent? { .messages }
     let model: ClaudeCodeModel
+    let approvals: ApprovalCenter?
     let open: (ClaudeSession) -> Void
 
-    init(model: ClaudeCodeModel, open: @escaping (ClaudeSession) -> Void) {
+    init(model: ClaudeCodeModel, approvals: ApprovalCenter?, open: @escaping (ClaudeSession) -> Void) {
         self.model = model
+        self.approvals = approvals
         self.open = open
     }
 
     var published: Published {
-        Published(expanded: ClaudeCodeLayout.pageHeight(for: model.shown, showsText: ClaudeCodePrefs.showsPrompt),
-                  rank: rank)
+        Published(expanded: ClaudeCodeLayout.pageHeight(for: model.shown, showsText: ClaudeCodePrefs.showsPrompt,
+                                                        approval: approval,
+                                                        waiting: approvals?.waiting(for: .claude).count ?? 0,
+                                                        isPrivate: approvals?.isPrivate ?? false),
+                  rank: rank, priority: priority)
     }
+
+    /// Claude Code's front request, while one is on show and no preview runs.
+    var approval: ApprovalItem? {
+        guard !model.isPreviewing else { return nil }
+        return approvals?.card(for: .claude)?.item
+    }
+
+    /// Whether a request waits for an answer in the island.
+    var asking: Bool { !model.isPreviewing && approvals?.front(for: .claude) != nil }
 
     /// Behind the Sound Mixer for the bubble while sessions work, so a prompt does not
     /// push it out each time; ahead of it while one waits on you, so the hand shows.
-    var rank: Int { model.needsYou ? 1 : -1 }
+    var rank: Int { model.needsYou || approval != nil ? 1 : -1 }
     var compactTrailingWidth: CGFloat? { ClaudeCodeLayout.trailingWidth }
     var expandedHeight: CGFloat { published.expanded }
 
-    func compactLeading() -> AnyView { AnyView(ClaudeCodeCompactLeading(model: model)) }
-    func compactTrailing() -> AnyView { AnyView(ClaudeCodeCompactTrailing(model: model)) }
-    func minimal() -> AnyView { AnyView(ClaudeCodeMinimal(model: model)) }
-    func expanded() -> AnyView { AnyView(ClaudeCodeExpanded(model: model, open: open)) }
+    func compactLeading() -> AnyView { AnyView(ClaudeCodeCompactLeading(model: model, approvals: approvals)) }
+    func compactTrailing() -> AnyView { AnyView(ClaudeCodeCompactTrailing(model: model, approvals: approvals)) }
+    func minimal() -> AnyView { AnyView(ClaudeCodeMinimal(model: model, approvals: approvals)) }
+    func expanded() -> AnyView { AnyView(ClaudeCodeExpanded(model: model, approvals: approvals, open: open)) }
 }
 
 /// The feature's preference keys. Unset keys read as their defaults, the same ones the
@@ -193,6 +267,17 @@ enum ClaudeCodePrefs {
     static let showPrompt = "claudeCode.showPrompt"
 
     static var showsPrompt: Bool { UserDefaults.standard.object(forKey: showPrompt) as? Bool ?? true }
+
+    /// Whether permissions Claude Code asks are shown in the island to answer there.
+    /// On unless turned off: the hook, and the key beside it, are what opt in.
+    static let approveFromIsland = "claudeCode.approveFromIsland"
+
+    static var approvesFromIsland: Bool { UserDefaults.standard.object(forKey: approveFromIsland) as? Bool ?? true }
+
+    /// Whether the island opens by itself for each permission asked.
+    static let openForApproval = "claudeCode.openForApproval"
+
+    static var opensForApproval: Bool { UserDefaults.standard.object(forKey: openForApproval) as? Bool ?? true }
 }
 
 /// The apps Claude Code runs in, by the bundle id its hooks are given.
@@ -259,11 +344,23 @@ enum ClaudeCodeHooks {
     /// Two lines an event, short enough to read in the README.
     static var settingsJSON: String { settingsJSON(olderScript: false) }
 
-    /// The hooks, less those `olderScript` does not know.
-    static func settingsJSON(olderScript: Bool) -> String {
+    /// How long Claude Code lets the permission hook wait for an answer from the island.
+    static let permissionTimeout = 600
+
+    /// The hooks, less those `olderScript` does not know. The permission hook may wait
+    /// for the island's answer, so it has a long timeout, and runs the script by its
+    /// whole path through `bash -p`, which takes no shell functions from the
+    /// environment Claude Code was started with.
+    static func settingsJSON(olderScript: Bool,
+                             home: String = FileManager.default.homeDirectoryForCurrentUser.path) -> String {
         let known = events.filter { !olderScript || !newerKinds.contains($0.kind) }
         let entries = known.map { event, kind, async in
-            #"    "\#(event)": [{ "hooks": [{ "type": "command", "timeout": 10,"# + (async ? #" "async": true,"# : "")
+            if kind == "permission" {
+                let path = home + "/.claude/hooks/islet-notify.sh"
+                return #"    "\#(event)": [{ "hooks": [{ "type": "command", "timeout": \#(permissionTimeout),"# + "\n"
+                    + #"      "command": "/bin/bash -p \"\#(path)\" permission --timeout \#(permissionTimeout)" }] }]"#
+            }
+            return #"    "\#(event)": [{ "hooks": [{ "type": "command", "timeout": 10,"# + (async ? #" "async": true,"# : "")
                 + "\n" + #"      "command": "bash \"\#(script)\" \#(kind)" }] }]"#
         }
         return "{\n  \"hooks\": {\n" + entries.joined(separator: ",\n") + "\n  }\n}\n"
