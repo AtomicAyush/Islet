@@ -9,7 +9,7 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
     case openAtLogin, menuBarIcon, quit
     case appearance
     case islandOrder
-    case hover, haptics, homeLayout, bubblePlacement
+    case hover, haptics, homeLayout, bubblePlacement, saveEnergy
     case displays, idlePill, fullScreen
 
     /// Also the row's scroll target in the tab.
@@ -27,6 +27,7 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .haptics: "Trackpad feedback"
         case .homeLayout: "Home tiles that don't fit"
         case .bubblePlacement: "Bubble placement"
+        case .saveEnergy: "Save energy"
         case .displays: "Show the island on"
         case .idlePill: "Keep a resting island on displays without a notch"
         case .fullScreen: "Hide while an app is full screen"
@@ -39,7 +40,7 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .openAtLogin, .menuBarIcon, .quit: nil
         case .appearance: "Appearance"
         case .islandOrder: IslandOrderSection.heading
-        case .hover, .haptics, .homeLayout, .bubblePlacement: "Island"
+        case .hover, .haptics, .homeLayout, .bubblePlacement, .saveEnergy: "Island"
         case .displays, .idlePill, .fullScreen: "Displays"
         }
     }
@@ -55,6 +56,7 @@ enum GeneralRow: String, CaseIterable, Identifiable, View {
         case .haptics: HapticsRow(id: id)
         case .homeLayout: HomeLayoutRow(id: id)
         case .bubblePlacement: BubblePlacementRow(id: id)
+        case .saveEnergy: SaveEnergyRow(id: id)
         case .displays: DisplaysRow(id: id)
         case .idlePill: IdlePillRow(id: id)
         case .fullScreen: FullScreenRows(id: id)
@@ -187,6 +189,27 @@ private struct BubblePlacementRow: View {
             Text(GeneralRow.bubblePlacement.title)
             if placement == BubblePlacement.bothSides.rawValue {
                 Text("Right of the island, then left, in turn, as the menu bar has room. On the left they keep clear of the app's menus, which needs Accessibility.")
+            }
+        }
+        .settingsSearchTarget(id)
+    }
+}
+
+/// When the island holds what moves still and redraws its clocks less often
+/// (`EnergySaver`).
+private struct SaveEnergyRow: View {
+    let id: String
+    @AppStorage(Prefs.Key.saveEnergy) private var choice = SaveEnergy.inLowPowerMode.rawValue
+
+    var body: some View {
+        Picker(selection: $choice) {
+            ForEach(SaveEnergy.allCases) { choice in
+                Text(choice.title).tag(choice.rawValue)
+            }
+        } label: {
+            Text(GeneralRow.saveEnergy.title)
+            if let footnote = SaveEnergy(rawValue: choice)?.footnote {
+                Text(footnote)
             }
         }
         .settingsSearchTarget(id)

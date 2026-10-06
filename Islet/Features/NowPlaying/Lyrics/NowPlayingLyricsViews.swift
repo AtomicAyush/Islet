@@ -456,12 +456,14 @@ enum NowPlayingKaraokeLayout {
 
 /// Under the compact island while a song plays: the line being sung, centred on the
 /// notch. Each line fades in as the one before fades out; a long one scrolls across,
-/// once, in the time it is sung. The row itself comes and goes with the words (see
+/// once, in the time it is sung. While the island saves energy each line simply takes
+/// the place of the one before. The row itself comes and goes with the words (see
 /// `NowPlayingLyricsModel.singingRow`); this only draws them.
 struct NowPlayingKaraokeRow: View {
     let lyrics: NowPlayingLyricsModel
 
     var body: some View {
+        let saving = EnergySaver.shared.isSaving
         ZStack {
             if case .synced(let timeline) = lyrics.status, let index = lyrics.singingRow,
                timeline.rows.indices.contains(index), let text = timeline.rows[index].text {
@@ -472,7 +474,7 @@ struct NowPlayingKaraokeRow: View {
                     isRightToLeft: timeline.rows[index].isRightToLeft
                 )
                 .id(index)
-                .transition(.asymmetric(
+                .transition(saving ? .identity : .asymmetric(
                     insertion: .opacity.combined(with: .offset(y: 4)),
                     removal: .opacity.combined(with: .offset(y: -4))
                 ))
@@ -480,7 +482,7 @@ struct NowPlayingKaraokeRow: View {
         }
         .padding(.horizontal, NowPlayingKaraokeLayout.inset)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.smooth(duration: 0.4), value: lyrics.singingRow)
+        .animation(saving ? nil : .smooth(duration: 0.4), value: lyrics.singingRow)
         .clipped()
     }
 }
@@ -535,8 +537,8 @@ enum KaraokeScroll {
 
 /// A line in the island: whole where it fits, a touch smaller where that is enough,
 /// and otherwise scrolled across once (see `KaraokeScroll`), from its first word to
-/// its last, which for Hebrew or Arabic is from right to left. Only with Reduce Motion
-/// is it ever cut short.
+/// its last, which for Hebrew or Arabic is from right to left. Only with Reduce Motion,
+/// or while the island saves energy, is it ever cut short.
 private struct KaraokeLine: View {
     let text: String
     /// Seconds the line is sung for; 0 when not known.
@@ -567,7 +569,7 @@ private struct KaraokeLine: View {
         /// the system spaces more loosely, so it is exactly as narrow as reckoned.
         case shrunk(CGFloat)
         case scrolled
-        /// With Reduce Motion, a line too long to shrink.
+        /// With Reduce Motion or while saving energy, a line too long to shrink.
         case cut
     }
 
@@ -576,7 +578,7 @@ private struct KaraokeLine: View {
         guard boxWidth > 0, textWidth > boxWidth + 0.5 else { return .whole }
         let scale = boxWidth / textWidth
         if scale >= Self.smallest { return .shrunk(scale) }
-        return reduceMotion ? .cut : .scrolled
+        return reduceMotion || EnergySaver.shared.isSaving ? .cut : .scrolled
     }
 
     var body: some View {

@@ -731,6 +731,17 @@ they do, and they hold still whenever nothing shows them, the screen sleeps or l
 screen is shared or recorded (unless you say otherwise), and with Reduce Motion or Low Power
 Mode on. The ring never reaches under what the island shows, and never draws outside it.
 
+**Saving energy.** In Low Power Mode, or on battery if you choose (Settings › General › Save
+energy: In Low Power Mode, On battery, or Never), nothing in the island moves for long. The
+Now Playing waveform stands still, as uneven bars while music plays and low ones while it is
+paused, and stops listening to the music altogether, so macOS's recording indicator goes; the
+spinners stand as an arc from the top, as with Reduce Motion, and the breathing marks of
+Claude Code and ChatGPT are drawn whole; the island's colours are drawn still; lyrics change
+line by line, a line too long cut short rather than scrolled; a long title in the player stays
+put, cut short; the timer's ring moves once a second; and the player's clocks are redrawn only
+as they turn over. The island changes within a moment of Low Power Mode or the power source
+changing, and the clipboard, the countdowns and everything else keep their pace.
+
 ## Building
 
 Requires macOS 14 or later and Xcode 16 or later.

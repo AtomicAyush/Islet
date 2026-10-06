@@ -54,6 +54,17 @@ extension GeneralRow {
                 ],
                 keywords: ["bubbles", "left side", "right side", "split", "both sides", "menus", "live activities"]
             )
+        case .saveEnergy:
+            // Only the choices' titles, not their footnotes: with the waveform, lyrics and
+            // the player among the labels, "music" or "lyrics" would find this before Now
+            // Playing. "On battery" is a keyword for the same reason: as a label, "low
+            // battery" would find this before Battery.
+            SettingsSearchTerms(
+                labels: SaveEnergy.allCases.filter { $0 != .onBattery }.map(\.title),
+                keywords: [SaveEnergy.onBattery.title, "battery", "battery saver", "low power mode", "low power",
+                           "power saving", "energy saver", "battery life", "animations", "animation", "waveform",
+                           "spinner", "lyrics", "still"]
+            )
         case .islandOrder:
             // Of Now Playing's players (`NowPlayingFeature.players`) only Spotify: with
             // "Apple Music" among the labels, "music" would find this before Now Playing.

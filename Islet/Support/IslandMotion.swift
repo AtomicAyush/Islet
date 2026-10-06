@@ -11,9 +11,10 @@ import QuartzCore
 ///
 /// They hold still where they are while the screen is shared or recorded (if the person
 /// asks), and while the Mac or its displays sleep, or the session is switched away, and
-/// carry on from there. With Reduce Motion or Low Power Mode on, or the Mac running hot,
-/// they are drawn still at the start of their cycle. Each view also holds still on its
-/// own while it is not on screen, which is how they hold behind the lock screen.
+/// carry on from there. With Reduce Motion or Low Power Mode on, the Mac running hot, or
+/// the island saving energy (`EnergySaver`), they are drawn still at the start of their
+/// cycle. Each view also holds still on its own while it is not on screen, which is how
+/// they hold behind the lock screen.
 ///
 /// Nothing here runs until a moving colour is first drawn.
 @MainActor
@@ -130,6 +131,7 @@ final class IslandMotion {
             isAsleep = conditions.asleep
         }
         #endif
+        if EnergySaver.shared.isSaving { isStill = true }
         watchCapture(isNeeded: !isStill && !isAsleep)
         var isCaptured = isCaptured
         #if DEBUG
@@ -179,6 +181,11 @@ final class IslandMotion {
         }
         observers.append(NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reconcile() }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: EnergySaver.didChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reconcile() }
         })

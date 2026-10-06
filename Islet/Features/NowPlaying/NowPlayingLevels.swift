@@ -45,7 +45,8 @@ extension NowPlayingLevelEngine: NowPlayingLevelSource {
 /// heights from it every frame. Otherwise nothing runs. The tap goes 1.5 s after a
 /// pause or the last waveform leaving the screen, so a gap between songs or the
 /// island opening does not remake it, and at once when another app is on show, the
-/// Mac or its displays sleep, the setting is turned off, or Reduce Motion is on.
+/// Mac or its displays sleep, the setting is turned off, Reduce Motion is on, or the
+/// island saves energy (`EnergySaver`), when the bars hold still instead.
 ///
 /// The bars go live once the tap has delivered actual sound and its first levels are
 /// due — through AirPlay, two seconds after it starts — and back to their canned
@@ -84,6 +85,7 @@ final class NowPlayingLevels {
     private var isPlaying = false
     private var isEnabled = true
     private var reduceMotion = false
+    private var isSaving = false
     private var isAsleep = false
     /// An app whose tap stopped delivering; canned until it is played again.
     private var gaveUpOn: String?
@@ -166,7 +168,7 @@ final class NowPlayingLevels {
     // MARK: Following
 
     private var wanted: String? {
-        guard source != nil, isEnabled, !reduceMotion, !isAsleep, isPlaying,
+        guard source != nil, isEnabled, !reduceMotion, !isSaving, !isAsleep, isPlaying,
               let appID, appID != gaveUpOn, views.anyObject != nil
         else { return nil }
         return appID
@@ -178,7 +180,8 @@ final class NowPlayingLevels {
             if followed != wanted { follow(wanted) }
         } else if let followed {
             // A pause, or the waveform leaving the screen, holds the tap a moment.
-            let holds = appID == followed && isEnabled && !reduceMotion && !isAsleep && gaveUpOn != followed
+            let holds = appID == followed && isEnabled && !reduceMotion && !isSaving && !isAsleep
+                && gaveUpOn != followed
             if !holds {
                 follow(nil)
             } else if releaseWork == nil {
@@ -255,11 +258,17 @@ final class NowPlayingLevels {
         let defaults = UserDefaults.standard
         isEnabled = defaults.object(forKey: NowPlayingPrefs.followMusic) as? Bool ?? NowPlayingPrefs.followMusicDefault
         reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        isSaving = EnergySaver.shared.isSaving
     }
 
     private func observe() {
         observers.append(NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.settingsChanged() }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: EnergySaver.didChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.settingsChanged() }
         })
@@ -289,9 +298,9 @@ final class NowPlayingLevels {
     }
 
     private func settingsChanged() {
-        let before = (isEnabled, reduceMotion)
+        let before = (isEnabled, reduceMotion, isSaving)
         readSettings()
-        guard before != (isEnabled, reduceMotion) else { return }
+        guard before != (isEnabled, reduceMotion, isSaving) else { return }
         reconcile()
     }
 }

@@ -117,7 +117,8 @@ struct ShortcutRunMark: View {
 
 /// A spinning arc, turned by Core Animation: the render server spins it on its own, so
 /// a shortcut running for minutes costs the app nothing per frame. It exists only
-/// while a run does.
+/// while a run does. While the island saves energy the arc stands still, from the top,
+/// as the still spinners drawn with Reduce Motion do.
 ///
 /// Its layers do not see the island's theme, so the colour is worked out here, from the
 /// theme in the environment, and handed to them again whenever it changes.
@@ -155,6 +156,7 @@ final class ShortcutSpinnerView: NSView {
     private let arc = CAShapeLayer()
     private let lineWidth: CGFloat
     private var colour: (NSColor, CGFloat)?
+    private var saverObserver: NSObjectProtocol?
 
     init(lineWidth: CGFloat) {
         self.lineWidth = lineWidth
@@ -167,6 +169,16 @@ final class ShortcutSpinnerView: NSView {
             self.layer?.addSublayer(layer)
         }
         arc.strokeEnd = 0.3
+        saverObserver = NotificationCenter.default.addObserver(
+            forName: EnergySaver.didChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.spin() }
+        }
+        spin()
+    }
+
+    deinit {
+        if let saverObserver { NotificationCenter.default.removeObserver(saverObserver) }
     }
 
     /// Draws the arc in `colour` at `arcAlpha`, over a faint track of it. A new colour
@@ -192,8 +204,10 @@ final class ShortcutSpinnerView: NSView {
         let square = CGRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
         let circle = CGRect(origin: .zero, size: square.size).insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
         let path = CGPath(ellipseIn: circle, transform: nil)
+        // By bounds and position rather than frame, which a still arc's turn would skew.
         for layer in [track, arc] {
-            layer.frame = square
+            layer.bounds = CGRect(origin: .zero, size: square.size)
+            layer.position = CGPoint(x: square.midX, y: square.midY)
             layer.path = path
         }
         CATransaction.commit()
@@ -201,7 +215,27 @@ final class ShortcutSpinnerView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        spin()
+    }
+
+    /// Spins the arc once it is in a window, unless the island saves energy, when it
+    /// stands from the top round to a little past three o'clock.
+    private func spin() {
+        if EnergySaver.shared.isSaving {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            arc.removeAnimation(forKey: "spin")
+            // The path starts at three o'clock and runs anticlockwise; turned back by a
+            // twentieth, its 108° end at twelve.
+            arc.transform = CATransform3DMakeRotation(-0.1 * .pi, 0, 0, 1)
+            CATransaction.commit()
+            return
+        }
         guard window != nil, arc.animation(forKey: "spin") == nil else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        arc.transform = CATransform3DIdentity
+        CATransaction.commit()
         let spin = CABasicAnimation(keyPath: "transform.rotation.z")
         spin.fromValue = 0
         // Clockwise: the layer's y axis points up.

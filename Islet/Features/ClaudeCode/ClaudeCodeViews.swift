@@ -338,7 +338,8 @@ struct ClaudeCodeMarkView: View {
 
 /// An SF Symbol that swells and fades a little, over and over, turned by Core
 /// Animation: the render server runs it on its own, so a turn lasting an hour costs the
-/// app nothing per frame. With Reduce Motion on, the symbol is drawn still instead.
+/// app nothing per frame. With Reduce Motion on, the symbol is drawn still instead, and
+/// while the island saves energy it holds still, whole.
 ///
 /// Its colour is one of the island's, worked out from the theme in the environment and
 /// handed to the view, which draws the symbol again when the island's colours change.
@@ -368,6 +369,7 @@ final class ClaudeBreathingSymbolView: NSView {
     private let name: String
     private let pointSize: CGFloat
     private var image: NSImage?
+    private var saverObserver: NSObjectProtocol?
     /// What the symbol is drawn in. Setting another colour draws it again, and the
     /// breath goes on undisturbed.
     var color: NSColor {
@@ -388,10 +390,26 @@ final class ClaudeBreathingSymbolView: NSView {
         symbolLayer.contentsGravity = .center
         layer?.addSublayer(symbolLayer)
         updateContents()
+        saverObserver = NotificationCenter.default.addObserver(
+            forName: EnergySaver.didChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if EnergySaver.shared.isSaving {
+                    self.symbolLayer.removeAnimation(forKey: Self.animationKey)
+                } else if self.window != nil {
+                    self.startBreathing()
+                }
+            }
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        if let saverObserver { NotificationCenter.default.removeObserver(saverObserver) }
+    }
 
     private static func symbol(_ name: String, pointSize: CGFloat, color: NSColor) -> NSImage? {
         let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
@@ -429,8 +447,9 @@ final class ClaudeBreathingSymbolView: NSView {
         CATransaction.commit()
     }
 
+    /// Breathes, unless the island saves energy.
     func startBreathing() {
-        guard symbolLayer.animation(forKey: Self.animationKey) == nil else { return }
+        guard symbolLayer.animation(forKey: Self.animationKey) == nil, !EnergySaver.shared.isSaving else { return }
         let scale = CABasicAnimation(keyPath: "transform.scale")
         scale.fromValue = 1
         scale.toValue = Self.smallest

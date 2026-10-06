@@ -37,7 +37,9 @@ struct NowPlayingArtworkView: View {
 /// Where Islet can hear the playing app (see `NowPlayingLevels`), they follow the
 /// music, a band of frequencies each, bass on the left. Otherwise — no permission,
 /// a preview, Reduce Motion — each bar follows its own fixed sum of sines, so the
-/// motion is smooth and never repeats visibly, and costs nothing to compute.
+/// motion is smooth and never repeats visibly, and costs nothing to compute. While the
+/// island saves energy they stand still, uneven while it plays and low while it is
+/// paused.
 struct NowPlayingWaveform: View {
     let model: NowPlayingModel
     var bars = 5
@@ -125,6 +127,9 @@ final class WaveformBarsView: NSView {
     private var isOnScreen = false
     /// The heights come from the live levels rather than the canned animations.
     private var isLive = false
+    /// The island saves energy: the bars stand still.
+    private var isSaving: Bool
+    private var saverObserver: NSObjectProtocol?
     private var heights: [CGFloat]
     private var levels: [CGFloat]
     private var lastFrame: CFTimeInterval?
@@ -143,9 +148,15 @@ final class WaveformBarsView: NSView {
         levelLayout = AudioLevelAnalyser.layouts.firstIndex(of: bars) ?? 0
         heights = Array(repeating: Self.rest, count: bars)
         levels = Array(repeating: 0, count: bars)
+        isSaving = EnergySaver.shared.isSaving
         super.init(frame: .zero)
         wantsLayer = true
         barLayers.forEach { layer?.addSublayer($0) }
+        saverObserver = NotificationCenter.default.addObserver(
+            forName: EnergySaver.didChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.savingChanged() }
+        }
     }
 
     @available(*, unavailable)
@@ -154,6 +165,7 @@ final class WaveformBarsView: NSView {
     deinit {
         displayLink?.invalidate()
         if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        if let saverObserver { NotificationCenter.default.removeObserver(saverObserver) }
     }
 
     override var isFlipped: Bool { true }
@@ -210,7 +222,9 @@ final class WaveformBarsView: NSView {
         for (index, bar) in barLayers.enumerated() {
             let current = bar.presentation()?.value(forKeyPath: "transform.scale.y") as? CGFloat ?? Self.rest
             bar.removeAllAnimations()
-            if playing {
+            if playing && isSaving {
+                Self.hold(bar, index: index, from: first ? nil : current)
+            } else if playing {
                 Self.startMotion(on: bar, index: index, from: first ? Self.rest : current)
             } else {
                 // Settle to short bars rather than freezing mid-motion.
@@ -229,13 +243,7 @@ final class WaveformBarsView: NSView {
     /// animation, begun at an absolute time: wrapped in a group of infinite duration,
     /// Core Animation never applies it.
     private static func startMotion(on bar: CALayer, index: Int, from start: CGFloat) {
-        let (f1, p1, f2, p2) = shapes[index % shapes.count]
-        let samples = 48
-        let values: [CGFloat] = (0...samples).map { i in
-            let t = Double(i) / Double(samples)
-            let value = 0.56 + 0.26 * sin(2 * .pi * f1 * t + p1) + 0.18 * sin(2 * .pi * f2 * t + p2)
-            return CGFloat(min(1, max(0.18, value)))
-        }
+        let values = loop(index)
         let riseDuration: CFTimeInterval = 0.3
 
         let rise = CABasicAnimation(keyPath: "transform.scale.y")
@@ -257,10 +265,50 @@ final class WaveformBarsView: NSView {
         bar.add(loop, forKey: "wave")
     }
 
+    /// The heights a bar's loop passes through, a period's worth.
+    private static func loop(_ index: Int) -> [CGFloat] {
+        let (f1, p1, f2, p2) = shapes[index % shapes.count]
+        let samples = 48
+        return (0...samples).map { i in
+            let t = Double(i) / Double(samples)
+            let value = 0.56 + 0.26 * sin(2 * .pi * f1 * t + p1) + 0.18 * sin(2 * .pi * f2 * t + p2)
+            return CGFloat(min(1, max(0.18, value)))
+        }
+    }
+
+    /// Stands a playing bar still where its loop starts, so together they read as
+    /// music playing, rising there out of `start` unless they are new.
+    private static func hold(_ bar: CALayer, index: Int, from start: CGFloat?) {
+        let height = loop(index)[0]
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        bar.transform = CATransform3DMakeScale(1, height, 1)
+        CATransaction.commit()
+        guard let start else { return }
+        let rise = CABasicAnimation(keyPath: "transform.scale.y")
+        rise.fromValue = start
+        rise.toValue = height
+        rise.duration = 0.3
+        rise.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        bar.add(rise, forKey: "rise")
+    }
+
+    /// The island started or stopped saving energy.
+    private func savingChanged() {
+        let saving = EnergySaver.shared.isSaving
+        guard saving != isSaving else { return }
+        isSaving = saving
+        // Paused bars are low either way. Live ones stop with the levels, which the
+        // saver stops too.
+        guard isPlaying == true else { return }
+        leaveLive()
+        animate(playing: true, first: false)
+    }
+
     // MARK: Live
 
     private var wantsLive: Bool {
-        follows && isPlaying == true && isOnScreen && NowPlayingLevels.shared.isLive
+        follows && isPlaying == true && isOnScreen && !isSaving && NowPlayingLevels.shared.isLive
     }
 
     private func reconsider() {
@@ -392,7 +440,8 @@ private final class DisplayLinkTarget: NSObject {
 }
 
 /// A single line that scrolls, marquee style, when it is too long to fit: still for
-/// a moment, then one pass, then still again.
+/// a moment, then one pass, then still again. While the island saves energy it stays
+/// put, cut short.
 struct NowPlayingMarquee: View {
     let text: String
     let font: Font
@@ -408,7 +457,7 @@ struct NowPlayingMarquee: View {
     private let pause = 2.5
 
     var body: some View {
-        let scrolls = boxWidth > 0 && textWidth > boxWidth + 0.5
+        let scrolls = !EnergySaver.shared.isSaving && boxWidth > 0 && textWidth > boxWidth + 0.5
         Text(text)
             .font(font)
             .lineLimit(1)
@@ -472,21 +521,32 @@ struct NowPlayingProgress: View {
         let duration = model.timing.duration
         let isDragging = dragFraction != nil
 
-        TimelineView(.animation(minimumInterval: 0.1, paused: !model.isPlaying || isDragging)) { context in
-            let position = dragFraction.map { $0 * duration } ?? model.position(at: context.date)
-            HStack(spacing: 10) {
-                Text(NowPlayingClock.text(position))
-                    .fixedSize()
-                    .frame(minWidth: 34, alignment: .leading)
-                bar(fraction: duration > 0 ? position / duration : 0, duration: duration)
-                Text(duration > 0 ? "-" + NowPlayingClock.text(duration - position, roundingUp: true) : "--:--")
-                    .fixedSize()
-                    .frame(minWidth: 38, alignment: .trailing)
+        if EnergySaver.shared.isSaving {
+            // Redrawn only as either clock turns over: the bar moves by the second.
+            TimelineView(NowPlayingClockSchedule(timing: model.timing)) { context in
+                row(at: context.date, duration: duration)
             }
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
-            .monospacedDigit()
-            .foregroundStyle(.islandText(0.55))
+        } else {
+            TimelineView(.animation(minimumInterval: 0.1, paused: !model.isPlaying || isDragging)) { context in
+                row(at: context.date, duration: duration)
+            }
         }
+    }
+
+    private func row(at date: Date, duration: TimeInterval) -> some View {
+        let position = dragFraction.map { $0 * duration } ?? model.position(at: date)
+        return HStack(spacing: 10) {
+            Text(NowPlayingClock.text(position))
+                .fixedSize()
+                .frame(minWidth: 34, alignment: .leading)
+            bar(fraction: duration > 0 ? position / duration : 0, duration: duration)
+            Text(duration > 0 ? "-" + NowPlayingClock.text(duration - position, roundingUp: true) : "--:--")
+                .fixedSize()
+                .frame(minWidth: 38, alignment: .trailing)
+        }
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
+        .monospacedDigit()
+        .foregroundStyle(.islandText(0.55))
     }
 
     private func bar(fraction: Double, duration: TimeInterval) -> some View {
@@ -516,6 +576,26 @@ struct NowPlayingProgress: View {
         .allowsHitTesting(duration > 0)
         .nowPlayingControl(enabled: model.canControl)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: dragFraction == nil)
+    }
+}
+
+/// The moments the player's clocks turn over as it plays, a hair after each, so either
+/// reads its new second when drawn: the time played at each whole second of the song,
+/// and the time left at each whole second before its end, which falls between them
+/// when the length is not a whole number of seconds. Paused, there is only now.
+struct NowPlayingClockSchedule: TimelineSchedule {
+    let timing: NowPlayingTiming
+
+    func entries(from date: Date, mode: TimelineScheduleMode) -> UnfoldFirstSequence<Date> {
+        let rate = timing.rate
+        guard rate > 0 else { return sequence(first: date) { _ in nil } }
+        let offsets = Set([0, timing.duration.truncatingRemainder(dividingBy: 1)])
+        let timing = timing
+        return sequence(first: date) { previous in
+            let position = timing.elapsed + previous.timeIntervalSince(timing.timestamp) * rate
+            let next = offsets.map { ($0 + (position - $0).rounded(.down) + 1) }.min() ?? position + 1
+            return timing.timestamp.addingTimeInterval((next - timing.elapsed) / rate + 0.005)
+        }
     }
 }
 

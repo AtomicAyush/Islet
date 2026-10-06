@@ -30,13 +30,15 @@ struct TimerCountdownText: View {
     }
 }
 
-/// A ring that drains as the timer runs, redrawn a few times a second.
+/// A ring that drains as the timer runs, redrawn a few times a second, or once a
+/// second while the island saves energy.
 struct TimerRing: View {
     let model: TimerModel
     var lineWidth: CGFloat = 3
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.25, paused: !isRunning)) { context in
+        let interval = EnergySaver.shared.isSaving ? 1 : 0.25
+        TimelineView(.animation(minimumInterval: interval, paused: !isRunning)) { context in
             ZStack {
                 Circle().stroke(IslandStyle.islandAccent(.timer).opacity(0.25), lineWidth: lineWidth)
                 Circle()

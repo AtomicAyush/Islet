@@ -78,6 +78,7 @@ private struct GeneralSettings: View {
                 GeneralRow.haptics
                 GeneralRow.homeLayout
                 GeneralRow.bubblePlacement
+                GeneralRow.saveEnergy
             }
 
             HomeTilesSection(arrangement: ActivityCenter.shared.homeArrangement)

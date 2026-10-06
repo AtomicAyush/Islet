@@ -86,6 +86,8 @@ enum Prefs {
         static let islandRing = "islandRing"
         /// Appearance › Motion: colours hold still while the screen is shared or recorded.
         static let holdMotionWhenCaptured = "holdMotionWhenCaptured"
+        /// General › Save energy (`SaveEnergy`).
+        static let saveEnergy = "saveEnergy"
 
         static func featureEnabled(_ id: String) -> String { "feature.\(id).enabled" }
     }
@@ -108,6 +110,7 @@ enum Prefs {
             Key.islandFill: IslandFill.standardPref,
             Key.islandRing: IslandRing.offPref,
             Key.holdMotionWhenCaptured: true,
+            Key.saveEnergy: SaveEnergy.inLowPowerMode.rawValue,
         ]
         for feature in features {
             defaults[Key.featureEnabled(feature.id)] = feature.enabledByDefault
