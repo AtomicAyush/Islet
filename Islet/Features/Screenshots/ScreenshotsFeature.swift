@@ -12,7 +12,8 @@ import SwiftUI
 /// the clipboard (`actions(for:)` says when it does not). That is the same whether the
 /// card comes at once or after macOS's floating thumbnail: either way it comes only once
 /// the file is saved. The watcher pays no heed to a file that goes, so a deleted
-/// screenshot is not heard of again.
+/// screenshot is not heard of again. While Show screenshots here at once is on, and the
+/// feature is, `FloatingThumbnail` keeps macOS's floating thumbnail off.
 @MainActor
 final class ScreenshotsFeature: Feature {
     let id = "screenshots"
@@ -35,20 +36,23 @@ final class ScreenshotsFeature: Feature {
     private let files: ScreenshotFileActions
     private let settings: ScreenshotSettingsStore
     private let defaults: UserDefaults
+    private let thumbnail: FloatingThumbnail
     private var isRunning = false
+    private var activation: NSObjectProtocol?
     private var banner: IslandBanner?
     /// The screenshot whose card was put up last.
     private var shown: URL?
 
     /// Tests give a watcher on a folder of their own, a shelf of their own, file actions
     /// that leave the pasteboard, Finder and the Trash alone, a stand-in for the
-    /// Screenshot app's settings, and defaults of their own.
+    /// Screenshot app's settings, defaults of their own, and a thumbnail kept with them.
     init(
         watcher: ScreenshotWatcher? = nil,
         shelf: ScreenshotShelf = .dropZone,
         files: ScreenshotFileActions = .system,
         settings: ScreenshotSettingsStore = .system,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        thumbnail: FloatingThumbnail? = nil
     ) {
         let watcher = watcher ?? ScreenshotWatcher(preferences: { ScreenshotPreferences.read(from: settings) })
         self.watcher = watcher
@@ -56,23 +60,47 @@ final class ScreenshotsFeature: Feature {
         self.files = files
         self.settings = settings
         self.defaults = defaults
-        watcher.onScreenshot = { [weak self] shot in self?.present(shot) }
+        self.thumbnail = thumbnail ?? FloatingThumbnail(settings: settings, defaults: defaults)
+        watcher.onScreenshot = { [weak self] shot in
+            // One may come late because the thumbnail was turned back on elsewhere.
+            self?.thumbnail.recheck()
+            self?.present(shot)
+        }
+    }
+
+    /// At launch, whether the feature is on or not: macOS's thumbnail may need putting
+    /// back, or the switch taking over from it.
+    func launched() {
+        thumbnail.launched()
     }
 
     func start() {
         isRunning = true
         watcher.start()
+        thumbnail.start()
+        // The Screenshot app's Options may have been changed meanwhile.
+        activation = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.thumbnail.recheck() }
+        }
     }
 
     func stop() {
         isRunning = false
         watcher.stop()
+        thumbnail.stop()
+        if let activation { NotificationCenter.default.removeObserver(activation) }
+        activation = nil
         ActivityCenter.shared.dismissBanner(id: Self.bannerID)
         banner = nil
     }
 
     func settingsView() -> AnyView? {
-        AnyView(ScreenshotsSettingsView(settings: settings) { [weak self] preferences in self?.watcher.follow(preferences) })
+        AnyView(ScreenshotsSettingsView(settings: settings, thumbnail: thumbnail) { [weak self] preferences in
+            self?.watcher.follow(preferences)
+            self?.thumbnail.recheck()
+        })
     }
 
     /// Made-up screenshots drawn in code, never the person's screen. Their Delete only
@@ -220,6 +248,10 @@ private final class ScreenshotCardFile {
 /// of its settings are the Screenshot app's. Unset keys read as their defaults, the same
 /// ones the settings toggles declare.
 enum ScreenshotsPrefs {
+    /// Show screenshots here at once: macOS's floating thumbnail is kept off while Islet
+    /// runs. Unset until the first launch with it, which takes it from macOS's setting.
+    static let showsAtOnce = "screenshots.showsAtOnce"
+
     /// Copy deletes the screenshot's file for good once the picture is on the clipboard.
     static let deleteAfterCopying = "screenshots.deleteAfterCopying"
 

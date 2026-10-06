@@ -30,6 +30,8 @@ echo "Signing with ${IDENTITY}…"
 # The adapter framework first: /usr/bin/perl loads it, not Islet, so it is signed as
 # its own bundle rather than swept up by --deep.
 codesign --force --sign "$IDENTITY" "$APP/Contents/Resources/MediaRemoteAdapter.framework"
+# The screenshot thumbnail's keeper, a tool of its own in Helpers, before the app it is in.
+codesign --force --sign "$IDENTITY" "$APP/Contents/Helpers/ThumbnailKeeper"
 codesign --force --sign "$IDENTITY" "$APP"
 
 pkill -x Islet 2>/dev/null || true

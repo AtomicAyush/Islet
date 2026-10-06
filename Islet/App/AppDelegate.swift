@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         IslandManager.shared.start()
         registry.startEnabled()
+        // On or off, it may have macOS's screenshot thumbnail to put back.
+        registry.feature(ScreenshotsFeature.self)?.launched()
         statusItem = StatusItemController()
         welcomeOnFirstLaunch()
         URLRouter.launchFinished()

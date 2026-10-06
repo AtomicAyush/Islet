@@ -476,15 +476,20 @@ screenshot moved there, never shows. macOS holds each new screenshot in its floa
 for about five seconds before saving it, so the card comes after that. Turn on Show screenshots
 here at once in Islet's Screenshots settings (or turn off Show Floating Thumbnail under Options
 in the Screenshot app, ⇧⌘5) and it comes the moment it is taken, the card standing in for the
-thumbnail: click its picture to mark it up in Preview. Islet changes that setting only when you
-click the switch. Turn on Delete after copying and Copy on the card also deletes the screenshot
-once its picture is on the clipboard, to paste wherever it's wanted: deleted for good, not put in
-the Trash, so it can't be got back. Islet reads the picture back from the clipboard before it
-deletes anything, deletes only the screenshot the card was made for, and keeps one that has
-changed or moved since, or that is on the Drop Zone shelf; the card says when it has kept one.
-A screenshot copied to the clipboard (with Control held down) makes no file, so Islet doesn't
-see it. The first time, macOS asks whether Islet may see the folder screenshots are saved to
-(the Desktop, unless you've chosen another).
+thumbnail: click its picture to mark it up in Preview. The switch turns the thumbnail off only
+while Islet is running: quit Islet (or should it crash or be forced to quit) and screenshots
+float in the bottom-right corner as usual again, until Islet next starts. Should Islet crash, a
+small helper of its own, ThumbnailKeeper, puts the thumbnail back; it waits beside Islet while
+the switch is on, and costs nothing meanwhile. Turn Show Floating Thumbnail back on in the
+Screenshot app and Islet turns its switch off rather than undo it; with the switch off, Islet
+leaves that setting alone. Turn on Delete after copying and Copy on the card also deletes the
+screenshot once its picture is on the clipboard, to paste wherever it's wanted: deleted for
+good, not put in the Trash, so it can't be got back. Islet reads the picture back from the
+clipboard before it deletes anything, deletes only the screenshot the card was made for, and
+keeps one that has changed or moved since, or that is on the Drop Zone shelf; the card says when
+it has kept one. A screenshot copied to the clipboard (with Control held down) makes no file, so
+Islet doesn't see it. The first time, macOS asks whether Islet may see the folder screenshots
+are saved to (the Desktop, unless you've chosen another).
 
 **Clipboard History.** The last dozen things you copied — text, links, pictures and files —
 on the home page, newest first, each with the app it came from and when; click one and it is
@@ -1108,6 +1113,10 @@ approvals key is unexpected: deny it and reset the key.
   title and summary with nothing more; the other words it goes by, its settings' labels and
   other names for it, are in `SettingsSearchTerms.swift` beside every other feature's. A
   section added to the General tab is found once it is a `GeneralRow`.
+- `ThumbnailKeeper/` — a small tool of its own, built into Islet's `Contents/Helpers`, that
+  puts macOS's screenshot thumbnail back should Islet go without doing so itself. It shares
+  two files with Islet (`Islet/Features/Screenshots/FloatingThumbnailHolders.swift` and
+  `ScreenshotSettingsStore.swift`) and nothing else.
 - `Vendor/mediaremote-adapter/` — see below.
 
 **Typing in the island.** The island's panel is a non-activating panel that never has the

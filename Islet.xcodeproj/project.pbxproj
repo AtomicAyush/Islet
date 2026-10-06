@@ -6,15 +6,69 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		15E700000000000000000040 /* ThumbnailKeeper in Embed Thumbnail Keeper */ = {isa = PBXBuildFile; fileRef = 15E700000000000000000036 /* ThumbnailKeeper */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		15E700000000000000000042 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 15E700000000000000000007 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 15E700000000000000000032;
+			remoteInfo = ThumbnailKeeper;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		15E700000000000000000039 /* Embed Thumbnail Keeper */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				15E700000000000000000040 /* ThumbnailKeeper in Embed Thumbnail Keeper */,
+			);
+			name = "Embed Thumbnail Keeper";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		15E700000000000000000031 /* Exceptions for "Islet" folder in "ThumbnailKeeper" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Features/Screenshots/FloatingThumbnailHolders.swift,
+				Features/Screenshots/ScreenshotSettingsStore.swift,
+			);
+			target = 15E700000000000000000032 /* ThumbnailKeeper */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		15E700000000000000000002 /* Islet */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				15E700000000000000000031 /* Exceptions for "Islet" folder in "ThumbnailKeeper" target */,
+			);
 			path = Islet;
+			sourceTree = "<group>";
+		};
+		15E700000000000000000030 /* ThumbnailKeeper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ThumbnailKeeper;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		15E700000000000000000035 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		15E700000000000000000010 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -29,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				15E700000000000000000002 /* Islet */,
+				15E700000000000000000030 /* ThumbnailKeeper */,
 				15E700000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -37,6 +92,7 @@
 			isa = PBXGroup;
 			children = (
 				15E700000000000000000004 /* Islet.app */,
+				15E700000000000000000036 /* ThumbnailKeeper */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -52,10 +108,12 @@
 				15E700000000000000000010 /* Frameworks */,
 				15E700000000000000000011 /* Resources */,
 				15E700000000000000000012 /* Build MediaRemote adapter */,
+				15E700000000000000000039 /* Embed Thumbnail Keeper */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				15E700000000000000000041 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				15E700000000000000000002 /* Islet */,
@@ -64,6 +122,25 @@
 			productName = Islet;
 			productReference = 15E700000000000000000004 /* Islet.app */;
 			productType = "com.apple.product-type.application";
+		};
+		15E700000000000000000032 /* ThumbnailKeeper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 15E700000000000000000033 /* Build configuration list for PBXNativeTarget "ThumbnailKeeper" */;
+			buildPhases = (
+				15E700000000000000000034 /* Sources */,
+				15E700000000000000000035 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				15E700000000000000000030 /* ThumbnailKeeper */,
+			);
+			name = ThumbnailKeeper;
+			productName = ThumbnailKeeper;
+			productReference = 15E700000000000000000036 /* ThumbnailKeeper */;
+			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
 
@@ -76,6 +153,9 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					15E700000000000000000005 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					15E700000000000000000032 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -95,6 +175,7 @@
 			projectRoot = "";
 			targets = (
 				15E700000000000000000005 /* Islet */,
+				15E700000000000000000032 /* ThumbnailKeeper */,
 			);
 		};
 /* End PBXProject section */
@@ -133,6 +214,13 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		15E700000000000000000034 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		15E700000000000000000009 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -142,8 +230,17 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		15E700000000000000000041 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 15E700000000000000000032 /* ThumbnailKeeper */;
+			targetProxy = 15E700000000000000000042 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin PBXFileReference section */
 		15E700000000000000000004 /* Islet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Islet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		15E700000000000000000036 /* ThumbnailKeeper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ThumbnailKeeper; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin XCBuildConfiguration section */
@@ -258,6 +355,32 @@
 			};
 			name = Release;
 		};
+		15E700000000000000000037 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		15E700000000000000000038 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -275,6 +398,15 @@
 			buildConfigurations = (
 				15E700000000000000000022 /* Debug */,
 				15E700000000000000000023 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		15E700000000000000000033 /* Build configuration list for PBXNativeTarget "ThumbnailKeeper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				15E700000000000000000037 /* Debug */,
+				15E700000000000000000038 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
