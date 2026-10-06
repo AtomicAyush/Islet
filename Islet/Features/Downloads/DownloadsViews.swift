@@ -239,8 +239,8 @@ final class DeleteConfirmation {
     }
 }
 
-/// A download has finished: the file, to drag straight to where it is needed, open, find
-/// in Finder or delete.
+/// A download has finished, or a PDF has been saved from Print: the file, to drag
+/// straight to where it is needed, open, find in Finder or delete.
 struct DownloadedCard: View {
     let file: FinishedDownload
     /// The pointer arrived (`true`) or left: the card stays while it is on it.
@@ -351,8 +351,9 @@ struct DownloadedCard: View {
     private var subtitle: String {
         if confirmation.isAsking { return "Delete for good?" }
         if isKept { return "Stays here to delete later" }
-        guard let size = file.size, size > 0 else { return "Downloaded" }
-        return "Downloaded · \(DownloadNames.bytes(size))"
+        let done = file.isSaved ? "Saved" : "Downloaded"
+        guard let size = file.size, size > 0 else { return done }
+        return "\(done) · \(DownloadNames.bytes(size))"
     }
 }
 
@@ -361,13 +362,34 @@ struct DownloadedCard: View {
 struct DownloadsSettingsView: View {
     /// Called with the folders once they have been read.
     let found: ([URL]) -> Void
+    /// Called when PDFs saved from Print are turned on or off.
+    var printedChanged: () -> Void = {}
+    /// Called once macOS has asked about the folders below, for Spotlight to be asked
+    /// again.
+    var accessAsked: () -> Void = {}
     @AppStorage(DownloadsPrefs.showFinished) private var showFinished = true
+    @AppStorage(DownloadsPrefs.showPrinted) private var showPrinted = true
     @State private var folders: [URL] = DownloadFolders.downloads.map { [$0] } ?? []
+    @State private var isAsking = false
 
     var body: some View {
         Toggle(isOn: $showFinished) {
             Text("Show finished downloads")
             Text("The file in a card for a few seconds, to drag where it's needed, open, show in Finder or delete. Drag the file out and the card stays, for up to ten minutes, so it can be deleted once it's uploaded. Delete asks first, then deletes the file for good: it isn't put in the Trash.")
+        }
+        Toggle(isOn: $showPrinted) {
+            Text("Show PDFs saved from Print")
+            Text(Self.printedExplanation)
+        }
+        .onChange(of: showPrinted) { printedChanged() }
+        if showPrinted {
+            LabeledContent {
+                Button("Ask macOS") { askForFolders() }
+                    .disabled(isAsking)
+            } label: {
+                Text("Desktop, Documents and iCloud Drive")
+                Text("Spotlight tells Islet only of PDFs in folders macOS lets it see, and macOS asks you first. Click to be asked about these three now; a folder Islet may already see isn't asked about again.")
+            }
         }
         LabeledContent {
             Text(folders.map(DownloadFolders.abbreviated).joined(separator: "\n"))
@@ -380,6 +402,24 @@ struct DownloadsSettingsView: View {
         .task {
             folders = await Task.detached(priority: .utility) { DownloadFolders.all() }.value
             found(folders)
+        }
+    }
+
+    static let printedExplanation = "A PDF made with ⌘P, then PDF › Save as PDF, in any app, or with Save as PDF in a browser's print preview, comes up in the same card, saying Saved, wherever in your home folder you save it, a couple of seconds after (longer for a long document). PDFs copied, moved, unzipped, synced, downloaded or edited don't show, nor do ones apps make for themselves, or ones with a password to open. Islet hears of them from Spotlight; with Spotlight off, only ones saved to the folders below show."
+
+    /// Looks into each folder, off the main thread, which is what has macOS ask whether
+    /// Islet may; only ever on the click.
+    private func askForFolders() {
+        isAsking = true
+        Task {
+            await Task.detached(priority: .userInitiated) {
+                let home = FileManager.default.homeDirectoryForCurrentUser
+                for folder in ["Desktop", "Documents", "Library/Mobile Documents/com~apple~CloudDocs"] {
+                    _ = try? FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(folder).path)
+                }
+            }.value
+            isAsking = false
+            accessAsked()
         }
     }
 }

@@ -17,6 +17,11 @@ import SwiftUI
 /// opened), and deletes only while the file is still the one the card was made for.
 /// Once the file has been dragged out somewhere, the card stays until it is deleted or
 /// closed (`keptDuration`), stepping aside while something else needs the island.
+///
+/// A PDF saved from Print (⌘P, then PDF › Save as PDF, or a browser's Save as PDF) is
+/// not a download, and nothing says it has been made; `PrintedPDFWatcher` looks for
+/// them, and one gets the same card, saying it was saved. A file shows once, as a
+/// download or as a PDF saved, never both.
 @MainActor
 final class DownloadsFeature: Feature {
     let id = "downloads"
@@ -50,7 +55,9 @@ final class DownloadsFeature: Feature {
 
     let model = DownloadsModel()
     private let monitor: DownloadMonitor
+    private let printed: PrintedPDFWatcher
     private let files: DownloadFileActions
+    private let defaults: UserDefaults
     /// The folders followed from the start, and all of them once Safari's settings have
     /// been read; tests give their own.
     private let startingFolders: [URL]?
@@ -72,31 +79,57 @@ final class DownloadsFeature: Feature {
     private(set) var keptCard: DownloadedCardFile?
     private var isDragging = false
     private var isWatchingIsland = false
+    /// The PDFs saved from Print shown so far, by path, with the file as it was then:
+    /// word that a download finished there does not show it again while it is still
+    /// that file, but a new file there, downloaded or saved, shows.
+    private var savedFiles: [String: FileStamp] = [:]
 
-    /// Tests give file actions that leave Finder and the person's files alone.
+    /// Tests give a watcher for PDFs saved from Print on folders of their own, file
+    /// actions that leave Finder and the person's files alone, and defaults of their own.
     init(
-        monitor: DownloadMonitor? = nil, startingFolders: [URL]? = nil,
-        folders: @escaping () -> [URL] = DownloadFolders.all, files: DownloadFileActions = .system
+        monitor: DownloadMonitor? = nil, printed: PrintedPDFWatcher? = nil, startingFolders: [URL]? = nil,
+        folders: @escaping () -> [URL] = DownloadFolders.all, files: DownloadFileActions = .system,
+        defaults: UserDefaults = .standard
     ) {
         let monitor = monitor ?? DownloadMonitor()
+        let printed = printed ?? PrintedPDFWatcher()
         self.monitor = monitor
+        self.printed = printed
         self.startingFolders = startingFolders
         self.folders = folders
         self.files = files
+        self.defaults = defaults
         model.onChange = { [weak self] in self?.sync() }
         monitor.onChange = { [weak self] items in self?.model.update(items) }
         monitor.onFinished = { [weak self] file in self?.finished(file) }
+        printed.isDownload = { [weak monitor] url in monitor?.isDownload(url) ?? false }
+        printed.onPrinted = { [weak self] file in self?.finished(file) }
+        printed.onWithdrawn = { [weak self] url in self?.withdraw(url) }
     }
 
     func start() {
         isRunning = true
         // Downloads straight away; Safari's folder once its settings have been read.
         monitor.start(folders: startingFolders ?? DownloadFolders.downloads.map { [$0] } ?? [])
+        followPrinted()
         let folders = folders
         folderTask = Task { [weak self] in
             let found = await Task.detached(priority: .utility) { folders() }.value
             guard let self, self.isRunning, !Task.isCancelled else { return }
             self.monitor.watch(found)
+            self.printed.watch(found)
+        }
+    }
+
+    /// Looks for PDFs saved from Print while that is turned on in Settings, in the
+    /// folders downloads are followed into as well as through Spotlight; not at all while
+    /// it is off.
+    func followPrinted() {
+        if isRunning, DownloadsPrefs.bool(DownloadsPrefs.showPrinted, default: true, in: defaults) {
+            printed.start(folders: monitor.folders)
+        } else {
+            printed.stop()
+            savedFiles.removeAll()
         }
     }
 
@@ -105,6 +138,8 @@ final class DownloadsFeature: Feature {
         folderTask?.cancel()
         folderTask = nil
         monitor.stop()
+        printed.stop()
+        savedFiles.removeAll()
         model.update([])
         // Gone at once, rather than after the moment a download ending waits; a preview
         // still running carries on.
@@ -125,10 +160,15 @@ final class DownloadsFeature: Feature {
     func settingsView() -> AnyView? {
         // The folders as Settings finds them, followed from then on: Safari's may have
         // been changed since the feature started.
-        AnyView(DownloadsSettingsView { [weak self] folders in
-            guard let self, self.isRunning, self.startingFolders == nil else { return }
-            self.monitor.watch(folders)
-        })
+        AnyView(DownloadsSettingsView(
+            found: { [weak self] folders in
+                guard let self, self.isRunning, self.startingFolders == nil else { return }
+                self.monitor.watch(folders)
+                self.printed.watch(folders)
+            },
+            printedChanged: { [weak self] in self?.followPrinted() },
+            accessAsked: { [weak self] in self?.printed.refresh() }
+        ))
     }
 
     /// Made-up downloads, not the person's: each runs its course beside the notch, and
@@ -196,8 +236,18 @@ final class DownloadsFeature: Feature {
         }
     }
 
+    /// A download has finished, or a PDF has been saved from Print.
     private func finished(_ file: FinishedDownload) {
-        guard isRunning, DownloadsPrefs.bool(DownloadsPrefs.showFinished, default: true) else { return }
+        guard isRunning else { return }
+        let path = file.url.resolvingSymlinksInPath().path
+        let stamp = files.stamp(file.url)
+        if let saved = savedFiles[path], saved == stamp { return }
+        if file.isSaved {
+            guard DownloadsPrefs.bool(DownloadsPrefs.showPrinted, default: true, in: defaults) else { return }
+            savedFiles[path] = stamp
+        } else {
+            guard DownloadsPrefs.bool(DownloadsPrefs.showFinished, default: true, in: defaults) else { return }
+        }
         // The opened island draws no banners. One open on the download, watching it come
         // in, closes for the card, which is what the watching was for.
         for island in IslandManager.shared.controllers.values.map(\.model)
@@ -205,6 +255,15 @@ final class DownloadsFeature: Feature {
             island.collapse()
         }
         present(file)
+    }
+
+    /// Takes down the card of a PDF saved from Print that turned out to be one of many
+    /// copied at once, unless its file has been dragged out since.
+    private func withdraw(_ url: URL) {
+        guard let card = shownCard, card.file.isSaved, card.keptUntil == nil,
+              card.file.url.standardizedFileURL.path == url.standardizedFileURL.path
+        else { return }
+        dismissCard(of: card)
     }
 
     /// Puts up the card for `file`, in place of any card up already. A kept card steps
@@ -514,8 +573,9 @@ final class DownloadsActivity: IslandActivity {
 /// settings toggles declare.
 enum DownloadsPrefs {
     static let showFinished = "downloads.showFinished"
+    static let showPrinted = "downloads.showPrinted"
 
-    static func bool(_ key: String, default value: Bool) -> Bool {
-        UserDefaults.standard.object(forKey: key) as? Bool ?? value
+    static func bool(_ key: String, default value: Bool, in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? value
     }
 }

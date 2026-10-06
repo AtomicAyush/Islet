@@ -662,6 +662,16 @@ final class DownloadMonitor {
         stopTimerIfIdle()
     }
 
+    /// Whether `url` is a download: one under way to it, one that has just ended there,
+    /// or one said to have finished there lately. A PDF saved from Print never is
+    /// (`PrintedPDFWatcher`), so a downloaded one is not shown twice.
+    func isDownload(_ url: URL) -> Bool {
+        entries.contains { Self.same(DownloadNames.finalURL(for: $0.location), url) }
+            || endings.contains { Self.same($0.expected, url) }
+            || recentFinishes.contains { Self.same($0.url, url) }
+            || announced[url.resolvingSymlinksInPath().path] != nil
+    }
+
     private func isInFollowedFolder(_ url: URL) -> Bool {
         let folder = url.deletingLastPathComponent()
         return folders.contains { Self.same($0, folder) }

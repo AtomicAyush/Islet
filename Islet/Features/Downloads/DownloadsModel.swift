@@ -31,6 +31,9 @@ struct FinishedDownload: Equatable {
     var size: Int64?
     /// The file a preview hands over, made up by Islet: Delete leaves it be.
     var isSample = false
+    /// A PDF saved from Print rather than downloaded (`PrintedPDFWatcher`): its card
+    /// says it was saved.
+    var isSaved = false
 
     var name: String { url.lastPathComponent }
 }

@@ -449,6 +449,33 @@ cancelled just goes. Safari's own download folder is followed too when it is set
 download another browser saves elsewhere shows only once it has finished. The first time, macOS
 asks whether Islet may see your Downloads folder.
 
+A PDF you save from Print gets the same card, saying Saved rather than Downloaded: ⌘P, then PDF
+› Save as PDF in any app (Safari, Preview, Notes, Mail, Pages, TextEdit), or Save as PDF in the
+print preview of Brave, Chrome, Edge or Arc, and Firefox's Save to PDF. It shows wherever in
+your home folder you save it (the Desktop, Documents, Downloads, iCloud Drive or a folder of
+your own), usually about two seconds after it is written and longer for a long document, and
+each time you save it under the same name, after deleting it or choosing Replace. Nothing tells
+other apps a PDF has been printed, so Islet asks Spotlight to say when a PDF is written.
+Spotlight already knows what wrote it and when it was made, put in its folder and downloaded,
+which rules most out; one that the Mac's print engine or a browser's wrote is then read for the
+PDF's own creation date; Spotlight tells of none in a folder macOS hasn't let Islet see, so
+reading one never has macOS ask. Only PDFs just made there count: not downloads (which show
+once, as downloads), moves, duplicates, unzipped files or files synced down from iCloud or
+Dropbox, which all arrive in their folder after they were made; not a copy of one shown, or a
+new file of a PDF made more than an hour before; not a PDF edited and saved again in Preview, or
+one made before Islet started; not the PDFs apps keep for themselves in the Library folder, the
+Trash, hidden or temporary folders; and not a batch of more than three at once (a folder
+copied), whose card goes if one went up before the rest were heard of. A new file of a PDF
+printed within the hour, by a copy that makes one (`cp` does) or a script, can look just printed
+and show. A PDF with a password to open doesn't show, as nothing can be read of it, nor does a
+print that takes more than five minutes to write. Spotlight tells Islet only of folders macOS
+lets it see, and without asking: Settings › Downloads has a button to be asked about the
+Desktop, Documents and iCloud Drive. Your Downloads folder (and Safari's) is also watched
+directly, and a new PDF there is read, so Brave's Save as PDF, which saves there, shows within a
+second, and still shows with Spotlight turned off; elsewhere, nothing is seen while Spotlight is
+off. A live Spotlight query costs nothing while nothing is saved. Turn it off with Show PDFs
+saved from Print.
+
 **File Copies.** While Finder copies something big (to an external drive, a network share,
 another folder), moves it to another disk or duplicates it, what it is copying sits left of the
 camera and a ring fills right of it, with a count when several copies are under way. Opened, it

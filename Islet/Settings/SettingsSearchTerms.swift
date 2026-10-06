@@ -292,9 +292,11 @@ extension DropZoneFeature {
 extension DownloadsFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
-            labels: ["Show finished downloads", "Follows downloads into"],
+            labels: ["Show finished downloads", "Show PDFs saved from Print", "Desktop, Documents and iCloud Drive",
+                     "Follows downloads into"],
             keywords: ["safari", "chrome", "firefox", "browser", "progress", "download folder", "delete", "remove", "trash",
-                       "upload"]
+                       "upload", "print", "printed", "printing", "pdf", "save as pdf", "print to pdf", "⌘P", "cmd p",
+                       "command p", "brave", "export", "saved"]
         )
     }
 }
