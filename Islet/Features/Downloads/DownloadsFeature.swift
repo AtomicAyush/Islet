@@ -41,6 +41,9 @@ final class DownloadsFeature: Feature {
     /// deleted once it has been uploaded: until it is deleted or closed, but no more than
     /// ten minutes, should it be forgotten.
     static let keptDuration: TimeInterval = 600
+    /// How long the card stays while Delete asks: until it is answered, but no more than
+    /// ten minutes, should the click that answers it go unheard.
+    static let askingDuration: TimeInterval = 600
     /// A kept card with less than this left is not put back.
     static let keptReturnMinimum: TimeInterval = 2
     /// How long the card stays to say what Delete did: a moment to see the file is gone,
@@ -80,6 +83,12 @@ final class DownloadsFeature: Feature {
     /// meanwhile; it comes back once they have gone (`settleKeptCard`).
     private(set) var keptCard: DownloadedCardFile?
     private var isDragging = false
+    /// The pointer is on the card.
+    private var isPointerOnCard = false
+    /// The card whose Delete is asking, which stays up until the question ends, and on
+    /// how many islands it asks: each island's card asks its own.
+    private var askingCard: DownloadedCardFile?
+    private var askers = 0
     private var isWatchingIsland = false
     /// The PDFs saved from Print shown so far, by path, with the file as it was then:
     /// word that a download finished there does not show it again while it is still
@@ -285,7 +294,7 @@ final class DownloadsFeature: Feature {
                 width: actions.delete == nil ? DownloadedCardLayout.width : DownloadedCardLayout.deleteWidth,
                 height: DownloadedCardLayout.height
             ),
-            duration: card.keptUntil?.timeIntervalSinceNow ?? Self.bannerDuration,
+            duration: askingCard === card ? Self.askingDuration : card.keptUntil?.timeIntervalSinceNow ?? Self.bannerDuration,
             haptic: haptic,
             personal: .files,
             // Each card starts afresh, even one for a file of the same name put up in its
@@ -293,6 +302,7 @@ final class DownloadsFeature: Feature {
             content: AnyView(DownloadedCard(
                 file: card.file,
                 hover: { [weak self] in self?.holdBanner($0) },
+                asking: { [weak self] in self?.asking(card, $0) },
                 open: actions.open,
                 reveal: actions.reveal,
                 dismiss: actions.close,
@@ -377,10 +387,39 @@ final class DownloadsFeature: Feature {
 
     /// The card stays while the pointer is on it, or the file is being dragged, so it
     /// does not go while the file is reached for; its time starts again when the pointer
-    /// leaves. A kept card keeps its own time.
+    /// leaves. A kept card keeps its own time, and one asking keeps asking's.
     func holdBanner(_ hovering: Bool) {
-        guard var banner, ActivityCenter.shared.banner?.id == Self.bannerID, shownCard?.keptUntil == nil else { return }
+        isPointerOnCard = hovering
+        guard var banner, ActivityCenter.shared.banner?.id == Self.bannerID, let card = shownCard,
+              card.keptUntil == nil, askingCard !== card else { return }
         banner.duration = hovering || isDragging ? Self.heldDuration : Self.bannerDuration
+        ActivityCenter.shared.present(banner)
+    }
+
+    /// Delete began asking on `card`, or stopped, however it stopped. The card stays for
+    /// as long as it asks on any island, kept or not (`askingDuration`); after, it has the
+    /// time it would have had, and a kept card whose time ran out meanwhile a few seconds
+    /// more.
+    func asking(_ card: DownloadedCardFile, _ isAsking: Bool) {
+        if isAsking {
+            if askingCard !== card { askers = 0 }
+            askingCard = card
+            askers += 1
+        } else {
+            guard askingCard === card else { return }
+            askers -= 1
+            guard askers <= 0 else { return }
+            askingCard = nil
+            askers = 0
+        }
+        guard var banner, shownCard === card, ActivityCenter.shared.banner?.id == Self.bannerID else { return }
+        if isAsking {
+            banner.duration = Self.askingDuration
+        } else if let until = card.keptUntil {
+            banner.duration = max(until.timeIntervalSinceNow, Self.bannerDuration)
+        } else {
+            banner.duration = isPointerOnCard || isDragging ? Self.heldDuration : Self.bannerDuration
+        }
         ActivityCenter.shared.present(banner)
     }
 

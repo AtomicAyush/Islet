@@ -180,8 +180,8 @@ final class IslandViewModel {
     private(set) var keptOpenPage: String?
     /// What the page is kept open for, while one is.
     private(set) var keptOpenPurpose = KeepOpenPurpose.dragging
-    /// Told as a page is kept open and let go, so the controller listens for Escape
-    /// only meanwhile.
+    /// Told as a page is kept open and let go, and as a card's question goes up and
+    /// ends (`question`), so the controller listens for Escape only meanwhile.
     @ObservationIgnored var keepingOpenChanged: (Bool) -> Void = { _ in }
     /// How long the pointer may stay away from a page kept open to drag from, with
     /// nothing dragged from it, before it is let go and the island closes: long enough
@@ -195,6 +195,13 @@ final class IslandViewModel {
     /// the rest of the day. Tests shorten it.
     @ObservationIgnored var readingIdleTimeout: TimeInterval = 30 * 60
     @ObservationIgnored private var keepOpenIdleWork: DispatchWorkItem?
+    /// The card asking a question, while one is up: Delete's "Delete for good?" on a
+    /// finished download's card (`ask(_:cancel:)`). The card stays up and keeps asking
+    /// whatever the pointer does, until it is answered on the card, or Escape or a click
+    /// anywhere outside the island cancels it, or the card goes.
+    private(set) var question: ObjectIdentifier?
+    /// What cancels the question up, as Cancel on its card would.
+    @ObservationIgnored private var cancelsQuestion: (() -> Void)?
     /// A drag that began on the island is under way (a clipboard item, a file off the
     /// shelf, a tile being arranged). The island closes as it leaves, as it always
     /// has, so what it covered can take the drop; kept open, it stays, and its time
@@ -212,10 +219,10 @@ final class IslandViewModel {
     }
 
     /// Whether Escape pressed anywhere ends what holds the island open: arranging the
-    /// home page, or a page kept open to drag from. A page kept open to read is let go
-    /// only from its own field.
+    /// home page, a page kept open to drag from, or a card's question. A page kept open
+    /// to read is let go only from its own field.
     var listensForEscape: Bool {
-        isEditingHome || keptOpenPage != nil && keptOpenPurpose == .dragging
+        isEditingHome || keptOpenPage != nil && keptOpenPurpose == .dragging || question != nil
     }
 
     let center = ActivityCenter.shared
@@ -634,6 +641,9 @@ final class IslandViewModel {
             if onNotch { endKeepingOpen() }
             return
         }
+        // A card's question is answered on the card: a click beside its buttons leaves
+        // it asking, rather than open the island over it.
+        if question != nil { return }
         cancelExpand()
         if case .banner = mode, openBanner() { return }
         if onBannerRow, showsBannerRow, openBanner() { return }
@@ -661,6 +671,7 @@ final class IslandViewModel {
         }
         cancelExpand()
         endTyping(.clickOutside)
+        cancelQuestion()
         if isHeldOpen || isDraggingOut { return }
         if isExpanded { collapse("click outside") }
     }
@@ -670,6 +681,8 @@ final class IslandViewModel {
         cancelExpand()
         cancelCollapse()
         endTyping(leaving: focus)
+        // The opened island draws no cards, so a card's question goes as it opens.
+        cancelQuestion()
         // Another page takes the island away from the home page being arranged, or
         // from a page kept open.
         if focus != Self.homeFocus { stopEditingHome() }
@@ -823,6 +836,51 @@ final class IslandViewModel {
     /// Something is being typed in the page kept open: the input box's field.
     private var isTypingInKeptPage: Bool {
         keptOpenPage.map { typingPlace == .page($0) } ?? false
+    }
+
+    /// Escape, pressed anywhere while the controller listens for it
+    /// (`listensForEscape`): it ends arranging the home page, lets go of a page kept open
+    /// to drag from, and cancels a card's question.
+    func escapePressed() {
+        endEditingHome()
+        // Escape in the app being typed in is that app's: a page kept open to read is
+        // let go only from its own field.
+        if keptOpenPurpose == .dragging { endKeepingOpen() }
+        cancelQuestion()
+    }
+
+    // MARK: A card's question
+
+    /// A card asks a question, `id`'s (Delete's "Delete for good?"), which `cancel`
+    /// cancels as Cancel on the card would. Until it is answered on the card or the card
+    /// goes (`questionEnded(_:)`), Escape pressed anywhere, a click anywhere outside the
+    /// island, or the island opening over the card cancels it; the pointer leaving does
+    /// not. Escape is listened for as it is for a page kept open, so the keyboard stays
+    /// with the app in front. A question asked in place of another cancels that one.
+    func ask(_ id: ObjectIdentifier, cancel: @escaping () -> Void) {
+        if let question, question != id { cancelQuestion() }
+        let begins = question == nil
+        question = id
+        cancelsQuestion = cancel
+        if begins { keepingOpenChanged(true) }
+    }
+
+    /// `id`'s question is over: answered, cancelled, or its card gone. One asked since
+    /// stays.
+    func questionEnded(_ id: ObjectIdentifier) {
+        guard question == id else { return }
+        question = nil
+        cancelsQuestion = nil
+        keepingOpenChanged(false)
+    }
+
+    /// Cancels the question up, if there is one, as Cancel on its card would.
+    func cancelQuestion() {
+        guard let id = question else { return }
+        let cancel = cancelsQuestion
+        cancel?()
+        // Let go even should the card not say so.
+        questionEnded(id)
     }
 
     // MARK: Arranging the home page

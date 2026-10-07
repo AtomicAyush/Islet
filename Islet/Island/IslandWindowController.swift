@@ -14,8 +14,8 @@ final class IslandWindowController {
     private var monitors: [Any] = []
     /// Told as a menu comes up in Islet or goes (`IslandViewModel.menu(isUp:)`).
     private var menuObservers: [NSObjectProtocol] = []
-    /// Listening for Escape, while the home page is being arranged or a page is kept
-    /// open.
+    /// Listening for Escape, while the home page is being arranged, a page is kept open,
+    /// or a card asks a question.
     private var escapeMonitors: [Any] = []
     /// Gives the panel the keyboard while something in the island is typed in.
     private let keyboard: IslandKeyboard
@@ -258,18 +258,20 @@ final class IslandWindowController {
         }
     }
 
-    /// Listens for Escape while the home page is being arranged or a page is kept open to
-    /// drag from, and not otherwise (`IslandViewModel.listensForEscape`).
+    /// Listens for Escape while the home page is being arranged, a page is kept open to
+    /// drag from or a card asks a question, and not otherwise
+    /// (`IslandViewModel.listensForEscape`).
     private func listenForEscapeIfHeld() {
         listenForEscape(model.listensForEscape)
     }
 
-    /// While the home page is being arranged, or a page is kept open to drag from, Escape
-    /// ends it. The panel is key only while something in it is typed in, so neither has
-    /// the keyboard: it listens for the key wherever it is pressed, only meanwhile, and
-    /// the key still reaches the app in front. macOS passes on keys pressed in other apps
-    /// only to an app with Accessibility access; without it, Done or a click outside
-    /// ends arranging instead, and Keep Open or a click on the notch lets a page go.
+    /// While the home page is being arranged, a page is kept open to drag from, or a card
+    /// asks a question, Escape ends it. The panel is key only while something in it is
+    /// typed in, so none of them has the keyboard: it listens for the key wherever it is
+    /// pressed, only meanwhile, and the key still reaches the app in front. macOS passes
+    /// on keys pressed in other apps only to an app with Accessibility access; without
+    /// it, Done or a click outside ends arranging instead, Keep Open or a click on the
+    /// notch lets a page go, and Cancel or a click outside cancels a card's question.
     private func listenForEscape(_ on: Bool) {
         escapeMonitors.forEach(NSEvent.removeMonitor)
         escapeMonitors.removeAll()
@@ -309,15 +311,11 @@ final class IslandWindowController {
 
     private func keyDown(_ event: NSEvent) {
         guard Self.endsEditing(event) else { return }
-        // Escape in the app being typed in is that app's: a page kept open to read is
-        // let go only from its own field.
-        let letsGo = model.keptOpenPurpose == .dragging
-        model.endEditingHome()
-        if letsGo { model.endKeepingOpen() }
+        model.escapePressed()
     }
 
-    /// Whether a key press ends arranging the home page, or lets go of a page kept
-    /// open: Escape, with no modifier held.
+    /// Whether a key press ends arranging the home page, lets go of a page kept open, or
+    /// cancels a card's question: Escape, with no modifier held.
     static func endsEditing(_ event: NSEvent) -> Bool {
         let held = event.modifierFlags.intersection([.command, .option, .control, .shift])
         return event.keyCode == UInt16(kVK_Escape) && held.isEmpty
@@ -407,7 +405,14 @@ final class IslandWindowController {
             // Local events include Islet's other windows (Settings); only the panel counts.
             pressBeganInside = event.window === panel
             model.dragStartedOnIsland = pressBeganInside
-            if pressBeganInside { watchPress() }
+            if pressBeganInside {
+                watchPress()
+            } else {
+                // A click in Islet's other windows (Settings, another display's island)
+                // is outside this island too: it cancels a card's question, though it
+                // leaves an open island open.
+                model.cancelQuestion()
+            }
         case .rightMouseDown where isLocal:
             // A right-click on the compact island's row brings up its menu
             // (`IslandChoice`), which the island opening under it would take away.

@@ -200,35 +200,36 @@ enum DownloadDeleteResult: Equatable {
 }
 
 /// Delete's two steps: the first click only asks, and the file goes on a click on the
-/// Delete that asking puts up. The question lapses after a few seconds, or once the
-/// pointer leaves the card; with VoiceOver on it has longer, for the card to be read.
+/// Delete that asking puts up. The question stays up until it is answered, whatever the
+/// pointer does: Delete, Cancel, or Escape or a click anywhere outside the island, which
+/// cancel it too (`IslandViewModel.ask(_:cancel:)`). It ends as well should the card go.
+/// Meanwhile the island it was asked on, and the card's own time (`holding`), are held
+/// for it, and both are let go as it ends, however it ends.
 @MainActor
 @Observable
 final class DeleteConfirmation {
-    static let lapse: TimeInterval = 4
-    static let spokenLapse: TimeInterval = 30
-
     private(set) var isAsking = false
-    @ObservationIgnored private var lapsing: Task<Void, Never>?
+    @ObservationIgnored private weak var island: IslandViewModel?
+    @ObservationIgnored private var holding: (Bool) -> Void = { _ in }
 
-    static func lapse(voiceOver: Bool) -> TimeInterval { voiceOver ? spokenLapse : lapse }
-
-    /// Asks, for `seconds`, or for as long as suits whether VoiceOver is on.
-    func ask(for seconds: TimeInterval? = nil) {
-        let seconds = seconds ?? Self.lapse(voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+    /// Asks, on `island`, telling `holding` as the question goes up and as it ends.
+    func ask(on island: IslandViewModel?, holding: @escaping (Bool) -> Void = { _ in }) {
+        guard !isAsking else { return }
         isAsking = true
-        lapsing?.cancel()
-        lapsing = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled else { return }
-            self?.cancel()
-        }
+        self.island = island
+        self.holding = holding
+        island?.ask(ObjectIdentifier(self)) { [weak self] in self?.cancel() }
+        holding(true)
     }
 
     func cancel() {
-        lapsing?.cancel()
-        lapsing = nil
+        guard isAsking else { return }
         isAsking = false
+        island?.questionEnded(ObjectIdentifier(self))
+        island = nil
+        let holding = holding
+        self.holding = { _ in }
+        holding(false)
     }
 
     /// The answer: whether the question was still up, which it no longer is.
@@ -245,6 +246,8 @@ struct DownloadedCard: View {
     let file: FinishedDownload
     /// The pointer arrived (`true`) or left: the card stays while it is on it.
     let hover: (Bool) -> Void
+    /// Delete began asking (`true`) or stopped: the card stays while it asks.
+    var asking: (Bool) -> Void = { _ in }
     let open: () -> Void
     let reveal: () -> Void
     let dismiss: () -> Void
@@ -255,7 +258,11 @@ struct DownloadedCard: View {
     var dragged: (FileDragSource.Phase) -> Void = { _ in }
     /// The file has been dragged out, and the card stays for it to be deleted.
     var isKept = false
-    @State private var confirmation = DeleteConfirmation()
+    @Environment(\.island) private var island
+    /// Delete's question, made as the bin is first clicked: every island draws the one
+    /// card, and each asks its own, on its own island. Tests give their own, to see the
+    /// card asking.
+    @State var confirmation: DeleteConfirmation? = nil
     /// What Delete did, said in place of the size until the card goes.
     @State private var result: DownloadDeleteResult?
 
@@ -284,12 +291,12 @@ struct DownloadedCard: View {
             Spacer(minLength: 4)
 
             if result == nil {
-                if confirmation.isAsking {
+                if isAsking {
                     // Cancel where the bin was, so a double click on it only asks.
                     word("Delete", .hue(.destructive, minimum: Contrast.text), action: confirmDelete)
                         .help("Deletes the file for good. It isn't put in the Trash, so it can't be got back.")
                         .accessibilityLabel("Delete for good")
-                    word("Cancel", .text(1)) { confirmation.cancel() }
+                    word("Cancel", .text(1)) { confirmation?.cancel() }
                 } else {
                     word("Open", .accent(.downloads, minimum: Contrast.text), action: open)
 
@@ -308,11 +315,11 @@ struct DownloadedCard: View {
                 .accessibilityLabel("Close")
         }
         .frame(maxHeight: .infinity)
-        .onHover { hovering in
-            if !hovering { confirmation.cancel() }
-            hover(hovering)
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: confirmation.isAsking)
+        .onHover(perform: hover)
+        // The card going (another in its place, the island opening, the file's time up)
+        // ends its question and lets go of what it held.
+        .onDisappear { confirmation?.cancel() }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isAsking)
     }
 
     private func word(_ title: String, _ ink: IslandInk, action: @escaping () -> Void) -> some View {
@@ -327,13 +334,17 @@ struct DownloadedCard: View {
         .buttonStyle(.plain)
     }
 
+    private var isAsking: Bool { confirmation?.isAsking ?? false }
+
     private func ask() {
-        confirmation.ask()
+        let confirmation = confirmation ?? DeleteConfirmation()
+        self.confirmation = confirmation
+        confirmation.ask(on: island, holding: asking)
         AccessibilityNotification.Announcement("Delete \(file.name) for good? Choose Delete to confirm, or Cancel.").post()
     }
 
     private func confirmDelete() {
-        guard let delete, confirmation.confirm() else { return }
+        guard let delete, confirmation?.confirm() == true else { return }
         let done = delete()
         result = done
         AccessibilityNotification.Announcement(done.note).post()
@@ -349,7 +360,7 @@ struct DownloadedCard: View {
     }
 
     private var subtitle: String {
-        if confirmation.isAsking { return "Delete for good?" }
+        if isAsking { return "Delete for good?" }
         if isKept { return "Stays here to delete later" }
         let done = file.isSaved ? "Saved" : "Downloaded"
         guard let size = file.size, size > 0 else { return done }

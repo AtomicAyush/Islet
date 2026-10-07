@@ -88,9 +88,15 @@ final class IslandManager {
             MainActor.assumeIsolated { self?.scheduleRebuild() }
         })
         // The Mac going to sleep, its screens with it, locking or another user taking
-        // over lets go of any page kept open: whoever comes back has moved on.
+        // over lets go of any page kept open, and cancels a card's question: whoever
+        // comes back has moved on.
         let away: @Sendable (Notification) -> Void = { [weak self] _ in
-            MainActor.assumeIsolated { self?.controllers.values.forEach { $0.model.endKeepingOpen() } }
+            MainActor.assumeIsolated {
+                self?.controllers.values.forEach {
+                    $0.model.endKeepingOpen()
+                    $0.model.cancelQuestion()
+                }
+            }
         }
         for name in [
             NSWorkspace.willSleepNotification,

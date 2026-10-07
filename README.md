@@ -450,14 +450,16 @@ straight to where it's needed, open it, show it in Finder, or delete it. Drag th
 minutes, stepping aside while another card, a new download or anything else that starts
 meanwhile (a timer, a call) needs the island, and coming back after; nothing is deleted when
 you let go, as the browser may still be reading the file. Delete asks first, its button turning
-into Delete and Cancel for a few seconds, then deletes the file for good: it isn't put in the
-Trash. It deletes only the card's own file, and only while it is still the file that finished,
-so one moved, replaced or changed since is kept, and the card says so. A folder (an app, or an
-archive Safari has opened) has no Delete, and nor does a download still under way. Browsers
-tell Finder how a download is going by publishing its progress, which is how Finder draws the
-bar under the file's icon, and Islet listens the same way; a browser that publishes nothing
-(Firefox) is followed by the size of its partial file. Browsers also tell the Dock when a
-download finishes, so one too quick to see still gets its card. Nothing runs while nothing is
+into Delete and Cancel, and the card keeps asking, wherever the pointer goes, until you answer.
+A click anywhere outside the island, or Escape once Islet has Accessibility access, counts as
+Cancel, and the card goes back to its buttons. Only Delete deletes the file, for good: it isn't
+put in the Trash. It deletes only the card's own file, and only while it is still the file that
+finished, so one moved, replaced or changed since is kept, and the card says so. A folder (an
+app, or an archive Safari has opened) has no Delete, and nor does a download still under way.
+Browsers tell Finder how a download is going by publishing its progress, which is how Finder
+draws the bar under the file's icon, and Islet listens the same way; a browser that publishes
+nothing (Firefox) is followed by the size of its partial file. Browsers also tell the Dock when
+a download finishes, so one too quick to see still gets its card. Nothing runs while nothing is
 downloading: a download that stops for a minute (paused, or waiting for you to keep a file
 Chrome has warned about) leaves the island, and comes back the moment it moves again. Islet
 only watches: it can't pause or cancel another app's download, and one that fails or is
