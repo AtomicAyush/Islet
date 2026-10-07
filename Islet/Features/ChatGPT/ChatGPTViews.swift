@@ -626,7 +626,12 @@ struct ChatGPTExpanded: View {
                                               isPrivate: approvals.isPrivate)
             VStack(spacing: 0) {
                 ApprovalBlock(center: approvals, item: card.item, decided: card.decided) { request in
-                    _ = ChatGPTHostApps.open(request.hostApp, session: request.sessionId)
+                    // Through its row where it has one, so the chat counts as the one on screen.
+                    if let session = model.sessions.first(where: { $0.id == request.sessionId && !$0.record.hostApp.isEmpty }) {
+                        open(session)
+                    } else {
+                        _ = ChatGPTHostApps.open(request.hostApp, session: request.sessionId)
+                    }
                 }
                 .id(card.item.id)
                 .frame(height: block, alignment: .top)
@@ -1072,6 +1077,7 @@ struct ChatGPTSettingsView: View {
 
     @AppStorage(ChatGPTPrefs.approveFromIsland) private var approveFromIsland = true
     @AppStorage(ChatGPTPrefs.openForApproval) private var openForApproval = true
+    @AppStorage(ChatGPTPrefs.skipDoneOnScreen) private var skipDoneOnScreen = true
     @AppStorage(ChatGPTPrefs.approvalWait) private var approvalWait = ChatGPTPrefs.defaultApprovalWait
     @State private var copiedLine = false
 
@@ -1116,6 +1122,11 @@ struct ChatGPTSettingsView: View {
         Toggle(isOn: $showPrompt) {
             Text("Show what you asked")
             Text("Under each chat in the opened island, its latest prompt, or the start of ChatGPT's reply once it's done; a chat outside a project goes by its prompt. Off, chats show by project alone.")
+        }
+
+        Toggle(isOn: $skipDoneOnScreen) {
+            Text("Skip Done when the chat is on screen")
+            Text("No banner when ChatGPT replies in the chat you're looking at; its row still updates. ChatGPT doesn't say which chat it shows, so Islet takes it to be the one you last sent a prompt in or opened from the island, if ChatGPT has stayed in front since. Off, every reply gets a banner, even with ChatGPT in front.")
         }
 
         LabeledContent {

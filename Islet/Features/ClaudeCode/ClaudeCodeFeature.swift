@@ -8,8 +8,9 @@ import SwiftUI
 /// how long, what was asked, and its background tasks under it: each workflow with its
 /// phase, a bar and the agents at work in it, or once it has ended, how; each agent sent
 /// off with what it is doing and how many steps it has taken, and whether it has gone
-/// quiet; each command left running. Clicking a session brings forward the app it runs
-/// in.
+/// quiet; each command left running. Clicking a session, or a banner its hook put up,
+/// brings forward the app it runs in, at the session: in the Claude app, the session
+/// itself; in Terminal or iTerm, its tab, once macOS has let Islet ask for it.
 ///
 /// Claude Code says what it is doing through hooks, and `Scripts/claude-code-hook.sh`
 /// keeps a file per session for Islet (`ClaudeSessionMonitor`), alongside the banners
@@ -20,6 +21,9 @@ import SwiftUI
 /// A permission a session asks shows on its page as a card with Allow, Deny and Answer
 /// in the app, when the hook offers it to Islet (`ApprovalCenter`); the session then
 /// shows as working once the island has answered.
+///
+/// A reply finishing in the session the Claude app shows, while it is in front, puts up
+/// no Done banner unless Settings asks for one (`ClaudeDoneOnScreen`).
 ///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead. There it gives way to the Sound Mixer, the other
@@ -41,7 +45,9 @@ final class ClaudeCodeFeature: Feature {
     /// Claude Code, as in tests.
     let approvals: ApprovalCenter?
     private let clock: () -> Date
-    private let openHost: @MainActor (String) -> Bool
+    private let openHost: @MainActor (ClaudeSessionRecord) -> Bool
+    private let look: @MainActor (_ bundleID: String) -> ChatScreenLook
+    private let appSessions: URL
     private lazy var activity = ClaudeCodeActivity(model: model, approvals: approvals) { [weak self] session in
         self?.open(session)
     }
@@ -51,17 +57,22 @@ final class ClaudeCodeFeature: Feature {
     private var previewWork: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
 
-    /// Tests give a monitor on a folder of their own, a clock, and a stand-in for
-    /// bringing an app forward; the app gives the shared approvals.
+    /// Tests give a monitor on a folder of their own, a clock, a stand-in for bringing
+    /// an app forward, their own look at the screen and the Claude app's sessions; the
+    /// app gives the shared approvals.
     init(
         monitor: ClaudeSessionMonitor? = nil,
         clock: @escaping () -> Date = Date.init,
-        openHost: @escaping @MainActor (String) -> Bool = ClaudeHostApps.activate,
+        openHost: @escaping @MainActor (ClaudeSessionRecord) -> Bool = ClaudeHostApps.open,
+        look: @escaping @MainActor (_ bundleID: String) -> ChatScreenLook = { AppInFront.shared.look(for: $0) },
+        appSessions: URL = ClaudeAppSessions.folder,
         approvals: ApprovalCenter? = nil
     ) {
         self.monitor = monitor ?? ClaudeSessionMonitor(now: clock)
         self.clock = clock
         self.openHost = openHost
+        self.look = look
+        self.appSessions = appSessions
         self.approvals = approvals
         model.onChange = { [weak self] in self?.sync() }
         self.monitor.onChange = { [weak self] snapshot in self?.received(snapshot) }
@@ -69,6 +80,7 @@ final class ClaudeCodeFeature: Feature {
 
     func start() {
         isRunning = true
+        AppInFront.shared.start()
         // Showing or hiding the prompts changes the opened page's height.
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
@@ -175,10 +187,11 @@ final class ClaudeCodeFeature: Feature {
         }
     }
 
-    /// A session's row was clicked: the app it runs in comes forward, if it is running.
+    /// A session's row was clicked: the app it runs in comes forward, if it is running,
+    /// at the session where it can be.
     private func open(_ session: ClaudeSession) {
         guard !model.isPreviewing, !session.record.hostApp.isEmpty else { return }
-        _ = openHost(session.record.hostApp)
+        _ = openHost(session.record)
     }
 
     private func preview(_ samples: [ClaudeSession]) {
@@ -192,6 +205,25 @@ final class ClaudeCodeFeature: Feature {
         previewWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.previewLength, execute: work)
         model.beginPreview(samples)
+    }
+}
+
+extension ClaudeCodeFeature: BannerSessionSource {
+    /// The session by that id in the hook's files, as last read.
+    private func record(_ id: String) -> ClaudeSessionRecord? {
+        guard isRunning else { return nil }
+        return monitor.snapshot.records.first { $0.id == id }
+    }
+
+    func openSession(_ id: String) -> Bool {
+        guard let record = record(id), !record.hostApp.isEmpty else { return false }
+        return openHost(record)
+    }
+
+    func skipsDone(for id: String) -> Bool {
+        guard ClaudeCodePrefs.skipsDoneOnScreen, let record = record(id), record.hostApp == ClaudeHostApps.claudeApp
+        else { return false }
+        return ClaudeDoneOnScreen.isOnScreen(record, look: look(record.hostApp), appSessions: appSessions)
     }
 }
 
@@ -278,6 +310,12 @@ enum ClaudeCodePrefs {
     static let openForApproval = "claudeCode.openForApproval"
 
     static var opensForApproval: Bool { UserDefaults.standard.object(forKey: openForApproval) as? Bool ?? true }
+
+    /// Whether a reply finishing in the session on screen in the Claude app puts up no
+    /// Done banner.
+    static let skipDoneOnScreen = "claudeCode.skipDoneOnScreen"
+
+    static var skipsDoneOnScreen: Bool { UserDefaults.standard.object(forKey: skipDoneOnScreen) as? Bool ?? true }
 }
 
 /// The apps Claude Code runs in, by the bundle id its hooks are given.

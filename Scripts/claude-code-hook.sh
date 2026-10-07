@@ -38,6 +38,12 @@
 #   hostApp         the bundle id of the app Claude Code runs in (Terminal, iTerm, VS
 #                   Code, the Claude app), which it hands its hooks as
 #                   __CFBundleIdentifier; "" when unknown
+#   hostSession     in the Claude app, the app's own id for the session (local_ and a
+#                   UUID), which it hands its hooks as CLAUDE_CODE_HOST_SESSION_ID and
+#                   which its link to the session takes; "" elsewhere
+#   tty             the terminal Claude Code's process runs in, as ttys003, looked up
+#                   with its process: Terminal and iTerm find the tab by it; "" when it
+#                   has none
 #   pid             Claude Code's own process: the hook's parent, past any shell it was
 #                   run through; null when it could not be found. Islet takes a session
 #                   whose process has gone as over, whatever its state says
@@ -198,10 +204,14 @@ titled() { printf '%s' "$1${project:+ · $project}"; }
 # it holds the island, a banner beside the notch takes its place rather than going in a
 # row under it, where "Needs permission" would sit under its own raised hand. A card
 # takes the island anyway, but one that comes while the island is open goes up as a
-# compact one, and may still be up beside the notch once it closes.
-show() { # title subtitle symbol tint [style]
+# compact one, and may still be up beside the notch once it closes. Each names its
+# session, so a click on it opens the session where Islet knows how; the Done card
+# says it is one (event=done), for Islet to leave down while the session is on screen.
+banner_session=""
+[[ "$session" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$ ]] && banner_session="$session"
+show() { # title subtitle symbol tint [style] [event]
   if [ -n "$ISLET_NOTIFY_DRY" ]; then echo "banner: $1 | $2 | $3 | $4 | ${5:-compact} | claudeCode"; return; fi
-  open -g "islet://banner?title=$(enc "$1")&subtitle=$(enc "$2")&symbol=$3&tint=$4&style=${5:-compact}&activity=claudeCode" 2>/dev/null
+  open -g "islet://banner?title=$(enc "$1")&subtitle=$(enc "$2")&symbol=$3&tint=$4&style=${5:-compact}&activity=claudeCode${banner_session:+&session=$banner_session}${6:+&event=$6}" 2>/dev/null
 }
 
 # The agent this script speaks for, to the approval block below.
@@ -551,7 +561,7 @@ case "$kind" in
       message="$(tail -n 400 "$transcript" | jq -rs '[.[] | select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text] | last // ""' 2>/dev/null)"
     fi
     # A card, with room for the start of the reply: what was done, not just that it was.
-    show "$(titled Done)" "$(plain "$message" 120)" checkmark.circle.fill green card
+    show "$(titled Done)" "$(plain "$message" 120)" checkmark.circle.fill green card done
     ;;
   notification)
     message="$(plain "$said")"
@@ -629,7 +639,7 @@ fi
 # Claude Code's process: the hook's parent, or that shell's parent where Claude Code ran
 # the hook through one. Its number and age (ps's etime, [[dd-]hh:]mm:ss) are looked up
 # when a session starts or is sent a prompt, or while its file has none.
-pid="" age=""
+pid="" age="" tty=""
 find_claude() {
   local at="$PPID" line parent etime comm d h m s rest a b c
   for _ in 1 2 3 4; do
@@ -640,6 +650,9 @@ find_claude() {
     esac
     [[ "$at" =~ ^[0-9]+$ ]] && [ "$at" -gt 1 ] || return
     pid="$at"
+    tty="$(ps -o tty= -p "$at" 2>/dev/null)"
+    tty="${tty//[[:space:]]/}"
+    [[ "$tty" =~ ^ttys[0-9]{1,4}$ ]] || tty=""
     [[ "$etime" =~ ^([0-9]+-)?([0-9]+:)?[0-9]+:[0-9]+$ ]] || return
     d=0 h=0 rest="$etime"
     case "$rest" in *-*) d="${rest%%-*}"; rest="${rest#*-}" ;; esac
@@ -807,6 +820,10 @@ program='
       transcriptPath: ((try $in.transcript_path catch null) | text
                        | if . == "" then ($p.transcriptPath // "") else . end),
       hostApp: (if $host == "" then ($p.hostApp // "") else $host end),
+      hostSession: (if $hostSession == "" then ($p.hostSession // "") else $hostSession end),
+      # Looked up with the process, and as it is then: a session resumed in the Claude
+      # app has none.
+      tty: (if $pid == "" then ($p.tty // "") else $tty end),
       pid: (if $pid != "" then ($pid | tonumber) else ($p.pid // null) end),
       pidStarted: (if $pid == "" then ($p.pidStarted // null)
                    elif $age != "" then ($now - ($age | tonumber) | floor)
@@ -841,9 +858,13 @@ program='
     },
     $finished'
 [ "$kind" = stop ] || message=""
+# The Claude app's id for the session, in the one shape its link takes.
+host_session=""
+[[ "${CLAUDE_CODE_HOST_SESSION_ID:-}" =~ ^local_[A-Za-z0-9-]{1,64}$ ]] && host_session="$CLAUDE_CODE_HOST_SESSION_ID"
 update() { # previous
   printf '%s' "$input" | jq -c --argjson prev "${1:-null}" --arg kind "$kind" --arg session "$session" \
     --arg project "$project" --arg cwd "$cwd" --arg host "${__CFBundleIdentifier:-}" \
+    --arg hostSession "$host_session" --arg tty "$tty" \
     --arg pid "$pid" --arg age "$age" --arg reply "$message" --arg agent "$agent" --arg tool "$tool" \
     --arg toolUse "$tool_use" --arg duration "$duration" --arg given "$given" --arg command "$command" \
     --arg clock "$clock" \

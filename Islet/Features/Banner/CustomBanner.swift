@@ -10,6 +10,11 @@ import SwiftUI
 /// nothing else. Any app
 /// on the Mac can open a URL, so a banner from one must not offer a link or a button,
 /// which could pass for one of Islet's own and send a click somewhere it should not go.
+///
+/// A hook's banner may name its session (`sessionID`), which is no link: a click on it
+/// opens that session's chat only if the activity's own records have a session by that
+/// name, and goes where those records say (`BannerSessionSource`). A name it has not
+/// got, or one of another activity's, opens the island as any click does.
 struct CustomBanner: Equatable {
     var title: String
     var subtitle: String?
@@ -30,6 +35,13 @@ struct CustomBanner: Equatable {
     /// `newsActivities`, or `nil`. While that activity holds the compact island, a
     /// compact banner takes its place rather than riding in a row under it.
     var activityID: String? = nil
+    /// The session of `activityID` the banner is news of, as its hook names it: letters,
+    /// digits, dots, dashes and underscores, never more than `sessionLimit`. Only a
+    /// banner that is news of an activity has one.
+    var sessionID: String? = nil
+    /// Whether it says a reply has finished (`event=done`), the one banner a session in
+    /// front of the person need not put up. Only a banner naming a session says so.
+    var isReplyDone = false
 
     static let defaultSymbol = "bell.fill"
     /// Longer than either style shows whole; the limits only stop a script from handing
@@ -37,6 +49,8 @@ struct CustomBanner: Equatable {
     static let titleLimit = 60
     static let subtitleLimit = 120
     static let durationRange: ClosedRange<TimeInterval> = 1...30
+    /// Longer than any id Claude Code or Codex gives a session (a UUID, 36).
+    static let sessionLimit = 128
 
     /// The sounds in /System/Library/Sounds. Only these are played: a name is looked up
     /// in the user's own sound folders too, and a banner's sound is meant to be one of
@@ -76,9 +90,13 @@ extension CustomBanner {
         style: BannerStyle = .compact,
         sound: String? = nil,
         interruption: BannerInterruption = .active,
-        activity: String? = nil
+        activity: String? = nil,
+        session: String? = nil,
+        event: String? = nil
     ) {
         guard let title = Self.clean(title, limit: Self.titleLimit) else { return nil }
+        let activityID = Self.newsActivity(activity)
+        let sessionID = activityID == nil ? nil : Self.validSession(session)
         self.init(
             title: title,
             subtitle: Self.clean(subtitle, limit: Self.subtitleLimit),
@@ -88,7 +106,9 @@ extension CustomBanner {
             style: style,
             sound: Self.systemSound(named: sound),
             interruption: interruption,
-            activityID: Self.newsActivity(activity)
+            activityID: activityID,
+            sessionID: sessionID,
+            isReplyDone: sessionID != nil && event?.trimmingCharacters(in: .whitespaces).lowercased() == "done"
         )
     }
 
@@ -220,6 +240,16 @@ extension CustomBanner {
         guard let id = id?.trimmingCharacters(in: .whitespaces), !id.isEmpty else { return nil }
         return newsActivities.first { $0.caseInsensitiveCompare(id) == .orderedSame }
     }
+
+    /// The session as named, if it is a name a hook gives: ASCII letters, digits, dots,
+    /// dashes and underscores, not starting with a dot, and no longer than
+    /// `sessionLimit`. Otherwise `nil`, and the banner names none.
+    static func validSession(_ id: String?) -> String? {
+        guard let id, !id.isEmpty, id.utf8.count <= sessionLimit, !id.hasPrefix("."),
+              id.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0)) })
+        else { return nil }
+        return id
+    }
 }
 
 /// How a custom banner takes the island over.
@@ -242,8 +272,9 @@ enum BannerStyle: String, CaseIterable, Sendable {
 /// seconds, `style` (`compact` or `card`), `sound` (a system sound's name),
 /// `interruption` (`passive` lets a Focus hold it back) and `activity`, the activity it
 /// is news of (`claudeCode` or `chatGPT`), whose place it takes rather than riding
-/// under it. Names are read in any case, the last of a repeated one wins, and anything
-/// unknown is ignored.
+/// under it. With an activity, `session` names the session it is news of, and
+/// `event=done` says a reply finished. Names are read in any case, the last of a
+/// repeated one wins, and anything unknown is ignored.
 enum BannerRequest: Equatable {
     case show(CustomBanner)
     case dismiss
@@ -277,7 +308,9 @@ enum BannerRequest: Equatable {
             style: style,
             sound: query["sound"],
             interruption: query["interruption"]?.lowercased() == "passive" ? .passive : .active,
-            activity: query["activity"]
+            activity: query["activity"],
+            session: query["session"],
+            event: query["event"]
         ) else { return nil }
         self = .show(banner)
     }

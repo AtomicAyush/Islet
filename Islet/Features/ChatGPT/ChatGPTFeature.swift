@@ -10,8 +10,8 @@ import SwiftUI
 /// its project (or for a plain chat, the start of the prompt), what it is doing and for
 /// how long, what was asked, the turn's steps so far, its goal, its plan as a checklist,
 /// the agents it has sent off, with what each is doing, and the commands it has left
-/// running. Clicking a session brings forward the app it runs in, and in the ChatGPT
-/// app, the chat itself.
+/// running. Clicking a session, or a banner its hook put up, brings forward the app it
+/// runs in, and in the ChatGPT app, the chat itself.
 ///
 /// ChatGPT says what it is doing through Codex's hooks, and `Scripts/chatgpt-hook.sh`
 /// keeps a file per session for Islet (`ChatGPTSessionMonitor`), alongside the banners
@@ -25,6 +25,11 @@ import SwiftUI
 /// ChatGPT, when the hook offers it to Islet (`ApprovalCenter`). Codex asks in the app
 /// only once the hook gives up, so the card lasts only as long as the hook waits; the
 /// chat then shows as working once the island has answered.
+///
+/// A reply finishing in the chat the ChatGPT app most likely shows, while it is in
+/// front, puts up no banner unless Settings asks for one (`ChatGPTDoneOnScreen`). Turned
+/// off, or with nothing to judge by, it does as the hook did before it left this to
+/// Islet: no reply banner while the app is in front.
 ///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead, as Claude Code does. There it gives way to the Sound
@@ -47,6 +52,10 @@ final class ChatGPTFeature: Feature {
     let approvals: ApprovalCenter?
     private let clock: () -> Date
     private let openHost: @MainActor (_ bundleID: String, _ session: String) -> Bool
+    private let look: @MainActor (_ bundleID: String) -> ChatScreenLook
+    /// The chat Islet last put the person at in the ChatGPT app, from a click on its row,
+    /// its banner or Answer in ChatGPT, and when: the one move between chats Islet sees.
+    private var openedChat: ChatGPTDoneOnScreen.Visit?
     private lazy var activity = ChatGPTActivity(model: model, approvals: approvals) { [weak self] session in
         self?.open(session)
     }
@@ -56,17 +65,20 @@ final class ChatGPTFeature: Feature {
     private var previewWork: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
 
-    /// Tests give a monitor on a folder of their own, a clock, and a stand-in for
-    /// bringing an app forward; the app gives the shared approvals.
+    /// Tests give a monitor on a folder of their own, a clock, a stand-in for bringing
+    /// an app forward and their own look at the screen; the app gives the shared
+    /// approvals.
     init(
         monitor: ChatGPTSessionMonitor? = nil,
         clock: @escaping () -> Date = Date.init,
         openHost: @escaping @MainActor (_ bundleID: String, _ session: String) -> Bool = ChatGPTHostApps.open,
+        look: @escaping @MainActor (_ bundleID: String) -> ChatScreenLook = { AppInFront.shared.look(for: $0) },
         approvals: ApprovalCenter? = nil
     ) {
         self.monitor = monitor ?? ChatGPTSessionMonitor(now: clock)
         self.clock = clock
         self.openHost = openHost
+        self.look = look
         self.approvals = approvals
         model.onChange = { [weak self] in self?.sync() }
         self.monitor.onChange = { [weak self] snapshot in self?.received(snapshot) }
@@ -74,6 +86,7 @@ final class ChatGPTFeature: Feature {
 
     func start() {
         isRunning = true
+        AppInFront.shared.start()
         // Showing or hiding the prompts changes the opened page's height.
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
@@ -189,7 +202,17 @@ final class ChatGPTFeature: Feature {
     /// at the chat itself in the ChatGPT app.
     private func open(_ session: ChatGPTSession) {
         guard !model.isPreviewing, !session.record.hostApp.isEmpty else { return }
-        _ = openHost(session.record.hostApp, session.id)
+        _ = openChat(session.record.hostApp, session.id)
+    }
+
+    /// Brings the app forward at the chat. A chat opened in the ChatGPT app is noted as
+    /// the one the person is at now (`ChatGPTDoneOnScreen`).
+    private func openChat(_ hostApp: String, _ id: String) -> Bool {
+        guard openHost(hostApp, id) else { return false }
+        if case .thread = ChatGPTHostApps.target(hostApp, session: id) {
+            openedChat = ChatGPTDoneOnScreen.Visit(id: id, at: clock())
+        }
+        return true
     }
 
     private func preview(_ samples: [ChatGPTSession]) {
@@ -204,6 +227,77 @@ final class ChatGPTFeature: Feature {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.previewLength, execute: work)
         model.beginPreview(samples)
     }
+}
+
+extension ChatGPTFeature: BannerSessionSource {
+    func openSession(_ id: String) -> Bool {
+        guard isRunning, let record = monitor.snapshot.records.first(where: { $0.id == id }),
+              !record.hostApp.isEmpty
+        else { return false }
+        return openChat(record.hostApp, record.id)
+    }
+
+    /// The hook sends every reply in the ChatGPT app here, in front or not, for Islet to
+    /// tell whether its chat is the one on screen. Where Islet cannot tell (the activity
+    /// turned off, its records not yet read as Islet starts, or ChatGPT in front since
+    /// before Islet watched), it does as the hook used to: no banner while the app is in
+    /// front.
+    func skipsDone(for id: String) -> Bool {
+        let screen = look(ChatGPTHostApps.chatGPT)
+        guard isRunning else { return screen.shows(ChatGPTHostApps.chatGPT) }
+        guard ChatGPTPrefs.skipsDoneOnScreen else { return false }
+        let records = monitor.snapshot.records
+        let record = records.first { $0.id == id }
+        // Codex in a terminal or an editor: the hook has had its say already.
+        if let record, record.hostApp != ChatGPTHostApps.chatGPT { return false }
+        guard record != nil, screen.frontSince != nil else { return screen.shows(ChatGPTHostApps.chatGPT) }
+        return ChatGPTDoneOnScreen.isOnScreen(id, records: records, look: screen, opened: openedChat)
+    }
+}
+
+/// Whether a reply that finished in a chat is in front of the person. The ChatGPT app
+/// says nowhere which chat it shows, so it is taken to be the one the person last went
+/// to: the one they last sent a prompt in (not a turn Codex started itself), or the one
+/// Islet last opened for them, whichever came later, with the app in front since then
+/// and a window up. Moving to another chat in the app without sending anything is the
+/// one thing that misleads it, and a prompt they queued in a chat they have since left,
+/// which ChatGPT sends later. In a terminal or an editor no chat is taken to be on
+/// screen.
+enum ChatGPTDoneOnScreen {
+    /// A chat the person went to, and when: by sending a prompt in it, or by Islet
+    /// opening it for them.
+    struct Visit: Equatable {
+        var id: String
+        var at: Date
+    }
+
+    /// How long the app may take to come to the front after Islet asks it to open a
+    /// chat, when it was not in front already.
+    static let openingGrace: TimeInterval = 5
+
+    static func isOnScreen(
+        _ id: String, records: [ChatGPTSessionRecord], look: ChatScreenLook, opened: Visit? = nil
+    ) -> Bool {
+        guard let record = records.first(where: { $0.id == id }), record.hostApp == ChatGPTHostApps.chatGPT,
+              look.shows(record.hostApp), let front = look.frontSince
+        else { return false }
+        var visits = records.filter { $0.hostApp == record.hostApp }.compactMap { other in
+            other.prompted.map { Visit(id: other.id, at: $0) }
+        }
+        if let opened { visits.append(opened) }
+        guard let last = visits.max(by: { $0.at < $1.at }), last.id == id,
+              !visits.contains(where: { $0.id != id && $0.at >= last.at })
+        else { return false }
+        return front <= last.at.addingTimeInterval(last == opened ? openingGrace : 0)
+    }
+}
+
+/// Where a click on a session's row or banner takes the person.
+enum ChatGPTOpenTarget: Equatable {
+    /// The ChatGPT app at the chat, by its link for it, `codex://threads/<id>`.
+    case thread(URL)
+    /// The app as it is.
+    case app(String)
 }
 
 @MainActor
@@ -293,13 +387,19 @@ final class ChatGPTActivity: IslandActivity {
 /// as it is.
 @MainActor
 enum ChatGPTHostApps {
-    static let chatGPT = "com.openai.codex"
+    nonisolated static let chatGPT = "com.openai.codex"
+
+    /// Where a click on the session goes.
+    nonisolated static func target(_ bundleID: String, session: String) -> ChatGPTOpenTarget {
+        guard bundleID == chatGPT, UUID(uuidString: session) != nil,
+              let url = URL(string: "codex://threads/\(session)")
+        else { return .app(bundleID) }
+        return .thread(url)
+    }
 
     /// Returns whether the app was running.
     static func open(_ bundleID: String, session: String) -> Bool {
-        guard bundleID == chatGPT,
-              UUID(uuidString: session) != nil,
-              let url = URL(string: "codex://threads/\(session)"),
+        guard case .thread(let url) = target(bundleID, session: session),
               let appURL = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.bundleURL
         else { return ClaudeHostApps.activate(bundleID) }
         let configuration = NSWorkspace.OpenConfiguration()
@@ -328,6 +428,12 @@ enum ChatGPTPrefs {
     static let openForApproval = "chatGPT.openForApproval"
 
     static var opensForApproval: Bool { UserDefaults.standard.object(forKey: openForApproval) as? Bool ?? true }
+
+    /// Whether a reply finishing in the chat taken to be on screen in the ChatGPT app
+    /// puts up no banner.
+    static let skipDoneOnScreen = "chatGPT.skipDoneOnScreen"
+
+    static var skipsDoneOnScreen: Bool { UserDefaults.standard.object(forKey: skipDoneOnScreen) as? Bool ?? true }
 
     /// How long, in seconds, ChatGPT may wait for the island before asking in the app,
     /// as far as the hook line's timeout allows.

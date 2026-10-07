@@ -10,6 +10,10 @@ import SwiftUI
 /// shows as text only, and is kept to a pace a person can read (`BannerThrottle`): what
 /// arrives faster than that is held, the newest in place of the rest, and shown when
 /// the pace allows. Turning the feature off in Settings turns every one of them away.
+///
+/// A banner from Claude Code's or ChatGPT's hook names its session: a click on it opens
+/// that session's chat, and a reply finishing in the chat in front of the person puts
+/// up none, as their features decide (`BannerSessionSource`).
 @MainActor
 final class BannerFeature: Feature {
     let id = "banner"
@@ -31,6 +35,8 @@ final class BannerFeature: Feature {
         case heldBack
         /// The feature is turned off.
         case off
+        /// It said a reply finished in a chat the person has in front of them already.
+        case onScreen
     }
 
     /// Every banner gets an id of its own under this prefix, so each one arrives as a
@@ -42,6 +48,8 @@ final class BannerFeature: Feature {
     private let playSound: @MainActor (String) -> Void
     /// Whether any island is open, when a card cannot be seen.
     private let isIslandOpen: @MainActor () -> Bool
+    /// The feature whose sessions an activity's banners name, by the activity's id.
+    private let sessions: @MainActor (String) -> (any BannerSessionSource)?
     private var throttle: BannerThrottle
     private var isRunning = false
     private var serial = 0
@@ -50,20 +58,24 @@ final class BannerFeature: Feature {
     private var release: Task<Void, Never>?
 
     /// `presenter` is the island's `ActivityCenter` unless a test hands in its own, as it
-    /// may a throttle with a shorter window, a sound player that only takes notes, and
-    /// its own say on whether the island is open.
+    /// may a throttle with a shorter window, a sound player that only takes notes, its
+    /// own say on whether the island is open, and its own sessions.
     init(
         presenter: (any BannerPresenter)? = nil,
         throttle: BannerThrottle = BannerThrottle(),
         playSound: @escaping @MainActor (String) -> Void = { NSSound(named: NSSound.Name($0))?.play() },
         isIslandOpen: @escaping @MainActor () -> Bool = {
             IslandManager.shared.controllers.values.contains { $0.model.isExpanded }
+        },
+        sessions: @escaping @MainActor (String) -> (any BannerSessionSource)? = { activity in
+            FeatureRegistry.shared.features.first { $0.id == activity } as? any BannerSessionSource
         }
     ) {
         self.presenter = presenter ?? ActivityCenter.shared
         self.throttle = throttle
         self.playSound = playSound
         self.isIslandOpen = isIslandOpen
+        self.sessions = sessions
     }
 
     func start() {
@@ -109,6 +121,7 @@ final class BannerFeature: Feature {
     @discardableResult
     func show(_ banner: CustomBanner) -> Outcome {
         guard isRunning else { return .off }
+        if isOnScreen(banner) { return .onScreen }
         if isQuieted(banner) { return .quieted }
         if presenter.holdsBack(.messages) {
             // Handed over all the same, for the island to count, but not throttled: the
@@ -137,6 +150,13 @@ final class BannerFeature: Feature {
         }
     }
 
+    /// Whether `banner` says a reply finished in a session whose chat its feature sees
+    /// in front of the person, and Settings asks for none then.
+    private func isOnScreen(_ banner: CustomBanner) -> Bool {
+        guard banner.isReplyDone, let activity = banner.activityID, let id = banner.sessionID else { return false }
+        return sessions(activity)?.skipsDone(for: id) ?? false
+    }
+
     private func isQuieted(_ banner: CustomBanner) -> Bool {
         banner.interruption == .passive && presenter.silencesPassiveBanners
     }
@@ -148,7 +168,12 @@ final class BannerFeature: Feature {
         // compact self, which the header shows, title and all.
         if banner.style == .card, isIslandOpen() { banner.style = .compact }
         serial += 1
-        let island = banner.islandBanner(id: "\(Self.bannerPrefix)\(serial)")
+        var island = banner.islandBanner(id: "\(Self.bannerPrefix)\(serial)")
+        // A click opens the session's chat, if its feature has a session by that name
+        // when the click comes; the banner says nothing of where.
+        if let activity = banner.activityID, let id = banner.sessionID {
+            island.open = { [sessions] in sessions(activity)?.openSession(id) ?? false }
+        }
         // One Presentation Mode holds back is not heard either: a sound during a call
         // is heard by everyone on it.
         let isHeard = !presenter.holdsBack(island.personal)
@@ -185,8 +210,8 @@ final class BannerFeature: Feature {
             return
         }
         held = nil
-        // A Focus may have come on while it waited.
-        if !isQuieted(banner) { present(banner) }
+        // A Focus may have come on while it waited, or the chat come to the front.
+        if !isQuieted(banner), !isOnScreen(banner) { present(banner) }
     }
 }
 

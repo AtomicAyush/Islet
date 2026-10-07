@@ -3,7 +3,11 @@
 # Two things:
 #
 # Banners: a reply finished, ChatGPT waiting for permission or asking a question. Only
-# while the app it runs in is not in front: a reply you are looking at needs none.
+# while the app it runs in is not in front: a reply you are looking at needs none. A
+# reply finished in the ChatGPT app is the exception, since you may be in the app at
+# another chat: its banner goes to Islet, which leaves it down only while that chat is
+# the one most likely on screen. Each banner names its session, so a click on it opens
+# the chat.
 #
 # The session's state, for Islet's ChatGPT activity: one JSON file per session (a
 # ChatGPT chat or a Codex thread) in
@@ -48,7 +52,11 @@
 #   since           when it entered that state, or for the two waiting on you, when it
 #                   last asked
 #   turnId          the latest prompt's turn, which each tool's event names
-#   turnStarted     when the latest prompt was sent; null before the first
+#   turnStarted     when the latest prompt was sent, or Codex started a turn itself;
+#                   null before the first
+#   prompted        when you last sent a prompt in the chat, steering a turn included;
+#                   null before the first. Islet takes the chat last prompted to be the
+#                   one the ChatGPT app shows
 #   ended           how the latest turn ended: "" while under way, "done" or
 #                   "interrupted"
 #   updated         the latest event
@@ -910,6 +918,9 @@ program='
                     elif ($p.turnStarted | type) == "number" then $p.turnStarted
                     elif $current == "" and $mine then $t
                     else null end),
+      prompted: (if $kind == "prompt" then $t
+                 elif ($p.prompted | type) == "number" then $p.prompted
+                 else null end),
       ended: $ended,
       updated: $t,
       prompt: (if $kind == "prompt"
@@ -960,7 +971,9 @@ program='
   | $state,
     (if $banner == null then "" else
        ($banner | map_values(text | one)) as $b
-       | @sh "title=\($b.title) subtitle=\($b.subtitle) symbol=\($b.symbol) tint=\($b.tint) style=\($b.style) host=\($state.hostApp | one) query=\("title=\($b.title | @uri)&subtitle=\($b.subtitle | @uri)&symbol=\($b.symbol)&tint=\($b.tint)&style=\($b.style)&activity=chatGPT")"
+       | (if $session | test("^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$") then "&session=" + $session else "" end) as $named
+       | (if $kind == "stop" and $named != "" then "&event=done" else "" end) as $event
+       | @sh "title=\($b.title) subtitle=\($b.subtitle) symbol=\($b.symbol) tint=\($b.tint) style=\($b.style) host=\($state.hostApp | one) query=\("title=\($b.title | @uri)&subtitle=\($b.subtitle | @uri)&symbol=\($b.symbol)&tint=\($b.tint)&style=\($b.style)&activity=chatGPT" + $named + $event)"
      end),
     (if $isTool then "" else
        {t: ($t | floor), event: $kind, session_id: $session, turn_id: $turn}
@@ -1035,8 +1048,9 @@ fi
 [ -z "$banner" ] && exit 0
 title="" subtitle="" symbol="" tint="" style="" host="" query=""
 eval "$banner"
-# Not while the app it runs in is in front: you are looking at it already.
-if [ -n "$host" ]; then
+# Not while the app it runs in is in front: you are looking at it already. But for a
+# reply in the ChatGPT app, which Islet holds back itself while its chat is on screen.
+if [ -n "$host" ] && ! { [ "$kind" = stop ] && [ "$host" = com.openai.codex ]; }; then
   front="$(lsappinfo info -only bundleid "$(lsappinfo front)")"
   [[ "$front" =~ (bundleID|CFBundleIdentifier)\"?=\"([^\"]*)\" ]] && [ "${BASH_REMATCH[2]}" = "$host" ] && exit 0
 fi

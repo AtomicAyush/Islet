@@ -301,7 +301,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Islet sends Spotify and Music the play, pause, skip and seek you press in the island, and lists and switches your Music playlists.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Islet sends Spotify and Music the play, pause, skip and seek you press in the island, lists and switches your Music playlists, and, when you click a Claude Code session, selects its tab in Terminal or iTerm.";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Islet reads the exact battery level of your AirPods and other headphones over Bluetooth.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Islet shows your next event, adds the events you type, and finds your free time.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Islet shows your next event, adds the events you type, and finds your free time.";
@@ -336,7 +336,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Islet sends Spotify and Music the play, pause, skip and seek you press in the island, and lists and switches your Music playlists.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Islet sends Spotify and Music the play, pause, skip and seek you press in the island, lists and switches your Music playlists, and, when you click a Claude Code session, selects its tab in Terminal or iTerm.";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Islet reads the exact battery level of your AirPods and other headphones over Bluetooth.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Islet shows your next event, adds the events you type, and finds your free time.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Islet shows your next event, adds the events you type, and finds your free time.";

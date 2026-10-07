@@ -349,8 +349,15 @@ many steps it has taken, marked quiet once it has written nothing for ten minute
 command left running. A workflow that has ended shows how it ended until Claude Code next says
 so. Past what the island can hold, the list scrolls, the line at its foot fading to show there
 is more; a session that starts waiting for you brings it back to the top, where that session
-is listed. Click a session to bring forward the app it runs in — Terminal, iTerm, VS Code or the
-Claude app. It never takes the island from music or a timer, and sits in the bubble beside them
+is listed. Click a session, or a banner its hook put up, to bring forward the app it runs in at
+that session: the Claude app opens the session itself, and Terminal and iTerm select its tab
+(the first time, macOS asks whether Islet may control them, and if you say no the app just comes
+forward); VS Code, Cursor and Warp come forward as they are. A Done banner for the session the
+Claude app is showing, while the app is in front and the screen unlocked, stays down, since you
+can see the reply; the row still updates. The app records only which session it last showed, so
+after you leave a session for a chat elsewhere in the app, that session still counts as
+showing; sessions in a terminal or an editor always get their Done. Settings → Activities →
+Claude Code → Skip Done when the chat is on screen turns this off. It never takes the island from music or a timer, and sits in the bubble beside them
 instead, behind the Sound Mixer unless a session is waiting for you. Claude Code tells Islet
 all this through hooks, with the script in `Scripts/` (see
 [Claude Code hooks](#claude-code-hooks)); without them nothing shows. The hooks say when a turn
@@ -397,8 +404,9 @@ A command left running is listed until it ends, or until Codex goes, but never k
 show by itself: a server can run for days. One you were asked to allow is listed only once Codex
 shows it running, since one you declined never ran. A plain chat that uses no tools shows for the few
 seconds of its reply, and one with an active goal stays on show while Codex carries on towards
-it between the turns it starts itself. Click a chat to bring forward the app it runs in — the
-ChatGPT app, open at that chat, or the terminal or editor Codex runs in. Like Claude Code, it
+it between the turns it starts itself. Click a chat, or a banner its hook put up, to bring
+forward the app it runs in — the ChatGPT app, open at that chat, or the terminal or editor Codex
+runs in. Like Claude Code, it
 sits in the bubble beside music or a timer, behind the Sound Mixer unless a chat is waiting for
 you. ChatGPT tells Islet all this through Codex's hooks, with the script in `Scripts/` (see
 [ChatGPT hooks](#chatgpt-hooks)); nothing shows until the hooks are added and you have trusted
@@ -406,8 +414,16 @@ them in ChatGPT. The hooks say nothing when a turn fails or you decline a permis
 looks further: a turn the thread's rollout file says has ended is over, a chat whose Codex has
 quit is over, and so is a turn quiet for ten minutes (an hour while a tool runs, for a long
 build). Its banners, a reply done, a permission or a question, show only while the app it runs
-in is not in front. A permission ChatGPT asks while you're in another app can be answered in the
-island too (see [Approving from the island](#approving-from-the-island)).
+in is not in front, but for a reply in the ChatGPT app: ChatGPT doesn't say which chat it shows,
+so its banner stays down only when that chat is the one you last sent a prompt in (a turn
+ChatGPT starts by itself towards a goal is no prompt) or last opened from the island, and
+ChatGPT has stayed in front, unlocked, since; a reply in another chat gets its banner. Going to
+another chat without sending anything still counts as being at the first. Where Islet can't tell
+— the ChatGPT activity turned off, or ChatGPT already in front as Islet starts — a reply gets no
+banner while the app is in front. Settings → Activities → ChatGPT → Skip Done when the chat is
+on screen turns this off, and every reply in the app then gets a banner. A permission ChatGPT
+asks while you're in another app can be answered in the island too (see [Approving from the
+island](#approving-from-the-island)).
 
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
@@ -844,11 +860,14 @@ open "islet://timer/start?minutes=25"
 | `sound` | One of the Mac's alert sounds (`Glass`, `Ping`, `Basso` and the rest of /System/Library/Sounds); silent without |
 | `interruption` | `passive` lets a Focus that asks for quiet hold it back, as it does a song change |
 | `activity` | `claudeCode` or `chatGPT`: the banner is news of the Claude Code or ChatGPT activity, so while that holds the island, one beside the notch takes its place rather than going in a row under it; anything else is ignored |
+| `session` | With `activity`, the session the banner is news of, by the id its hook was given (letters, digits, `.`, `-` and `_`, up to 128): a click on the banner opens that session as a click on its row does, if Islet has a session by that id for that activity, and otherwise opens the island; resting the pointer on it does not open the island, so it stays to be clicked |
+| `event` | `done`, with `session`: the banner says a reply finished, and stays down while that session's chat is on screen (see Claude Code and ChatGPT above) |
 
 Spaces go in as `%20` (a `+` stays a plus), and a `#` as `%23`, since a bare one ends the
 query. Titles are cut at 60 characters and subtitles at 120, and a colour that would not show
 on the island's colour is darkened or lightened, keeping its hue, only as far as it must be to
-stand out. Nothing in a banner can be clicked, whatever the URL says. Banners that come faster
+stand out. Nothing in a banner can be clicked, whatever the URL says: a banner naming a session
+opens it only as its row would, from what Islet already knows of it, never from the URL. Banners that come faster
 than one a second, or more than five in ten seconds, wait their turn, and only the newest of
 those waiting is shown, so a script stuck in a loop cannot keep the island flickering. While
 something is already in the island — music, a video, a timer — a banner beside the notch goes
@@ -955,7 +974,9 @@ Code waits for UserPromptSubmit's hooks before it sends the prompt, so the scrip
 prints nothing and always succeeds. Its banners are news of the Claude Code activity
 (`activity=claudeCode`), so while that holds the island, "Needs permission" takes its place for
 a moment rather than going in a row under its own raised hand; if yours go in the row, copy the
-script again. It needs `jq`, part of macOS from 15 on (`brew install jq` before that). It keeps
+script again. Each names its session (`session=`), and the Done card says it is one
+(`event=done`); the session's file keeps the Claude app's own id for it and the terminal it runs
+in, which is how a click finds it. Copy the script again for banners that open their session. It needs `jq`, part of macOS from 15 on (`brew install jq` before that). It keeps
 the last 200 events other than agents stopping and tools used in
 `~/.claude/hooks/islet-hook-log.jsonl`, to show what each carries (a prompt by its length
 alone), and `ISLET_NOTIFY_DRY=1` prints its banners instead of showing them. Its header lists
@@ -967,7 +988,8 @@ goes once they have all been, or are a day old.
 
 `Scripts/chatgpt-hook.sh` is a hook script for Codex, which the ChatGPT app runs on. It puts up
 banners — a reply finished (a card with its start), ChatGPT waiting for permission or asking a
-question — while the app it runs in is not in front, and keeps a small file for each chat in
+question — while the app it runs in is not in front (a reply in the ChatGPT app goes to Islet
+either way, which decides), each naming its chat so a click opens it, and keeps a small file for each chat in
 `~/Library/Application Support/Islet/ChatGPT/Sessions`, which the ChatGPT activity follows. Copy
 it into Codex's hooks folder:
 

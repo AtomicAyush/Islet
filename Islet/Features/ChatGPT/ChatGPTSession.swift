@@ -173,8 +173,12 @@ struct ChatGPTSessionRecord: Equatable, Identifiable, Sendable {
     var since: Date
     /// The latest prompt's turn, which the rollout names too.
     var turnId: String = ""
-    /// When the latest prompt was sent; `nil` before the first.
+    /// When the latest prompt was sent, or Codex started a turn itself; `nil` before
+    /// the first.
     var turnStarted: Date?
+    /// When the person last sent a prompt in the chat, steering a turn included; `nil`
+    /// before the first, or from a hook older than the field.
+    var prompted: Date?
     /// The latest hook event.
     var updated: Date
     /// The latest prompt's first line, plain.
@@ -204,7 +208,7 @@ struct ChatGPTSessionRecord: Equatable, Identifiable, Sendable {
 
 extension ChatGPTSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
-        case sessionId, project, cwd, transcriptPath, hostApp, pid, pidStarted, state, since, turnId, turnStarted
+        case sessionId, project, cwd, transcriptPath, hostApp, pid, pidStarted, state, since, turnId, turnStarted, prompted
         case updated, prompt, reply, step, steps, plan, agents, codexHome, history, shells
     }
 
@@ -230,6 +234,8 @@ extension ChatGPTSessionRecord: Decodable {
         self.since = Date(timeIntervalSince1970: since)
         turnId = (try? c.decodeIfPresent(String.self, forKey: .turnId)) ?? ""
         turnStarted = (try? c.decodeIfPresent(Double.self, forKey: .turnStarted)).flatMap { $0 }
+            .map(Date.init(timeIntervalSince1970:))
+        prompted = (try? c.decodeIfPresent(Double.self, forKey: .prompted)).flatMap { $0 }
             .map(Date.init(timeIntervalSince1970:))
         prompt = (try? c.decodeIfPresent(String.self, forKey: .prompt)) ?? ""
         reply = (try? c.decodeIfPresent(String.self, forKey: .reply)) ?? ""

@@ -122,6 +122,11 @@ struct IslandBanner {
     /// its place there, the new song over the old, rather than riding in a row under
     /// it: a row naming the song under the song would say it twice.
     var activityID: String? = nil
+    /// What a click on the banner opens instead of the island, and whether it opened
+    /// anything: a hook's banner, the chat of the session it names
+    /// (`BannerFeature`). Where it opens nothing, or there is none, the click opens the
+    /// island as any other does. The banner goes once it has opened something.
+    var open: (@MainActor () -> Bool)? = nil
     /// Compact style, in the row under an activity (`row`): how wide each side's
     /// content is, where the banner evens its two sides up beside the notch, so the
     /// island stays centred on it. `nil` when each side already asks for just what its

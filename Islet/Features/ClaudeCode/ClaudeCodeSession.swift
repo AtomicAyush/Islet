@@ -96,6 +96,12 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
     var transcriptPath: String = ""
     /// The bundle id of the app Claude Code runs in, or "".
     var hostApp: String = ""
+    /// In the Claude app, the app's own id for the session (`local_` and a UUID), which
+    /// its link to the session takes; "" elsewhere, or from a hook that did not say.
+    var hostSession: String = ""
+    /// The terminal Claude Code runs in, as `ttys003`; "" in an app with none, or
+    /// unknown. Terminal and iTerm find the tab by it.
+    var tty: String = ""
     /// Claude Code's own process, and when it started; `nil` when the hook could not
     /// find it (or an earlier hook did not look).
     var pid: Int32?
@@ -133,8 +139,8 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
 
 extension ClaudeSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
-        case sessionId, project, cwd, transcriptPath, hostApp, pid, pidStarted, state, since, turnStarted, updated
-        case prompt, reply, workflows, tasks, pending
+        case sessionId, project, cwd, transcriptPath, hostApp, hostSession, tty, pid, pidStarted, state, since
+        case turnStarted, updated, prompt, reply, workflows, tasks, pending
     }
 
     init(from decoder: Decoder) throws {
@@ -144,6 +150,11 @@ extension ClaudeSessionRecord: Decodable {
         cwd = (try? c.decodeIfPresent(String.self, forKey: .cwd)) ?? ""
         transcriptPath = (try? c.decodeIfPresent(String.self, forKey: .transcriptPath)) ?? ""
         hostApp = (try? c.decodeIfPresent(String.self, forKey: .hostApp)) ?? ""
+        // Kept only in the shapes the hook writes them in, since each ends up in a link or
+        // a script's argument.
+        hostSession = (try? c.decodeIfPresent(String.self, forKey: .hostSession))
+            .flatMap { $0 }.flatMap(ClaudeHostApps.validHostSession) ?? ""
+        tty = (try? c.decodeIfPresent(String.self, forKey: .tty)).flatMap { $0 }.flatMap(ClaudeHostApps.validTTY) ?? ""
         pid = (try? c.decodeIfPresent(Int32.self, forKey: .pid)).flatMap { $0 }.flatMap { $0 > 1 ? $0 : nil }
         pidStarted = (try? c.decodeIfPresent(Double.self, forKey: .pidStarted)).flatMap { $0 }
             .map(Date.init(timeIntervalSince1970:))

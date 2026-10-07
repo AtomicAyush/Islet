@@ -527,7 +527,7 @@ final class IslandViewModel {
             cancelCollapse()
             cancelEditingIdle()
             cancelKeepOpenIdle()
-            if !isExpanded, Prefs.expandOnHover, !isShowingCard {
+            if !isExpanded, Prefs.expandOnHover, !holdsOffHover {
                 if mode != .hidden {
                     if compactButton == .none { scheduleExpand(after: Prefs.hoverDelay) }
                 } else if opensWhileSuppressed {
@@ -574,7 +574,7 @@ final class IslandViewModel {
             cancelExpand()
         } else if compactButton == .resting {
             compactButton = .none
-            if isHovering, !isExpanded, Prefs.expandOnHover, !isShowingCard, mode != .hidden {
+            if isHovering, !isExpanded, Prefs.expandOnHover, !holdsOffHover, mode != .hidden {
                 scheduleExpand(after: Prefs.hoverDelay)
             }
         }
@@ -625,15 +625,26 @@ final class IslandViewModel {
 
     /// A click on the island that nothing in it took. Opened, that is a click beside
     /// an indicator's card, which closes it; on the notch (`onNotch`), it also lets go
-    /// of a page kept open.
-    func tap(onNotch: Bool = false) {
+    /// of a page kept open. On a banner that opens something of its own
+    /// (`IslandBanner.open`), in the island's place or in its row under an activity
+    /// (`onBannerRow`), it opens that and the banner goes; otherwise the island opens.
+    func tap(onNotch: Bool = false, onBannerRow: Bool = false) {
         guard !isExpanded else {
             closeIndicatorCard()
             if onNotch { endKeepingOpen() }
             return
         }
         cancelExpand()
+        if case .banner = mode, openBanner() { return }
+        if onBannerRow, showsBannerRow, openBanner() { return }
         expand()
+    }
+
+    /// Opens what the banner on screen opens, if it opens anything, and takes it down.
+    private func openBanner() -> Bool {
+        guard let banner = center.banner, let open = banner.open, open() else { return false }
+        center.dismissBanner(id: banner.id)
+        return true
     }
 
     /// A click somewhere other than the island. `onEdgeStrip` says it landed on the
@@ -1121,12 +1132,20 @@ final class IslandViewModel {
         return true
     }
 
+    /// Resting on the island does not open it: a card is up, or a banner in the island's
+    /// place that a click takes somewhere of its own (`IslandBanner.open`, a session's
+    /// chat), which the opened island would take away before it could be clicked.
+    private var holdsOffHover: Bool {
+        guard case .banner = mode else { return false }
+        return isShowingCard || center.banner?.open != nil
+    }
+
     private func scheduleExpand(after delay: TimeInterval) {
         cancelExpand()
         let work = DispatchWorkItem { [weak self] in
-            // A card may have arrived while waiting, or the pointer moved on to a button
-            // that keeps the island shut.
-            guard let self, self.isHovering, !self.isShowingCard, self.compactButton == .none else { return }
+            // A card, or a banner that opens a chat, may have arrived while waiting, or the
+            // pointer moved on to a button that keeps the island shut.
+            guard let self, self.isHovering, !self.holdsOffHover, self.compactButton == .none else { return }
             self.expand()
         }
         expandWork = work

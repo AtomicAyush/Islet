@@ -259,9 +259,11 @@ extension ClaudeCodeFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
             labels: ["Approve from the island", "Open the island for each request", "Approvals key", "Set Up",
-                     "Reset Key", "Show what you asked", "Hooks", "Last heard from Claude Code"],
+                     "Reset Key", "Show what you asked", "Skip Done when the chat is on screen", "Hooks",
+                     "Last heard from Claude Code"],
             keywords: ["hooks", "agents", "subagents", "workflows", "terminal", "sessions", "prompt", "coding",
-                       "approve", "allow", "deny", "permission", "always allow", "key", "keychain"]
+                       "approve", "allow", "deny", "permission", "always allow", "key", "keychain", "done", "finished",
+                       "banner", "popup", "notification", "on screen", "chat"]
         )
     }
 }
@@ -271,11 +273,11 @@ extension ChatGPTFeature {
         SettingsSearchTerms(
             labels: ["Approve from the island", "Open the island for each request", "Approvals key", "Set Up",
                      "Reset Key", "Wait in the island", "Wait longer for ChatGPT", "Copy Line", "Show what you asked",
-                     "Hooks", "Last heard from ChatGPT"],
+                     "Skip Done when the chat is on screen", "Hooks", "Last heard from ChatGPT"],
             keywords: ["chatgpt", "codex", "openai", "gpt", "hooks.json", "hooks", "trust", "approve", "agents",
                        "subagents", "plan", "chats", "prompt", "coding", "progress", "tasks", "terminals",
                        "background commands", "goal", "queued", "allow", "deny", "permission", "always allow",
-                       "key", "keychain", "wait"]
+                       "key", "keychain", "wait", "done", "replied", "banner", "popup", "notification", "on screen"]
         )
     }
 }

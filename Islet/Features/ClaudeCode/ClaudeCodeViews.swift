@@ -681,7 +681,12 @@ struct ClaudeCodeExpanded: View {
                                               isPrivate: approvals.isPrivate)
             VStack(spacing: 0) {
                 ApprovalBlock(center: approvals, item: card.item, decided: card.decided) { request in
-                    _ = ClaudeHostApps.activate(request.hostApp)
+                    // At the session, as its row would, where it has one.
+                    if let session = model.sessions.first(where: { $0.id == request.sessionId && !$0.record.hostApp.isEmpty }) {
+                        open(session)
+                    } else {
+                        _ = ClaudeHostApps.activate(request.hostApp)
+                    }
                 }
                 .id(card.item.id)
                 .frame(height: block, alignment: .top)
@@ -1100,6 +1105,7 @@ struct ClaudeCodeSettingsView: View {
 
     @AppStorage(ClaudeCodePrefs.approveFromIsland) private var approveFromIsland = true
     @AppStorage(ClaudeCodePrefs.openForApproval) private var openForApproval = true
+    @AppStorage(ClaudeCodePrefs.skipDoneOnScreen) private var skipDoneOnScreen = true
 
     var body: some View {
         Toggle(isOn: $approveFromIsland) {
@@ -1118,6 +1124,11 @@ struct ClaudeCodeSettingsView: View {
         Toggle(isOn: $showPrompt) {
             Text("Show what you asked")
             Text("Under each session in the opened island, its latest prompt, or the start of Claude's reply once it's done; a session outside a project goes by its prompt. Off, sessions show by project alone.")
+        }
+
+        Toggle(isOn: $skipDoneOnScreen) {
+            Text("Skip Done when the chat is on screen")
+            Text("No Done banner when Claude finishes in the session the Claude app is showing in front; its row still updates. The app says which session it last showed, so one you've left for a chat elsewhere in the app still counts. Sessions in a terminal or an editor always get one.")
         }
 
         LabeledContent {

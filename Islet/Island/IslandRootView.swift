@@ -271,7 +271,8 @@ private struct IslandSurface: View {
             } else if let id = IndicatorCardLayout.compactIndicator(at: location, in: layout, indicators: model.center.indicators) {
                 model.expand(showingCardOf: id)
             } else {
-                model.tap(onNotch: layout.notchTarget.contains(location))
+                model.tap(onNotch: layout.notchTarget.contains(location),
+                          onBannerRow: location.y >= layout.size.height - layout.attachmentHeight)
             }
         }
         // Hidden for a full-screen app on a display without a notch, the island is not
