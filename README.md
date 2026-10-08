@@ -165,7 +165,9 @@ five minutes before a call until ten minutes in, a green camera (or one in the a
 beside the countdown, and until five minutes in the call takes the island over from music. Rest
 the pointer on the camera a moment, then click to join, in the Zoom or Teams app where it is
 installed. The **Join Meeting** action in Shortcuts and `islet://calendar/join` join the call
-under way or starting within 15 minutes.
+under way or starting within 15 minutes. On the home page, Up next lists the rest of today; once
+nothing is left of it but all-day events, it lists tomorrow's instead, or the next day within a
+week that has any, under the day's name, with today's all-day events in a small line above.
 
 **Quick Calendar.** Add an event by typing it: in the input box (the Quick Ask shortcut, then ⌘2
 or the mode chip, or start the line with `+`), type "Dentist tomorrow 3pm", "call mum friday

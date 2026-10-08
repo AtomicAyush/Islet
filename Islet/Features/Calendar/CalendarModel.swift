@@ -21,18 +21,25 @@ enum CalendarAccess: Equatable {
     }
 }
 
-/// The day's events and which one is close enough to count down to.
+/// The day's events and which one is close enough to count down to, and the week's
+/// for the home tile once today's are done.
 ///
 /// Nothing polls. The model re-reads the calendar when EventKit says it changed, on
-/// wake, and every five minutes as a backstop, and otherwise sleeps until the next
-/// moment something would change: an event coming into the lead time, becoming
-/// imminent, starting, its Join button coming or going, or letting go.
+/// wake, as the day turns over, and every five minutes as a backstop, and otherwise
+/// sleeps until the next moment something would change: an event coming into the
+/// lead time, becoming imminent, starting, its Join button coming or going, or
+/// letting go.
 @MainActor
 @Observable
 final class CalendarModel {
     private(set) var access = CalendarAccess(EKEventStore.authorizationStatus(for: .event))
     /// Events from an hour ago to a day ahead, all-day ones included, soonest first.
+    /// The island, joining and Shortcuts look no further than these.
     private(set) var events: [CalendarEvent] = []
+    /// Events from an hour ago to the end of the week ahead, for the home tile's list,
+    /// which turns to the next day with events once today's are done
+    /// (`CalendarAgenda`). Nothing else reads them.
+    private(set) var week: [CalendarEvent] = []
     /// Stand-in events shown by previews in place of the real ones.
     private(set) var sample: [CalendarEvent]?
     /// The timed event the island is counting down to, if one is close enough.
@@ -81,6 +88,7 @@ final class CalendarModel {
 
     /// What the views show: the preview's sample while one runs, else the calendar.
     var visibleEvents: [CalendarEvent] { sample ?? events }
+    var visibleWeek: [CalendarEvent] { sample ?? week }
     var visibleAccess: CalendarAccess { sample == nil ? access : .granted }
     var isShowingSample: Bool { sample != nil }
 
@@ -91,7 +99,8 @@ final class CalendarModel {
         isStarted = true
 
         let center = NotificationCenter.default
-        for name in [Notification.Name.NSSystemClockDidChange, .NSSystemTimeZoneDidChange] {
+        // A new day brings a day further into the week the home tile can list.
+        for name in [Notification.Name.NSSystemClockDidChange, .NSSystemTimeZoneDidChange, .NSCalendarDayChanged] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refresh() }
             })
@@ -187,6 +196,7 @@ final class CalendarModel {
         reloadWork?.cancel()
         reloadWork = nil
         if !events.isEmpty { events = [] }
+        if !week.isEmpty { week = [] }
     }
 
     /// EventKit posts a burst of change notifications while a calendar syncs; one
@@ -208,16 +218,29 @@ final class CalendarModel {
         generation &+= 1
         let generation = generation
         let now = Date()
+        let end = CalendarAgenda.end(after: now)
         Task.detached(priority: .utility) { [weak self] in
-            let events = source.events(from: now.addingTimeInterval(-60 * 60), to: now.addingTimeInterval(24 * 60 * 60))
-            await self?.apply(events, generation: generation)
+            let week = source.events(from: now.addingTimeInterval(-Self.hourAgo), to: end)
+            await self?.apply(Self.day(of: week, at: now), week: week, generation: generation)
         }
     }
 
-    private func apply(_ fetched: [CalendarEvent], generation: Int) {
+    private nonisolated static let hourAgo: TimeInterval = 60 * 60
+    private nonisolated static let dayAhead: TimeInterval = 24 * 60 * 60
+
+    /// The week's events from an hour ago to a day ahead, the range the island, joining
+    /// and Shortcuts look at: each that overlaps it, and one with no length that falls
+    /// in it.
+    nonisolated static func day(of week: [CalendarEvent], at now: Date) -> [CalendarEvent] {
+        let from = now.addingTimeInterval(-hourAgo), to = now.addingTimeInterval(dayAhead)
+        return week.filter { $0.start < to && ($0.end > from || $0.start >= from) }
+    }
+
+    private func apply(_ fetched: [CalendarEvent], week fetchedWeek: [CalendarEvent], generation: Int) {
         guard isStarted, generation == self.generation else { return }
         hasFetched = true
         if fetched != events { events = fetched }
+        if fetchedWeek != week { week = fetchedWeek }
         evaluate()
     }
 
@@ -421,5 +444,81 @@ struct CalendarTiming {
             moments += [window.lowerBound, window.upperBound]
         }
         return moments
+    }
+}
+
+/// What the home tile lists at a moment: the rest of today while a timed event is
+/// left in it, and otherwise the next day within a week that has events, with today's
+/// all-day ones, a birthday say, kept to a line above it.
+struct CalendarAgenda {
+    /// How many days past today the list looks once today is done.
+    static let days = 7
+
+    /// How many days after today the day listed is: 0 for today, `nil` when nothing
+    /// is on in the week ahead.
+    let offset: Int?
+    /// The day's events, timed ones first, since they are the ones with somewhere to
+    /// be, then all-day ones.
+    let events: [CalendarEvent]
+    /// Today's all-day events still on, said above another day's list.
+    let allDayToday: [CalendarEvent]
+    /// "Tomorrow", the weekday's name for the days after, "Next Tuesday" on the same
+    /// weekday a week on; `nil` for today or no day.
+    let dayName: String?
+
+    init(events: [CalendarEvent], at now: Date, calendar: Calendar = .current) {
+        let today = calendar.startOfDay(for: now)
+        let day = { Self.day(offset: $0, from: today, in: calendar) }
+        let left = events.filter { $0.end > now && $0.start < day(1) }
+        let allDay = left.filter(\.isAllDay)
+        guard !left.contains(where: { !$0.isAllDay }) else {
+            self.init(offset: 0, events: left.filter { !$0.isAllDay } + allDay, allDayToday: [], dayName: nil)
+            return
+        }
+        // An all-day event that goes on past today is said once, in today's line: a day
+        // with only that left of it has nothing new on it.
+        let said = Set(allDay.map(\.id))
+        for offset in 1...Self.days {
+            let from = day(offset), to = day(offset + 1)
+            let on = events.filter {
+                !said.contains($0.id) && $0.start < to && ($0.end > from || $0.start >= from)
+            }
+            guard !on.isEmpty else { continue }
+            self.init(
+                offset: offset, events: on.filter { !$0.isAllDay } + on.filter(\.isAllDay), allDayToday: allDay,
+                dayName: Self.name(of: from, offset: offset, in: calendar)
+            )
+            return
+        }
+        self.init(offset: nil, events: [], allDayToday: allDay, dayName: nil)
+    }
+
+    private init(offset: Int?, events: [CalendarEvent], allDayToday: [CalendarEvent], dayName: String?) {
+        self.offset = offset
+        self.events = events
+        self.allDayToday = allDayToday
+        self.dayName = dayName
+    }
+
+    /// The end of the last day the list can show, which is as far as the calendar is
+    /// read (`CalendarModel.week`).
+    static func end(after now: Date, calendar: Calendar = .current) -> Date {
+        day(offset: days + 1, from: calendar.startOfDay(for: now), in: calendar)
+    }
+
+    /// The start of the day so many days on, by the calendar, so a clock change on the
+    /// way doesn't shift it by an hour.
+    private static func day(offset: Int, from today: Date, in calendar: Calendar) -> Date {
+        calendar.date(byAdding: .day, value: offset, to: today)
+            ?? today.addingTimeInterval(TimeInterval(offset) * 24 * 60 * 60)
+    }
+
+    private static func name(of day: Date, offset: Int, in calendar: Calendar) -> String {
+        if offset == 1 { return "Tomorrow" }
+        var style = Date.FormatStyle.dateTime.weekday(.wide)
+        style.calendar = calendar
+        style.timeZone = calendar.timeZone
+        let weekday = day.formatted(style)
+        return offset == days ? "Next \(weekday)" : weekday
     }
 }

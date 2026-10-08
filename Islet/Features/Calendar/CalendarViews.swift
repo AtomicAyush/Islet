@@ -328,30 +328,30 @@ private struct JoinButton: View {
 
 // MARK: - Home
 
-/// "Up next": what is left of today, or a way to let Islet see the calendar.
+/// "Up next": what is left of today, or once that is only all-day events, the next
+/// day with any (`CalendarAgenda`), or a way to let Islet see the calendar.
 struct CalendarHomeTile: View {
     let model: CalendarModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Up next", systemImage: "calendar")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.islandAccentText(.calendarHeader, on: .homeTile))
-
             switch model.visibleAccess {
             case .granted:
                 TimelineView(.everyMinute) { context in
-                    UpNextList(events: model.visibleEvents, now: context.date)
+                    UpNext(events: model.visibleWeek, now: context.date)
                 }
             case .undetermined:
+                Self.header("Up next")
                 AccessPrompt(message: "Show your next event", action: "Allow…") {
                     model.requestAccess()
                 }
             case .denied:
+                Self.header("Up next")
                 AccessPrompt(message: "Calendar access is off", action: "Open Settings…") {
                     CalendarApp.openPrivacySettings()
                 }
             case .restricted:
+                Self.header("Up next")
                 AccessPrompt(message: "Calendar access is restricted", action: "Open Settings…") {
                     CalendarApp.openPrivacySettings()
                 }
@@ -359,48 +359,96 @@ struct CalendarHomeTile: View {
         }
         .onAppear { model.refreshAccess() }
     }
+
+    /// Over the tile: "Up next", or the name of the day listed.
+    static func header(_ title: String) -> some View {
+        Label(title, systemImage: "calendar")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.islandAccentText(.calendarHeader, on: .homeTile))
+    }
+}
+
+/// The tile's header and list for the moment.
+struct UpNext: View {
+    let events: [CalendarEvent]
+    let now: Date
+
+    var body: some View {
+        let agenda = CalendarAgenda(events: events, at: now)
+        VStack(alignment: .leading, spacing: 8) {
+            CalendarHomeTile.header(agenda.dayName ?? "Up next")
+            UpNextList(agenda: agenda, now: now)
+        }
+    }
 }
 
 private struct UpNextList: View {
-    let events: [CalendarEvent]
+    let agenda: CalendarAgenda
     let now: Date
 
     /// Narrower than this, the tile trades its third row for room to read titles.
     private static let listWidth: CGFloat = 150
 
     /// "9:30", or "21:30" where the clock runs to 24: the locale's own hours without
-    /// AM or PM, which a row has no room for and the day makes plain.
+    /// AM or PM, which a row has no room for and the rest of today makes plain.
     private static let hourMinute: DateFormatter = {
         let formatter = DateFormatter()
         formatter.setLocalizedDateFormatFromTemplate("Jmm")
         return formatter
     }()
 
-    /// The rest of today: timed events first, since they are the ones with somewhere
-    /// to be, then all-day ones.
-    private var remaining: [CalendarEvent] {
-        let today = Calendar.current.startOfDay(for: now)
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? now.addingTimeInterval(24 * 60 * 60)
-        let left = events.filter { $0.end > now && $0.start < tomorrow }
-        return left.filter { !$0.isAllDay } + left.filter(\.isAllDay)
-    }
+    /// "7:00 AM", or "07:00" where the clock runs to 24: another day's list has no
+    /// now to tell the morning's 7:00 from the evening's.
+    private static let hourMinuteOfDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
+        return formatter
+    }()
 
     var body: some View {
-        let remaining = remaining
-        if remaining.isEmpty {
-            Text("No more events today")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.islandText(0.55, on: .homeTile))
-        } else {
-            GeometryReader { geo in
-                if geo.size.width >= Self.listWidth {
-                    list(Array(remaining.prefix(3)))
-                } else {
-                    stack(Array(remaining.prefix(2)))
-                }
+        // Today's line takes the room of a row.
+        let rows = agenda.events
+        let lines = agenda.allDayToday.isEmpty ? 0 : 1
+        VStack(alignment: .leading, spacing: 6) {
+            if let first = agenda.allDayToday.first {
+                todayLine(first)
             }
-            .buttonStyle(.plain)
+            if rows.isEmpty {
+                Text("No events in the next week")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.islandText(0.55, on: .homeTile))
+            } else {
+                GeometryReader { geo in
+                    if geo.size.width >= Self.listWidth {
+                        list(Array(rows.prefix(3 - lines)))
+                    } else {
+                        stack(Array(rows.prefix(2 - lines)))
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
+    }
+
+    /// "Today · Birthday: Priya", over another day's list; a click shows the first in
+    /// Calendar, as a row does.
+    private func todayLine(_ first: CalendarEvent) -> some View {
+        let titles = agenda.allDayToday.map(\.title).joined(separator: ", ")
+        return Button { CalendarApp.show(first) } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(first.ink(on: .homeTile))
+                    .frame(width: 5, height: 5)
+                Text("\(Text("Today").fontWeight(.semibold)) · \(titles)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.islandText(0.55, on: .homeTile))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// A line each, in columns: dot, time, title.
@@ -465,7 +513,7 @@ private struct UpNextList: View {
     private func time(of event: CalendarEvent) -> String {
         if event.isAllDay { return "All day" }
         if isUnderway(event) { return "Now" }
-        return Self.hourMinute.string(from: event.start)
+        return (agenda.offset == 0 ? Self.hourMinute : Self.hourMinuteOfDay).string(from: event.start)
     }
 
     /// "10:30 – 11:00 AM", "All day", or "Now" in the event's colour with its end.
