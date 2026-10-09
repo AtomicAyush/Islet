@@ -42,6 +42,10 @@ struct CustomBanner: Equatable {
     /// Whether it says a reply has finished (`event=done`), the one banner a session in
     /// front of the person need not put up. Only a banner naming a session says so.
     var isReplyDone = false
+    /// The activity whose page a click opens, or the home page where it is not showing:
+    /// only Islet's own banners have one (its usage warnings), never one from a URL or a
+    /// shortcut.
+    var page: String? = nil
 
     static let defaultSymbol = "bell.fill"
     /// Longer than either style shows whole; the limits only stop a script from handing

@@ -174,11 +174,23 @@ final class BannerFeature: Feature {
         if let activity = banner.activityID, let id = banner.sessionID {
             island.open = { [sessions] in sessions(activity)?.openSession(id) ?? false }
         }
+        // One of Islet's own opens its page.
+        if let page = banner.page {
+            island.open = { Self.open(page: page) }
+        }
         // One Presentation Mode holds back is not heard either: a sound during a call
         // is heard by everyone on it.
         let isHeard = !presenter.holdsBack(island.personal)
         presenter.present(island)
         if isHeard, let sound = banner.sound { playSound(sound) }
+    }
+
+    /// Opens the island under the pointer on `page`, or on the home page where that
+    /// activity is not showing.
+    private static func open(page: String) -> Bool {
+        guard let island = IslandManager.shared.focusedController?.model else { return false }
+        island.expand(focus: ActivityCenter.shared.activity(id: page) != nil ? page : IslandViewModel.homeFocus)
+        return true
     }
 
     /// Keeps `banner` in place of whatever was waiting, and waits for the throttle.

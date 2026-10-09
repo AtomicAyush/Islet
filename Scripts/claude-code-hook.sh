@@ -23,6 +23,9 @@
 #   permission    PermissionRequest
 #   tool          PostToolUse
 #   tool          PostToolUseFailure
+#   failure       StopFailure: a turn ended by an error, of which one turned away at the
+#                 usage limit tells Islet (islet://claudeCode/usage-limit), and nothing
+#                 else is done
 # ISLET_NOTIFY_DRY=1 prints the banners instead of showing them, the activity they are
 # news of last.
 #
@@ -124,7 +127,7 @@ if [ "$kind" = tool ]; then
 fi
 
 # Every field used below, read in one go, each as `jq -r` would print it.
-session="" cwd="" transcript="" stop_active="" message="" wants="" said="" task_name=""
+session="" cwd="" transcript="" stop_active="" stop_error="" message="" wants="" said="" task_name=""
 logged="" agent="" tool="" tool_use="" duration="" given="" command="" clock=""
 eval "$(printf '%s' "$input" | jq -r '
   def text: (if type == "string" then . else tojson end) | sub("\n+$"; "");
@@ -135,6 +138,7 @@ eval "$(printf '%s' "$input" | jq -r '
   @sh "cwd=\(field(.cwd))",
   @sh "transcript=\(field(.transcript_path))",
   @sh "stop_active=\(field(.stop_hook_active // false))",
+  @sh "stop_error=\(field(.error))",
   @sh "message=\(field(.last_assistant_message))",
   @sh "wants=\(field(.notification_type // .type))",
   @sh "said=\(field(.message // .title))",
@@ -584,6 +588,16 @@ case "$kind" in
     # workflow; those are caught below).
     name="$(plain "$task_name")"
     show "Task done" "${name:-$project}" checkmark.circle.fill purple
+    ;;
+  failure)
+    # StopFailure. A turn turned away at the usage limit tells Islet, which puts up the
+    # banner itself, with when the limit lifts as far as it knows. The session's file is
+    # left as it is, as for any other error.
+    if [ "$stop_error" = rate_limit ]; then
+      if [ -n "$ISLET_NOTIFY_DRY" ]; then echo "usage limit reached | claudeCode"
+      else open -g "islet://claudeCode/usage-limit" 2>/dev/null; fi
+    fi
+    exit 0
     ;;
 esac
 

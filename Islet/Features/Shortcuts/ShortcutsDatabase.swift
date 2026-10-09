@@ -204,11 +204,14 @@ enum ShortcutsDatabase {
 
         private let handle: OpaquePointer
 
-        init?(_ file: URL) {
+        /// `immutable` reads the file as it stands, without the locks and shared memory
+        /// a database in write-ahead mode otherwise needs, which a read-only connection
+        /// cannot make for itself: only for one nothing has open.
+        init?(_ file: URL, immutable: Bool = false) {
             // A URI, so the connection is read-only however SQLite would otherwise
             // open it. The file URL is already percent-encoded.
             var handle: OpaquePointer?
-            let uri = file.absoluteString + "?mode=ro"
+            let uri = file.absoluteString + (immutable ? "?mode=ro&immutable=1" : "?mode=ro")
             let status = sqlite3_open_v2(uri, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil)
             guard status == SQLITE_OK, let handle else {
                 if let handle { sqlite3_close_v2(handle) }

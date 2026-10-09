@@ -260,10 +260,12 @@ extension ClaudeCodeFeature {
         SettingsSearchTerms(
             labels: ["Approve from the island", "Open the island for each request", "Approvals key", "Set Up",
                      "Reset Key", "Show what you asked", "Skip Done when the chat is on screen", "Hooks",
-                     "Last heard from Claude Code"],
+                     "Last heard from Claude Code", "Show usage limits", "Warn at 80% and 95%",
+                     "Usage ring in the compact island", "Claude app", "AI Usage"],
             keywords: ["hooks", "agents", "subagents", "workflows", "terminal", "sessions", "prompt", "coding",
                        "approve", "allow", "deny", "permission", "always allow", "key", "keychain", "done", "finished",
-                       "banner", "popup", "notification", "on screen", "chat"]
+                       "banner", "popup", "notification", "on screen", "chat", "usage", "limits", "rate limit",
+                       "quota", "5-hour", "weekly", "plan", "usage tile"]
         )
     }
 }
@@ -273,11 +275,13 @@ extension ChatGPTFeature {
         SettingsSearchTerms(
             labels: ["Approve from the island", "Open the island for each request", "Approvals key", "Set Up",
                      "Reset Key", "Wait in the island", "Wait longer for ChatGPT", "Copy Line", "Show what you asked",
-                     "Skip Done when the chat is on screen", "Hooks", "Last heard from ChatGPT"],
+                     "Skip Done when the chat is on screen", "Hooks", "Last heard from ChatGPT", "Show usage limits",
+                     "Warn at 80% and 95%", "Usage ring in the compact island", "ChatGPT plan", "AI Usage"],
             keywords: ["chatgpt", "codex", "openai", "gpt", "hooks.json", "hooks", "trust", "approve", "agents",
                        "subagents", "plan", "chats", "prompt", "coding", "progress", "tasks", "terminals",
                        "background commands", "goal", "queued", "allow", "deny", "permission", "always allow",
-                       "key", "keychain", "wait", "done", "replied", "banner", "popup", "notification", "on screen"]
+                       "key", "keychain", "wait", "done", "replied", "banner", "popup", "notification", "on screen",
+                       "usage", "limits", "rate limit", "quota", "5-hour", "weekly", "credits", "plus", "usage tile"]
         )
     }
 }

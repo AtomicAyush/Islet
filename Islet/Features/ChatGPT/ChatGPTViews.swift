@@ -93,8 +93,9 @@ enum ChatGPTLayout {
         return rows + CGFloat(sessions.count - 1) * sessionSpacing
     }
 
-    /// The most the rows take before they scroll.
-    static var listLimit: CGFloat { maxPageHeight - topInset }
+    /// The most the rows take before they scroll, below the usage line where it shows
+    /// (`header` tall).
+    static func listLimit(header: CGFloat = 0) -> CGFloat { maxPageHeight - topInset - header }
 
     /// Where each line of the rows begins, from the top of the list, in the order the
     /// rows show them: each session's title, what was asked and its steps so far; its
@@ -139,10 +140,11 @@ enum ChatGPTLayout {
 
     /// How much of the rows the page shows: all of them where they fit; otherwise as
     /// much as fits that ends `scrollPeek` into a line, so the fade lies across its words.
-    static func visibleHeight(_ sessions: [ChatGPTSession], showsText: Bool) -> CGFloat {
+    static func visibleHeight(_ sessions: [ChatGPTSession], showsText: Bool, header: CGFloat = 0) -> CGFloat {
         let list = listHeight(sessions, showsText: showsText)
-        guard list > listLimit else { return list }
-        return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= listLimit } ?? listLimit
+        let limit = listLimit(header: header)
+        guard list > limit else { return list }
+        return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= limit } ?? limit
     }
 
     /// The page's height with an approval card above the rows, the rows given what is
@@ -150,17 +152,19 @@ enum ChatGPTLayout {
     static let maxApprovalPageHeight: CGFloat = maxPageHeight
 
     static func pageHeight(for sessions: [ChatGPTSession], showsText: Bool, approval: ApprovalItem?, waiting: Int = 0,
-                           isPrivate: Bool = false) -> CGFloat {
-        guard let approval else { return pageHeight(for: sessions, showsText: showsText) }
+                           isPrivate: Bool = false, header: CGFloat = 0) -> CGFloat {
+        guard let approval else { return pageHeight(for: sessions, showsText: showsText, header: header) }
         let block = ApprovalLayout.height(for: approval, waiting: waiting, isPrivate: isPrivate)
-        guard !sessions.isEmpty else { return topInset + block + bottomInset }
-        return min(topInset + block + pageHeight(for: sessions, showsText: showsText), maxApprovalPageHeight)
+        guard !sessions.isEmpty else { return header + topInset + block + bottomInset }
+        return min(header + topInset + block + pageHeight(for: sessions, showsText: showsText), maxApprovalPageHeight)
     }
 
-    static func pageHeight(for sessions: [ChatGPTSession], showsText: Bool) -> CGFloat {
+    /// The page's height, the usage line atop it where it shows (`header` tall).
+    static func pageHeight(for sessions: [ChatGPTSession], showsText: Bool, header: CGFloat = 0) -> CGFloat {
         let list = listHeight(sessions, showsText: showsText)
-        guard list > listLimit else { return min(topInset + list + bottomInset, maxPageHeight) }
-        return topInset + visibleHeight(sessions, showsText: showsText)
+        let limit = listLimit(header: header)
+        guard list > limit else { return min(header + topInset + list + bottomInset, maxPageHeight) }
+        return header + topInset + visibleHeight(sessions, showsText: showsText, header: header)
     }
 }
 
@@ -486,10 +490,11 @@ struct ChatGPTPlanRing: View {
 
 // MARK: - Compact
 
-/// Left of the notch: the mark.
+/// Left of the notch: the mark, in a ring from 80% of a usage limit.
 struct ChatGPTCompactLeading: View {
     let model: ChatGPTModel
     var approvals: ApprovalCenter? = nil
+    var usage: UsageCenter? = nil
 
     var body: some View {
         if let approvals, !model.isPreviewing, approvals.front(for: .chatgpt) != nil {
@@ -500,8 +505,10 @@ struct ChatGPTCompactLeading: View {
     }
 
     private var usual: some View {
-        ChatGPTMarkView(mark: model.mark, pointSize: ChatGPTLayout.compactSymbol)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        UsageRingMark(usage: usage?.compact(.chatGPT) ?? CompactUsage()) {
+            ChatGPTMarkView(mark: model.mark, pointSize: ChatGPTLayout.compactSymbol)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -509,14 +516,18 @@ struct ChatGPTCompactLeading: View {
 /// at work, how many, beside a ring filling as the sessions get on where there is a
 /// measure of it, else a spinner; or else how long the turn on show has been going, or
 /// a spinner while only a goal keeps it at work. Commands left running are listed only
-/// when it is opened, as Claude Code's are: a server may run for days.
+/// when it is opened, as Claude Code's are: a server may run for days. At the usage
+/// limit, when it lifts in their place.
 struct ChatGPTCompactTrailing: View {
     let model: ChatGPTModel
     var approvals: ApprovalCenter? = nil
+    var usage: UsageCenter? = nil
 
     var body: some View {
         if let approvals, !model.isPreviewing, approvals.front(for: .chatgpt) != nil {
             ApprovalCompactTrailing(center: approvals, agent: .chatgpt)
+        } else if let usage, !model.isPreviewing, usage.compact(.chatGPT).atLimit {
+            UsageLimitTrailing(usage: usage.compact(.chatGPT), now: usage.now)
         } else {
             usual
         }
@@ -606,11 +617,12 @@ struct ChatGPTMinimal: View {
 
 // MARK: - Expanded
 
-/// Opened: a row per session, those waiting on you first. Clicking one brings forward
-/// the app it runs in.
+/// Opened: a row per session, those waiting on you first, under a line of ChatGPT's
+/// usage limits while they show. Clicking a row brings forward the app it runs in.
 struct ChatGPTExpanded: View {
     let model: ChatGPTModel
     var approvals: ApprovalCenter? = nil
+    var usage: UsageCenter? = nil
     let open: (ChatGPTSession) -> Void
     @AppStorage(ChatGPTPrefs.showPrompt) private var showsText = true
     /// How deep the fade at the head of the rows is: as far as they are scrolled down,
@@ -620,6 +632,16 @@ struct ChatGPTExpanded: View {
     private static let listSpace = "chatGPTList"
 
     var body: some View {
+        let status = model.isPreviewing ? nil : usage?.status(.chatGPT)
+        VStack(spacing: 0) {
+            if let status { UsageLine(status: status) }
+            page(header: status == nil ? 0 : UsageLayout.lineHeight)
+        }
+    }
+
+    /// The page below the usage line, which takes `header` of its height.
+    @ViewBuilder
+    private func page(header: CGFloat) -> some View {
         if let approvals, !model.isPreviewing, let card = approvals.card(for: .chatgpt) {
             // The request above the rows, which get what room is left.
             let block = ApprovalLayout.height(for: card.item, waiting: approvals.waiting(for: .chatgpt).count,
@@ -637,19 +659,21 @@ struct ChatGPTExpanded: View {
                 .frame(height: block, alignment: .top)
                 .padding(.top, ChatGPTLayout.topInset)
                 if !model.shown.isEmpty {
-                    list.frame(maxHeight: max(0, ChatGPTLayout.maxApprovalPageHeight - block - ChatGPTLayout.topInset * 2))
+                    list(header: header)
+                        .frame(maxHeight: max(0, ChatGPTLayout.maxApprovalPageHeight - header - block
+                                                 - ChatGPTLayout.topInset * 2))
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)
         } else {
-            list
+            list(header: header)
         }
     }
 
     @ViewBuilder
-    private var list: some View {
+    private func list(header: CGFloat) -> some View {
         let sessions = model.shown
-        let height = ChatGPTLayout.visibleHeight(sessions, showsText: showsText)
+        let height = ChatGPTLayout.visibleHeight(sessions, showsText: showsText, header: header)
         let scrolls = ChatGPTLayout.listHeight(sessions, showsText: showsText) > height + 0.5
         let waiting = Set(sessions.filter(\.state.needsYou).map(\.id))
 
@@ -1128,6 +1152,8 @@ struct ChatGPTSettingsView: View {
             Text("Skip Done when the chat is on screen")
             Text("No banner when ChatGPT replies in the chat you're looking at; its row still updates. ChatGPT doesn't say which chat it shows, so Islet takes it to be the one you last sent a prompt in or opened from the island, if ChatGPT has stayed in front since. Off, every reply gets a banner, even with ChatGPT in front.")
         }
+
+        UsageSettingsRows(agent: .chatGPT)
 
         LabeledContent {
             Button(copied ? "Copied" : "Copy Hooks") {

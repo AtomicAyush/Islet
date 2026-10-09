@@ -19,6 +19,8 @@ final class ClaudeAskBackend: AskBackend {
         var tokens: any ClaudeTokenStore
         var environment: [String: String]
         var parent = FileManager.default.temporaryDirectory
+        /// Where what a run says of Claude's usage limits goes, as it says it.
+        var limits: @MainActor (ClaudeUsage.LimitEvent) -> Void = { _ in }
 
         static var standard: Setup {
             Setup(
@@ -28,7 +30,8 @@ final class ClaudeAskBackend: AskBackend {
                     "DISABLE_TELEMETRY": "1",
                     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                     "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
-                ])
+                ]),
+                limits: { UsageCenter.shared.received($0) }
             )
         }
     }
@@ -103,6 +106,7 @@ final class ClaudeAskBackend: AskBackend {
                     ?? Data(AskInstructions.prompt(question, after: earlier).utf8),
                 parent: setup.parent
             )
+            let limits = setup.limits
             let task = Task {
                 var parser = ClaudeOutput()
                 do {
@@ -110,6 +114,7 @@ final class ClaudeAskBackend: AskBackend {
                         switch output {
                         case .line(let line):
                             if let answer = try parser.take(line) { continuation.yield(answer) }
+                            if let event = parser.takeLimits() { limits(event) }
                         case .exited(let status):
                             try parser.finish(status: status)
                         }
@@ -156,9 +161,12 @@ final class ClaudeAskBackend: AskBackend {
 struct ClaudeOutput {
     private(set) var answer = ""
     private var isDone = false
+    /// What the run last said of Claude's usage limits, until taken.
+    private var limits: ClaudeUsage.LimitEvent?
 
-    /// The answer so far, if this line adds to it.
-    mutating func take(_ line: String) throws -> String? {
+    /// The answer so far, if this line adds to it. A line saying what the limits are
+    /// is kept for `takeLimits`; it adds nothing to the answer.
+    mutating func take(_ line: String, at date: Date = Date()) throws -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
               let type = object["type"] as? String else { return nil }
         switch type {
@@ -175,6 +183,9 @@ struct ClaudeOutput {
             if status == 401 || status == 403 { throw AskFailure.notSignedIn }
             if (status == 429 || status == 529), (object["attempt"] as? Int ?? 0) >= 2 { throw AskFailure.busy }
             return nil
+        case "rate_limit_event":
+            limits = ClaudeUsage.limitEvent(object, at: date) ?? limits
+            return nil
         case "result":
             isDone = true
             if object["is_error"] as? Bool == true {
@@ -186,6 +197,12 @@ struct ClaudeOutput {
         default:
             return nil
         }
+    }
+
+    /// What the run has said of the limits since last asked, if anything.
+    mutating func takeLimits() -> ClaudeUsage.LimitEvent? {
+        defer { limits = nil }
+        return limits
     }
 
     func finish(status: Int32) throws {

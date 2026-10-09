@@ -460,6 +460,41 @@ conversation wait (and puts up its banner), a conversation the list says is idle
 minute after its last event, one quiet for ten minutes is over (an hour while the list says it
 runs, background tasks and all), and a wait is let go after two hours.
 
+**Usage limits.** How much of your Claude and ChatGPT plans' limits you have used, from files on
+this Mac alone: no second sign-in, and nothing asked of Anthropic or OpenAI. The **AI Usage**
+tile on the home page has a column for each, a bar per window (Claude's five hours and week;
+ChatGPT's as your plan has them, five hours and a week on Plus, a month on Free) with how full it
+is and when it resets, orange from 80% and red at the limit; a line atop the Claude Code and
+ChatGPT pages says the same ("5h 42% · resets 4:10 PM · Week 18%"). Claude's come from the
+Claude app's own record of them (`~/Library/Application Support/Claude/plan-usage-history.json`),
+which it updates every 15 minutes while it's open. That record has no reset times, so Islet
+works them out from it: a five-hour window starts with the first use after it last emptied or
+reset (a fall in the figure once the window before could have run out, not the point or two it
+can dip within one), so it resets at the latest five hours after the first sample to show it in
+use, shown as "about 4:10 PM", and the week likewise where the record goes back far enough to
+tell. Once the app hasn't
+updated it for 20 minutes Claude's column is dimmed and says how old it is ("as of 25 min ago").
+Quick Ask's runs of Claude carry the exact numbers and resets, which win while they're newer.
+The record is the Claude app's own, private to it: only its present format is read, and
+anything else shows nothing. ChatGPT's come from what Codex notes after each reply in the
+thread's rollout file: the plan, each window's use, length and exact reset, and the credits.
+Only those lines are read, never the conversation, from the chats the hooks name and the
+threads Codex last updated (its `state_5.sqlite`, read-only, by path and time alone, whether or
+not Codex is open), and the newest reading is the one whose reply is newest, whatever file it is
+in; it stays until a newer one comes. Codex notes nothing between replies, so a window past its
+reset shows as reset. A banner warns when a window
+reaches 80% ("Claude 5-hour limit at 80% · resets about 4:10 PM") and again at 95%, once for
+each window until it resets, and another says when the limit is reached; several due at once
+share one banner, and a click opens the agent's page, or the home page where it has none. They go through Show in Islet, so a Focus
+quiets the warnings (not the limit) and Presentation Mode holds them back. From 80% the
+agent's mark beside the notch sits in an orange ring as full as its fullest window, and at the
+limit the time it lifts takes the place of the turn's ("limit · 4:10"), ring or no ring. For Claude, Claude
+Code's StopFailure hook says when a turn is turned away at the limit (see [Claude Code
+hooks](#claude-code-hooks)). Settings → Activities → Claude Code and ChatGPT each have Show
+usage limits, Warn at 80% and 95% and Usage ring in the compact island, and say what was last
+read. Nothing polls: Islet looks again when the Claude app's folder or Codex's changes, or a
+chat moves on, and keeps one timer for the next reset.
+
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
 bubble beside the island, unless a Claude Code, ChatGPT or Gemini session is waiting for you. macOS has
@@ -980,7 +1015,9 @@ installed Settings leaves those hooks out of what it copies.
     "TaskCompleted": [{ "hooks": [{ "type": "command", "timeout": 10,
       "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" task" }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "timeout": 10,
-      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" end" }] }]
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" end" }] }],
+    "StopFailure": [{ "hooks": [{ "type": "command", "timeout": 10,
+      "command": "bash \"$HOME/.claude/hooks/islet-notify.sh\" failure" }] }]
   }
 }
 ```
@@ -990,7 +1027,10 @@ The PermissionRequest hook names the script by its whole path, your home folder'
 functions from the environment Claude Code was started in; its long timeout is how long the
 island may wait for your answer. Each hook hands the script its kind of event. SessionStart and
 SessionEnd make and delete the session's file, UserPromptSubmit marks it working, Notification says when Claude needs your
-permission or an answer, and Stop marks it done. PermissionRequest notes each permission asked
+permission or an answer, and Stop marks it done. StopFailure comes instead of Stop when a turn
+ends in an error; one turned away at your plan's usage limit tells Islet
+(`islet://claudeCode/usage-limit`), which puts up the limit's banner with when it lifts where
+the Claude app's record can tell which window it was, and the script does nothing else with it. PermissionRequest notes each permission asked
 (the tool, the agent that asked, and for a command a fingerprint, never the command); it prints
 nothing, so the asking stays Claude Code's, unless you answer it in the island
 ([Approving from the island](#approving-from-the-island)); the session shows "Needs permission" only once

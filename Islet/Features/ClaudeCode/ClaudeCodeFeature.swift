@@ -25,6 +25,10 @@ import SwiftUI
 /// A reply finishing in the session the Claude app shows, while it is in front, puts up
 /// no Done banner unless Settings asks for one (`ClaudeDoneOnScreen`).
 ///
+/// Claude's usage limits show atop the page, on the AI Usage tile and from 80% round the
+/// mark (`UsageCenter`), from the Claude app's own record of them; the StopFailure hook
+/// says when a turn was turned away at the limit (`islet://claudeCode/usage-limit`).
+///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead. There it gives way to the Sound Mixer, the other
 /// background activity, but for while a session is waiting on the person.
@@ -35,6 +39,7 @@ final class ClaudeCodeFeature: Feature {
     let symbol = "sparkle"
     let summary = "Claude Code sessions beside the notch while they work, wait for you or work in the background."
     var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 70) }
+    var sharedHomeTile: HomeTileInfo? { UsageCenter.tileInfo }
 
     /// How long a preview's made-up sessions show.
     static let previewLength: TimeInterval = 12
@@ -44,11 +49,13 @@ final class ClaudeCodeFeature: Feature {
     /// Where permissions asked are answered from the island; `nil` leaves them to
     /// Claude Code, as in tests.
     let approvals: ApprovalCenter?
+    /// Claude's usage limits.
+    let usage: UsageCenter
     private let clock: () -> Date
     private let openHost: @MainActor (ClaudeSessionRecord) -> Bool
     private let look: @MainActor (_ bundleID: String) -> ChatScreenLook
     private let appSessions: URL
-    private lazy var activity = ClaudeCodeActivity(model: model, approvals: approvals) { [weak self] session in
+    private lazy var activity = ClaudeCodeActivity(model: model, approvals: approvals, usage: usage) { [weak self] session in
         self?.open(session)
     }
 
@@ -56,19 +63,22 @@ final class ClaudeCodeFeature: Feature {
     private var published: ClaudeCodeActivity.Published?
     private var previewWork: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
+    private var usageObserver: NSObjectProtocol?
 
     /// Tests give a monitor on a folder of their own, a clock, a stand-in for bringing
-    /// an app forward, their own look at the screen and the Claude app's sessions; the
-    /// app gives the shared approvals.
+    /// an app forward, their own look at the screen, the Claude app's sessions and their
+    /// own usage; the app gives the shared approvals.
     init(
         monitor: ClaudeSessionMonitor? = nil,
         clock: @escaping () -> Date = Date.init,
         openHost: @escaping @MainActor (ClaudeSessionRecord) -> Bool = ClaudeHostApps.open,
         look: @escaping @MainActor (_ bundleID: String) -> ChatScreenLook = { AppInFront.shared.look(for: $0) },
         appSessions: URL = ClaudeAppSessions.folder,
-        approvals: ApprovalCenter? = nil
+        approvals: ApprovalCenter? = nil,
+        usage: UsageCenter? = nil
     ) {
         self.monitor = monitor ?? ClaudeSessionMonitor(now: clock)
+        self.usage = usage ?? .shared
         self.clock = clock
         self.openHost = openHost
         self.look = look
@@ -90,7 +100,14 @@ final class ClaudeCodeFeature: Feature {
                 self?.sync()
             }
         }
+        // The usage line and the limit change the page's height and the right side's width.
+        usageObserver = NotificationCenter.default.addObserver(
+            forName: UsageCenter.didChange, object: usage, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sync() }
+        }
         monitor.start()
+        usage.start(.claude)
         if let approvals {
             approvals.claudeRecords = { [weak monitor] in monitor?.snapshot.records ?? [] }
             observeApprovals()
@@ -102,6 +119,9 @@ final class ClaudeCodeFeature: Feature {
         isRunning = false
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
+        if let usageObserver { NotificationCenter.default.removeObserver(usageObserver) }
+        usageObserver = nil
+        usage.stop(.claude)
         monitor.stop()
         updateApprovals()
         model.update([], lastHeard: model.lastHeard)
@@ -145,6 +165,14 @@ final class ClaudeCodeFeature: Feature {
 
     func settingsView() -> AnyView? {
         AnyView(ClaudeCodeSettingsView(model: model))
+    }
+
+    /// `islet://claudeCode/usage-limit`, from the StopFailure hook: a turn was turned
+    /// away at the usage limit.
+    func handle(_ url: URL) -> Bool {
+        guard url.path().lowercased() == "/usage-limit" else { return false }
+        if isRunning { usage.claudeLimitReached() }
+        return true
     }
 
     /// Made-up sessions, not the person's, for twelve seconds. Clicking one does nothing.
@@ -235,6 +263,7 @@ final class ClaudeCodeActivity: IslandActivity {
         var expanded: CGFloat
         var rank: Int
         var priority: ActivityPriority
+        var atLimit = false
     }
 
     let id = "claudeCode"
@@ -254,11 +283,14 @@ final class ClaudeCodeActivity: IslandActivity {
     var personal: PersonalContent? { .messages }
     let model: ClaudeCodeModel
     let approvals: ApprovalCenter?
+    let usage: UsageCenter?
     let open: (ClaudeSession) -> Void
 
-    init(model: ClaudeCodeModel, approvals: ApprovalCenter?, open: @escaping (ClaudeSession) -> Void) {
+    init(model: ClaudeCodeModel, approvals: ApprovalCenter?, usage: UsageCenter? = nil,
+         open: @escaping (ClaudeSession) -> Void) {
         self.model = model
         self.approvals = approvals
+        self.usage = usage
         self.open = open
     }
 
@@ -266,9 +298,18 @@ final class ClaudeCodeActivity: IslandActivity {
         Published(expanded: ClaudeCodeLayout.pageHeight(for: model.shown, showsText: ClaudeCodePrefs.showsPrompt,
                                                         approval: approval,
                                                         waiting: approvals?.waiting(for: .claude).count ?? 0,
-                                                        isPrivate: approvals?.isPrivate ?? false),
-                  rank: rank, priority: priority)
+                                                        isPrivate: approvals?.isPrivate ?? false,
+                                                        header: usageHeader),
+                  rank: rank, priority: priority, atLimit: atLimit)
     }
+
+    /// The usage line atop the page, while it shows.
+    private var usageHeader: CGFloat {
+        !model.isPreviewing && usage?.status(.claude) != nil ? UsageLayout.lineHeight : 0
+    }
+
+    /// At the usage limit, when it lifts takes the right of the notch.
+    private var atLimit: Bool { !model.isPreviewing && usage?.compact(.claude).atLimit == true }
 
     /// Claude Code's front request, while one is on show and no preview runs.
     var approval: ApprovalItem? {
@@ -282,13 +323,13 @@ final class ClaudeCodeActivity: IslandActivity {
     /// Behind the Sound Mixer for the bubble while sessions work, so a prompt does not
     /// push it out each time; ahead of it while one waits on you, so the hand shows.
     var rank: Int { model.needsYou || approval != nil ? 1 : -1 }
-    var compactTrailingWidth: CGFloat? { ClaudeCodeLayout.trailingWidth }
+    var compactTrailingWidth: CGFloat? { atLimit && !asking ? UsageLayout.limitTrailingWidth : ClaudeCodeLayout.trailingWidth }
     var expandedHeight: CGFloat { published.expanded }
 
-    func compactLeading() -> AnyView { AnyView(ClaudeCodeCompactLeading(model: model, approvals: approvals)) }
-    func compactTrailing() -> AnyView { AnyView(ClaudeCodeCompactTrailing(model: model, approvals: approvals)) }
+    func compactLeading() -> AnyView { AnyView(ClaudeCodeCompactLeading(model: model, approvals: approvals, usage: usage)) }
+    func compactTrailing() -> AnyView { AnyView(ClaudeCodeCompactTrailing(model: model, approvals: approvals, usage: usage)) }
     func minimal() -> AnyView { AnyView(ClaudeCodeMinimal(model: model, approvals: approvals)) }
-    func expanded() -> AnyView { AnyView(ClaudeCodeExpanded(model: model, approvals: approvals, open: open)) }
+    func expanded() -> AnyView { AnyView(ClaudeCodeExpanded(model: model, approvals: approvals, usage: usage, open: open)) }
 }
 
 /// The feature's preference keys. Unset keys read as their defaults, the same ones the
@@ -374,10 +415,11 @@ enum ClaudeCodeHooks {
         ("SubagentStop", "subagent", false),
         ("TaskCompleted", "task", false),
         ("SessionEnd", "end", false),
+        ("StopFailure", "failure", false),
     ]
 
     /// The kinds an older copy of the script does not know.
-    static let newerKinds: Set<String> = ["permission", "tool"]
+    static let newerKinds: Set<String> = ["permission", "tool", "failure"]
 
     /// Two lines an event, short enough to read in the README.
     static var settingsJSON: String { settingsJSON(olderScript: false) }

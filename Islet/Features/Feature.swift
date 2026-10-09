@@ -40,6 +40,9 @@ protocol Feature: AnyObject {
     /// `HomeWidget` is published under: listed to arrange (in Settings, and hidden ones
     /// in the island) whether or not it is showing.
     var homeTile: HomeTileInfo? { get }
+    /// A tile the feature shares with others, listed once while any of them is running:
+    /// AI Usage, which Claude Code and ChatGPT both fill.
+    var sharedHomeTile: HomeTileInfo? { get }
     /// The live activity the feature puts in the island, if it has one, with the id its
     /// `IslandActivity` is published under: listed in Settings to put in the order the
     /// island takes them in, whether or not it is running.
@@ -53,6 +56,7 @@ extension Feature {
     var previews: [FeaturePreview] { [] }
     func handle(_ url: URL) -> Bool { false }
     var homeTile: HomeTileInfo? { nil }
+    var sharedHomeTile: HomeTileInfo? { nil }
     var islandActivity: IslandActivityInfo? { nil }
 }
 
@@ -149,7 +153,9 @@ final class FeatureRegistry {
         // The home page is arranged from the running features' tiles. Set only when they
         // change: this runs on every change to the defaults, arranging included.
         let arrangement = ActivityCenter.shared.homeArrangement
-        let tiles = features.filter { running.contains($0.id) }.compactMap(\.homeTile)
+        let on = features.filter { running.contains($0.id) }
+        var shared = Set<String>()
+        let tiles = on.compactMap(\.homeTile) + on.compactMap(\.sharedHomeTile).filter { shared.insert($0.id).inserted }
         if arrangement.tiles != tiles { arrangement.tiles = tiles }
         // And the island's order from their live activities, likewise.
         let order = ActivityCenter.shared.islandArrangement

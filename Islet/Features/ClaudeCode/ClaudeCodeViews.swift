@@ -100,9 +100,10 @@ enum ClaudeCodeLayout {
         return rows + CGFloat(sessions.count - 1) * sessionSpacing
     }
 
-    /// The most the rows take before they scroll. The little room below rows that fit
-    /// gives way before they do; rows that scroll end in their fade instead.
-    static var listLimit: CGFloat { maxPageHeight - topInset }
+    /// The most the rows take before they scroll, below the usage line where it shows
+    /// (`header` tall). The little room below rows that fit gives way before they do;
+    /// rows that scroll end in their fade instead.
+    static func listLimit(header: CGFloat = 0) -> CGFloat { maxPageHeight - topInset - header }
 
     /// Where each line of the rows begins, from the top of the list, in the order the
     /// rows show them: each session's title and what was asked, then its tasks' lines.
@@ -134,10 +135,11 @@ enum ClaudeCodeLayout {
 
     /// How much of the rows the page shows: all of them where they fit; otherwise as
     /// much as fits that ends `scrollPeek` into a line, so the fade lies across its words.
-    static func visibleHeight(_ sessions: [ClaudeSession], showsText: Bool) -> CGFloat {
+    static func visibleHeight(_ sessions: [ClaudeSession], showsText: Bool, header: CGFloat = 0) -> CGFloat {
         let list = listHeight(sessions, showsText: showsText)
-        guard list > listLimit else { return list }
-        return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= listLimit } ?? listLimit
+        let limit = listLimit(header: header)
+        guard list > limit else { return list }
+        return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= limit } ?? limit
     }
 
     /// The page's height with an approval card above the rows, the rows given what is
@@ -145,17 +147,19 @@ enum ClaudeCodeLayout {
     static let maxApprovalPageHeight: CGFloat = maxPageHeight
 
     static func pageHeight(for sessions: [ClaudeSession], showsText: Bool, approval: ApprovalItem?, waiting: Int = 0,
-                           isPrivate: Bool = false) -> CGFloat {
-        guard let approval else { return pageHeight(for: sessions, showsText: showsText) }
+                           isPrivate: Bool = false, header: CGFloat = 0) -> CGFloat {
+        guard let approval else { return pageHeight(for: sessions, showsText: showsText, header: header) }
         let block = ApprovalLayout.height(for: approval, waiting: waiting, isPrivate: isPrivate)
-        guard !sessions.isEmpty else { return topInset + block + bottomInset }
-        return min(topInset + block + pageHeight(for: sessions, showsText: showsText), maxApprovalPageHeight)
+        guard !sessions.isEmpty else { return header + topInset + block + bottomInset }
+        return min(header + topInset + block + pageHeight(for: sessions, showsText: showsText), maxApprovalPageHeight)
     }
 
-    static func pageHeight(for sessions: [ClaudeSession], showsText: Bool) -> CGFloat {
+    /// The page's height, the usage line atop it where it shows (`header` tall).
+    static func pageHeight(for sessions: [ClaudeSession], showsText: Bool, header: CGFloat = 0) -> CGFloat {
         let list = listHeight(sessions, showsText: showsText)
-        guard list > listLimit else { return min(topInset + list + bottomInset, maxPageHeight) }
-        return topInset + visibleHeight(sessions, showsText: showsText)
+        let limit = listLimit(header: header)
+        guard list > limit else { return min(header + topInset + list + bottomInset, maxPageHeight) }
+        return header + topInset + visibleHeight(sessions, showsText: showsText, header: header)
     }
 }
 
@@ -549,10 +553,11 @@ struct ClaudeProgressBar: View {
 
 // MARK: - Compact
 
-/// Left of the notch: the mark.
+/// Left of the notch: the mark, in a ring from 80% of a usage limit.
 struct ClaudeCodeCompactLeading: View {
     let model: ClaudeCodeModel
     var approvals: ApprovalCenter? = nil
+    var usage: UsageCenter? = nil
 
     var body: some View {
         if let approvals, !model.isPreviewing, approvals.front(for: .claude) != nil {
@@ -563,22 +568,27 @@ struct ClaudeCodeCompactLeading: View {
     }
 
     private var usual: some View {
-        ClaudeCodeMarkView(mark: model.mark, pointSize: ClaudeCodeLayout.compactSymbol)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        UsageRingMark(usage: usage?.compact(.claude) ?? CompactUsage()) {
+            ClaudeCodeMarkView(mark: model.mark, pointSize: ClaudeCodeLayout.compactSymbol)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 /// Right of the notch: how long the turn on show has been going; or while workflows or
 /// background agents run, a ring filling as the workflows get on, with how many there
 /// are beside it when there are several; or where no workflow's files say how far it
-/// has got, how many beside a spinner.
+/// has got, how many beside a spinner. At the usage limit, when it lifts in their place.
 struct ClaudeCodeCompactTrailing: View {
     let model: ClaudeCodeModel
     var approvals: ApprovalCenter? = nil
+    var usage: UsageCenter? = nil
 
     var body: some View {
         if let approvals, !model.isPreviewing, approvals.front(for: .claude) != nil {
             ApprovalCompactTrailing(center: approvals, agent: .claude)
+        } else if let usage, !model.isPreviewing, usage.compact(.claude).atLimit {
+            UsageLimitTrailing(usage: usage.compact(.claude), now: usage.now)
         } else {
             usual
         }
@@ -661,11 +671,12 @@ struct ClaudeCodeMinimal: View {
 
 // MARK: - Expanded
 
-/// Opened: a row per session, those waiting on you first. Clicking one brings forward
-/// the app it runs in.
+/// Opened: a row per session, those waiting on you first, under a line of Claude's
+/// usage limits while they show. Clicking a row brings forward the app it runs in.
 struct ClaudeCodeExpanded: View {
     let model: ClaudeCodeModel
     var approvals: ApprovalCenter? = nil
+    var usage: UsageCenter? = nil
     let open: (ClaudeSession) -> Void
     @AppStorage(ClaudeCodePrefs.showPrompt) private var showsText = true
     /// How deep the fade at the head of the rows is: as far as they are scrolled down,
@@ -675,6 +686,16 @@ struct ClaudeCodeExpanded: View {
     private static let listSpace = "claudeCodeList"
 
     var body: some View {
+        let status = model.isPreviewing ? nil : usage?.status(.claude)
+        VStack(spacing: 0) {
+            if let status { UsageLine(status: status) }
+            page(header: status == nil ? 0 : UsageLayout.lineHeight)
+        }
+    }
+
+    /// The page below the usage line, which takes `header` of its height.
+    @ViewBuilder
+    private func page(header: CGFloat) -> some View {
         if let approvals, !model.isPreviewing, let card = approvals.card(for: .claude) {
             // The request above the rows, which get what room is left.
             let block = ApprovalLayout.height(for: card.item, waiting: approvals.waiting(for: .claude).count,
@@ -692,19 +713,21 @@ struct ClaudeCodeExpanded: View {
                 .frame(height: block, alignment: .top)
                 .padding(.top, ClaudeCodeLayout.topInset)
                 if !model.shown.isEmpty {
-                    list.frame(maxHeight: max(0, ClaudeCodeLayout.maxApprovalPageHeight - block - ClaudeCodeLayout.topInset * 2))
+                    list(header: header)
+                        .frame(maxHeight: max(0, ClaudeCodeLayout.maxApprovalPageHeight - header - block
+                                                 - ClaudeCodeLayout.topInset * 2))
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)
         } else {
-            list
+            list(header: header)
         }
     }
 
     @ViewBuilder
-    private var list: some View {
+    private func list(header: CGFloat) -> some View {
         let sessions = model.shown
-        let height = ClaudeCodeLayout.visibleHeight(sessions, showsText: showsText)
+        let height = ClaudeCodeLayout.visibleHeight(sessions, showsText: showsText, header: header)
         // The rows' heights are worked out line by line, each line a fixed height, so
         // the sum says whether they overflow. Were it ever short, the rows would still
         // scroll, being in a scroll view at their own heights; only the fade would be
@@ -1130,6 +1153,8 @@ struct ClaudeCodeSettingsView: View {
             Text("Skip Done when the chat is on screen")
             Text("No Done banner when Claude finishes in the session the Claude app is showing in front; its row still updates. The app says which session it last showed, so one you've left for a chat elsewhere in the app still counts. Sessions in a terminal or an editor always get one.")
         }
+
+        UsageSettingsRows(agent: .claude)
 
         LabeledContent {
             Button(copied ? "Copied" : "Copy Hooks") {

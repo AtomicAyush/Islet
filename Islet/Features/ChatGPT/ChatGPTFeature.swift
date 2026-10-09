@@ -31,6 +31,10 @@ import SwiftUI
 /// off, or with nothing to judge by, it does as the hook did before it left this to
 /// Islet: no reply banner while the app is in front.
 ///
+/// ChatGPT's usage limits show atop the page, on the AI Usage tile and from 80% round the
+/// mark (`UsageCenter`), from what Codex notes after each reply; the sessions' files say
+/// when to look again.
+///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead, as Claude Code does. There it gives way to the Sound
 /// Mixer, but for while a session is waiting on the person.
@@ -41,6 +45,7 @@ final class ChatGPTFeature: Feature {
     let symbol = "text.bubble"
     let summary = "What ChatGPT and Codex are doing, from their hooks."
     var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 75) }
+    var sharedHomeTile: HomeTileInfo? { UsageCenter.tileInfo }
 
     /// How long a preview's made-up sessions show.
     static let previewLength: TimeInterval = 12
@@ -50,13 +55,15 @@ final class ChatGPTFeature: Feature {
     /// Where permissions asked are answered from the island; `nil` leaves them to
     /// ChatGPT, as in tests.
     let approvals: ApprovalCenter?
+    /// ChatGPT's usage limits.
+    let usage: UsageCenter
     private let clock: () -> Date
     private let openHost: @MainActor (_ bundleID: String, _ session: String) -> Bool
     private let look: @MainActor (_ bundleID: String) -> ChatScreenLook
     /// The chat Islet last put the person at in the ChatGPT app, from a click on its row,
     /// its banner or Answer in ChatGPT, and when: the one move between chats Islet sees.
     private var openedChat: ChatGPTDoneOnScreen.Visit?
-    private lazy var activity = ChatGPTActivity(model: model, approvals: approvals) { [weak self] session in
+    private lazy var activity = ChatGPTActivity(model: model, approvals: approvals, usage: usage) { [weak self] session in
         self?.open(session)
     }
 
@@ -64,18 +71,21 @@ final class ChatGPTFeature: Feature {
     private var published: ChatGPTActivity.Published?
     private var previewWork: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
+    private var usageObserver: NSObjectProtocol?
 
     /// Tests give a monitor on a folder of their own, a clock, a stand-in for bringing
-    /// an app forward and their own look at the screen; the app gives the shared
-    /// approvals.
+    /// an app forward, their own look at the screen and their own usage; the app gives
+    /// the shared approvals.
     init(
         monitor: ChatGPTSessionMonitor? = nil,
         clock: @escaping () -> Date = Date.init,
         openHost: @escaping @MainActor (_ bundleID: String, _ session: String) -> Bool = ChatGPTHostApps.open,
         look: @escaping @MainActor (_ bundleID: String) -> ChatScreenLook = { AppInFront.shared.look(for: $0) },
-        approvals: ApprovalCenter? = nil
+        approvals: ApprovalCenter? = nil,
+        usage: UsageCenter? = nil
     ) {
         self.monitor = monitor ?? ChatGPTSessionMonitor(now: clock)
+        self.usage = usage ?? .shared
         self.clock = clock
         self.openHost = openHost
         self.look = look
@@ -96,7 +106,14 @@ final class ChatGPTFeature: Feature {
                 self?.sync()
             }
         }
+        // The usage line and the limit change the page's height and the right side's width.
+        usageObserver = NotificationCenter.default.addObserver(
+            forName: UsageCenter.didChange, object: usage, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sync() }
+        }
         monitor.start()
+        usage.start(.chatGPT)
         if let approvals {
             approvals.chatGPTRecords = { [weak monitor] in monitor?.snapshot.records ?? [] }
             observeApprovals()
@@ -108,6 +125,9 @@ final class ChatGPTFeature: Feature {
         isRunning = false
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
+        if let usageObserver { NotificationCenter.default.removeObserver(usageObserver) }
+        usageObserver = nil
+        usage.stop(.chatGPT)
         monitor.stop()
         updateApprovals()
         model.update([], lastHeard: model.lastHeard)
@@ -176,6 +196,8 @@ final class ChatGPTFeature: Feature {
     // MARK: Island
 
     private func received(_ snapshot: ChatGPTSessionSnapshot) {
+        // A chat moving on may have brought a new reading of the limits.
+        if isRunning { usage.chatGPTSessions(snapshot.records) }
         var snapshot = snapshot
         if let approvals { snapshot.records = snapshot.records.map { approvals.settle($0) } }
         let sessions = ChatGPTLiveness.sessions(snapshot, now: clock())
@@ -308,6 +330,7 @@ final class ChatGPTActivity: IslandActivity {
         var expanded: CGFloat
         var rank: Int
         var priority: ActivityPriority
+        var atLimit = false
     }
 
     let id = "chatGPT"
@@ -344,11 +367,14 @@ final class ChatGPTActivity: IslandActivity {
     var personal: PersonalContent? { .messages }
     let model: ChatGPTModel
     let approvals: ApprovalCenter?
+    let usage: UsageCenter?
     let open: (ChatGPTSession) -> Void
 
-    init(model: ChatGPTModel, approvals: ApprovalCenter? = nil, open: @escaping (ChatGPTSession) -> Void) {
+    init(model: ChatGPTModel, approvals: ApprovalCenter? = nil, usage: UsageCenter? = nil,
+         open: @escaping (ChatGPTSession) -> Void) {
         self.model = model
         self.approvals = approvals
+        self.usage = usage
         self.open = open
     }
 
@@ -356,9 +382,18 @@ final class ChatGPTActivity: IslandActivity {
         Published(expanded: ChatGPTLayout.pageHeight(for: model.shown, showsText: ChatGPTPrefs.showsPrompt,
                                                         approval: approval,
                                                         waiting: approvals?.waiting(for: .chatgpt).count ?? 0,
-                                                        isPrivate: approvals?.isPrivate ?? false),
-                  rank: rank, priority: priority)
+                                                        isPrivate: approvals?.isPrivate ?? false,
+                                                        header: usageHeader),
+                  rank: rank, priority: priority, atLimit: atLimit)
     }
+
+    /// The usage line atop the page, while it shows.
+    private var usageHeader: CGFloat {
+        !model.isPreviewing && usage?.status(.chatGPT) != nil ? UsageLayout.lineHeight : 0
+    }
+
+    /// At the usage limit, when it lifts takes the right of the notch.
+    private var atLimit: Bool { !model.isPreviewing && usage?.compact(.chatGPT).atLimit == true }
 
     /// ChatGPT's front request, while one is on show and no preview runs.
     var approval: ApprovalItem? {
@@ -372,13 +407,13 @@ final class ChatGPTActivity: IslandActivity {
     /// Behind the Sound Mixer for the bubble while sessions work, so a prompt does not
     /// push it out each time; ahead of it while one waits on you, so the hand shows.
     var rank: Int { model.needsYou || approval != nil ? 1 : -1 }
-    var compactTrailingWidth: CGFloat? { ChatGPTLayout.trailingWidth }
+    var compactTrailingWidth: CGFloat? { atLimit && !asking ? UsageLayout.limitTrailingWidth : ChatGPTLayout.trailingWidth }
     var expandedHeight: CGFloat { published.expanded }
 
-    func compactLeading() -> AnyView { AnyView(ChatGPTCompactLeading(model: model, approvals: approvals)) }
-    func compactTrailing() -> AnyView { AnyView(ChatGPTCompactTrailing(model: model, approvals: approvals)) }
+    func compactLeading() -> AnyView { AnyView(ChatGPTCompactLeading(model: model, approvals: approvals, usage: usage)) }
+    func compactTrailing() -> AnyView { AnyView(ChatGPTCompactTrailing(model: model, approvals: approvals, usage: usage)) }
     func minimal() -> AnyView { AnyView(ChatGPTMinimal(model: model, approvals: approvals)) }
-    func expanded() -> AnyView { AnyView(ChatGPTExpanded(model: model, approvals: approvals, open: open)) }
+    func expanded() -> AnyView { AnyView(ChatGPTExpanded(model: model, approvals: approvals, usage: usage, open: open)) }
 }
 
 /// Bringing a session's app forward. The ChatGPT app opens the chat itself from its own

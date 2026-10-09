@@ -1,0 +1,397 @@
+import SwiftUI
+
+enum UsageLayout {
+    /// The line atop an activity's page.
+    static let lineHeight: CGFloat = 18
+    /// Right of the notch at the limit: "limit · 12:45" at full size.
+    static let limitTrailingWidth: CGFloat = 76
+    /// The ring round a mark in the compact island, and its line.
+    static let ringSize: CGFloat = 21
+    static let ringWidth: CGFloat = 2
+    /// The mark's size inside the ring, so the two do not touch.
+    static let ringMark: CGFloat = 0.72
+    /// A bar on the tile.
+    static let barHeight: CGFloat = 4
+    static let barTrack = IslandBackdrop.track(0.16)
+}
+
+/// The colours a level is drawn in: the agent's own below 80%, orange from 80%, red at
+/// the limit. They never take the accent's place but for the agent's own.
+enum UsageColours {
+    static func hue(_ percent: Double, atLimit: Bool = false) -> SystemHue? {
+        if atLimit || percent >= 100 { return .failure }
+        if percent >= CompactUsage.ringFrom { return .warning }
+        return nil
+    }
+
+    static func tint(_ agent: UsageAgent) -> FeatureTint {
+        switch agent {
+        case .claude: .claudeCode
+        case .chatGPT: .chatGPT
+        }
+    }
+
+    /// A bar's fill, on its track.
+    static func fill(_ percent: Double, agent: UsageAgent) -> IslandStyle {
+        hue(percent).map { .islandHue($0, on: UsageLayout.barTrack) } ?? .islandAccent(tint(agent), on: UsageLayout.barTrack)
+    }
+
+    /// A percentage's words, on `backdrop`; `dim` below 1 for an old figure among newer.
+    static func text(_ percent: Double, on backdrop: IslandBackdrop = .island, dim: Double = 1) -> IslandStyle {
+        guard dim >= 1 else { return .islandText(dim, on: backdrop) }
+        return hue(percent).map { .islandHueText($0, on: backdrop) } ?? .islandText(1, on: backdrop)
+    }
+}
+
+// MARK: - Home
+
+/// The AI Usage tile: a column for each agent with a reading, its windows' bars, how
+/// full each is and when it resets; the plan or how old the reading is beside its name.
+/// A dimmed column is a Claude reading the app has not renewed for 20 minutes, a dimmed
+/// window an old figure beside newer ones or the limit. The window at its limit says so
+/// in red, or "Limit reached" heads the column where none can be told to be.
+struct UsageHomeTile: View {
+    let center: UsageCenter
+
+    var body: some View {
+        let statuses = UsageAgent.allCases.compactMap { center.status($0) }
+        HStack(alignment: .top, spacing: 14) {
+            ForEach(statuses, id: \.agent) { status in
+                UsageColumn(status: status)
+            }
+        }
+    }
+}
+
+/// One agent on the tile.
+struct UsageColumn: View {
+    let status: UsageStatus
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(status.agent.name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.islandText(0.9, on: .homeTile))
+                    .fixedSize()
+                Spacer(minLength: 2)
+                // Only where it fits whole: the name comes first.
+                if let detail {
+                    ViewThatFits(in: .horizontal) {
+                        UsageAgeText(status: status, prefix: "", fallback: detail)
+                            .fixedSize()
+                        Color.clear.frame(width: 0, height: 0)
+                    }
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.islandText(0.45, on: .homeTile))
+                }
+            }
+            .lineLimit(1)
+            if status.showsLimit, status.shownLimitWindow == nil {
+                Text("Limit reached")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.islandHueText(.failure, on: .homeTile))
+            }
+            ForEach(Array(status.windows.enumerated()), id: \.offset) { _, window in
+                UsageWindowRow(status: status, window: window,
+                               atLimit: window.window.span == status.shownLimitWindow?.window.span)
+                    .opacity(status.dimsAlone(window) ? 0.5 : 1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(status.isDimmed ? 0.5 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.agent.name + ": " + UsageText.line(status))
+    }
+
+    /// Beside the name: how old the reading is where that is worth saying, or else the
+    /// plan.
+    private var detail: String? {
+        status.showsAge ? "" : UsageText.plan(status.reading.plan)
+    }
+}
+
+/// A window on the tile: its name and how full it is, a bar, and when it resets. At the
+/// limit, "Limit" and a full bar in red, whatever the figure last said.
+private struct UsageWindowRow: View {
+    let status: UsageStatus
+    let window: UsageStatus.Window
+    var atLimit = false
+
+    var body: some View {
+        let percent = atLimit ? 100 : window.percent
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(UsageText.shortName(window.window))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.islandText(0.55, on: .homeTile))
+                Spacer(minLength: 2)
+                Text(atLimit ? "Limit" : window.isReset ? "0%" : UsageText.percent(percent))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(UsageColours.text(percent, on: .homeTile))
+            }
+            UsageBar(percent: percent, agent: status.agent)
+                .frame(height: UsageLayout.barHeight)
+            Text(UsageText.resetShort(window, now: status.now) ?? " ")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.islandText(0.45, on: .homeTile))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+    }
+}
+
+/// How full a window is, as a thin bar in the agent's colour, orange from 80%, red at
+/// the limit.
+struct UsageBar: View {
+    let percent: Double
+    let agent: UsageAgent
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.islandSurface(0.16))
+                if percent > 0 {
+                    Capsule().fill(UsageColours.fill(percent, agent: agent))
+                        .frame(width: max(proxy.size.height, proxy.size.width * min(1, percent / 100)))
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.4), value: percent)
+    }
+}
+
+/// How old a reading is, "25 min ago", redrawn each minute while it shows, but not
+/// while the island saves energy; `fallback` where it is not old enough to say.
+struct UsageAgeText: View {
+    let status: UsageStatus
+    var prefix = "as of "
+    var fallback = ""
+
+    var body: some View {
+        if EnergySaver.shared.isSaving || !status.showsAge {
+            Text(text(at: status.now))
+        } else {
+            TimelineView(.everyMinute) { context in
+                Text(text(at: max(context.date, status.now)))
+            }
+        }
+    }
+
+    private func text(at date: Date) -> String {
+        guard status.showsAge else { return fallback }
+        return prefix + UsageText.age(date.timeIntervalSince(status.reading.measured))
+    }
+}
+
+// MARK: - Pages
+
+/// The line atop an activity's page: "5h 42% · resets 4:10 PM · Week 18%", a window
+/// from 80% in orange and at the limit in red, "5h limit"; dimmed while the reading is
+/// old, a figure of it alone where only that one is, and how old said, each minute while
+/// the island does not save energy.
+struct UsageLine: View {
+    let status: UsageStatus
+
+    var body: some View {
+        if status.showsAge, !EnergySaver.shared.isSaving {
+            TimelineView(.everyMinute) { context in
+                styled(line(at: max(context.date, status.now)))
+            }
+        } else {
+            styled(line(at: status.now))
+        }
+    }
+
+    private func styled(_ line: Text) -> some View {
+        line
+            .font(.system(size: 11, weight: .medium))
+            .monospacedDigit()
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 6)
+            .frame(height: UsageLayout.lineHeight)
+            .opacity(status.isDimmed ? 0.5 : 1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(status.agent.name + " usage: " + UsageText.line(status))
+    }
+
+    /// The words as of `date`, each window's percentage in its colour.
+    private func line(at date: Date) -> Text {
+        var text = Text("")
+        var first = true
+        func add(_ part: Text) {
+            text = first ? part : text + Text(" · ").foregroundStyle(.islandText(0.35)) + part
+            first = false
+        }
+        let limit = status.shownLimitWindow
+        if status.showsLimit, limit == nil {
+            add(Text("Limit reached").foregroundStyle(.islandHueText(.failure)))
+        }
+        for (index, window) in status.windows.enumerated() {
+            // An old figure beside newer ones, or beside the limit, is dimmed alone.
+            let dim = status.dimsAlone(window) ? 0.5 : 1
+            let name = Text(UsageText.shortName(window.window) + " ").foregroundStyle(.islandText(0.55 * dim))
+            if window.isReset {
+                add(name + Text("reset").foregroundStyle(.islandText(0.75 * dim)))
+                continue
+            }
+            let atLimit = window.window.span == limit?.window.span
+            let figure = atLimit
+                ? Text("limit").foregroundStyle(.islandHueText(.failure))
+                : Text(UsageText.percent(window.percent)).foregroundStyle(UsageColours.text(window.percent, dim: dim))
+            add(name + figure)
+            if index == 0 || atLimit || window.percent >= UsageAlerts.levels[0], let reset = UsageText.reset(window, now: status.now) {
+                add(Text(reset).foregroundStyle(.islandText(0.55 * dim)))
+            }
+        }
+        if status.showsAge {
+            add(Text("as of " + UsageText.age(date.timeIntervalSince(status.reading.measured))).foregroundStyle(.islandText(0.4)))
+        }
+        return text
+    }
+}
+
+// MARK: - Compact
+
+/// An agent's mark in the compact island, inside a ring as full as its fullest window
+/// from 80%: orange, and red at the limit. Below 80% the mark as it always was.
+struct UsageRingMark<Mark: View>: View {
+    let usage: CompactUsage
+    @ViewBuilder var mark: Mark
+
+    var body: some View {
+        ZStack {
+            if let fraction = usage.ring {
+                UsageRing(fraction: fraction, atLimit: usage.atLimit)
+                    .frame(width: UsageLayout.ringSize, height: UsageLayout.ringSize)
+                    .transition(.opacity)
+            }
+            mark
+                .scaleEffect(usage.ring == nil ? 1 : UsageLayout.ringMark)
+        }
+        .animation(.easeInOut(duration: 0.35), value: usage.ring == nil)
+    }
+}
+
+struct UsageRing: View {
+    let fraction: Double
+    var atLimit = false
+
+    var body: some View {
+        let hue = UsageColours.hue(fraction * 100, atLimit: atLimit) ?? .warning
+        ZStack {
+            Circle().inset(by: UsageLayout.ringWidth / 2)
+                .stroke(.islandDecorative(0.18), lineWidth: UsageLayout.ringWidth)
+            Circle().inset(by: UsageLayout.ringWidth / 2)
+                .trim(from: 0, to: min(1, max(0.04, fraction)))
+                .stroke(.islandHue(hue), style: StrokeStyle(lineWidth: UsageLayout.ringWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .accessibilityElement()
+        .accessibilityLabel(atLimit ? "Usage limit reached" : "Usage at \(Int(fraction * 100)) percent")
+    }
+}
+
+/// Right of the notch at the limit: "limit · 4:10", when it lifts, in red; "limit"
+/// where nothing says when.
+struct UsageLimitTrailing: View {
+    let usage: CompactUsage
+    let now: Date
+
+    var body: some View {
+        Text(words)
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(.islandHueText(.failure))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.trailing, 6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+            .accessibilityLabel(usage.resets.map { "Usage limit reached, lifts at " + UsageText.time($0, now: now) }
+                                ?? "Usage limit reached")
+    }
+
+    private var words: String {
+        guard let resets = usage.resets else { return "limit" }
+        return "limit · " + UsageText.compactTime(resets, now: now)
+    }
+}
+
+// MARK: - Settings
+
+/// The usage settings in an agent's pane: whether its limits show, warn and ring the
+/// mark, and what Islet last read of them.
+struct UsageSettingsRows: View {
+    let agent: UsageAgent
+    let center: UsageCenter
+    @AppStorage private var shows: Bool
+    @AppStorage private var warns: Bool
+    @AppStorage private var ring: Bool
+
+    init(agent: UsageAgent, center: UsageCenter? = nil) {
+        self.agent = agent
+        let center = center ?? .shared
+        self.center = center
+        _shows = AppStorage(wrappedValue: true, UsagePrefs.showKey(agent), store: center.defaults)
+        _warns = AppStorage(wrappedValue: true, UsagePrefs.warnKey(agent), store: center.defaults)
+        _ring = AppStorage(wrappedValue: true, UsagePrefs.ringKey(agent), store: center.defaults)
+    }
+
+    var body: some View {
+        Toggle(isOn: $shows) {
+            Text("Show usage limits")
+            Text(summary)
+        }
+        Toggle(isOn: $warns) {
+            Text("Warn at 80% and 95%")
+            Text("A banner as a window reaches 80% of your limit, and again at 95%, once for each window until it resets. Reaching the limit always gets one, with when it lifts.")
+        }
+        .disabled(!shows)
+        Toggle(isOn: $ring) {
+            Text("Usage ring in the compact island")
+            Text("From 80%, an orange ring round the mark beside the notch, red at the limit. At the limit, when it lifts takes the place of the turn's time either way.")
+        }
+        .disabled(!shows)
+        LabeledContent(agent == .claude ? "Claude app" : "ChatGPT plan") {
+            TimelineView(.everyMinute) { context in
+                Text(source(at: context.date))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var summary: String {
+        switch agent {
+        case .claude:
+            "Your plan's 5-hour and weekly limits on the AI Usage tile and atop the opened page, from the Claude app's own record of them, which it updates every 15 minutes while it's open, and exactly whenever Quick Ask asks Claude. No sign-in of Islet's own; dimmed once the app hasn't updated them for 20 minutes."
+        case .chatGPT:
+            "Your plan's limits on the AI Usage tile and atop the opened page, as Codex notes them after each reply, with their exact resets. Nothing is read of the chats themselves; a window past its reset shows as reset."
+        }
+    }
+
+    /// "Last sample 12 min ago", "Plus · 120 credits".
+    private func source(at date: Date) -> String {
+        guard shows else { return "Not read while usage limits are off" }
+        switch agent {
+        case .claude:
+            switch center.claudeHistory {
+            case .read(let reading)?:
+                return "Last sample " + UsageText.age(date.timeIntervalSince(reading.measured))
+            case .unknownFormat?:
+                return "Its usage file is in a format Islet doesn't know"
+            case .missing?:
+                return "No usage file yet: open the Claude app"
+            case nil:
+                return "Not read yet"
+            }
+        case .chatGPT:
+            guard let reading = center.readings[.chatGPT] else { return "Not seen yet: Codex notes it after a reply" }
+            let plan = UsageText.plan(reading.plan) ?? "Unknown plan"
+            return ([plan, UsageText.credits(reading.credits), "as of " + UsageText.age(date.timeIntervalSince(reading.measured))]
+                .compactMap { $0 }).joined(separator: " · ")
+        }
+    }
+}
