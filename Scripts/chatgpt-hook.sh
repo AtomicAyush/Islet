@@ -38,6 +38,9 @@
 #   sessionId       Codex's thread id, as in the file's name
 #   project         the git repository's folder name, or its folder's; "" for a plain
 #                   chat, whose folder ChatGPT names after its prompt
+#   branch          the git branch the session's folder is on, as of its latest event, or
+#                   for a detached HEAD its commit's first seven digits; "" for none,
+#                   and for a plain chat
 #   cwd             the folder the session works in; "" for a plain chat
 #   transcriptPath  the thread's rollout file, which Codex writes as it goes: Islet
 #                   reads a turn that failed, which fires no hook, from it
@@ -541,6 +544,73 @@ case "$kind" in start|prompt) ;; *) [ -e "$ended" ] && exit 0 ;; esac
 previous=""
 [ -f "$file" ] && IFS= read -r -d '' previous < "$file"
 
+# The git branch folder $1 is on, read from the repository's own files rather than by
+# running git: the nearest .git at or above the folder (a folder, or a file naming one,
+# as a worktree's or a submodule's is), never the home folder's or one above it, and the
+# HEAD it holds. A branch checked out gives its name, a detached HEAD its commit's first
+# seven digits, and anything else none: no repository, a folder that has gone or is
+# named with a "." or ".." step, a HEAD that can't be read or says something else, as a
+# reftable repository's says (".invalid", which no branch can be named, whatever is
+# checked out; its branch is in its reftable). At most 64 folders are looked at and two
+# files read, a line of each and no more than a few hundred bytes of it. Sets branch to
+# one line of plain text, cut in the middle to at most 80 characters, and branch_short to
+# the same cut to 20 for a banner; both "" for none.
+git_branch() {
+  branch="" branch_short=""
+  local at="$1" git="" line n=0
+  local commit='^[0-9a-f]{40}([0-9a-f]{24})?$'
+  local ascii='^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/+@#,=-]+$'
+  [ "${at:0:1}" = / ] && [ "${#at}" -le 4096 ] && [ -d "$at" ] || return 0
+  # The walk takes folders off the path as spelt, which a "." or ".." step would lead
+  # astray, into a repository the folder is not in or past the home folder; doubled
+  # slashes are made single.
+  case "$at/" in */./*|*/../*) return 0 ;; esac
+  while [[ "$at" == *//* ]]; do at="${at//\/\///}"; done
+  while [ "$n" -lt 64 ]; do
+    at="${at%/}"
+    { [ -z "$at" ] || [ "$at" = "${HOME%/}" ]; } && return 0
+    if [ -e "$at/.git" ] || [ -L "$at/.git" ]; then git="$at/.git"; break; fi
+    at="${at%/*}" n=$((n + 1))
+  done
+  [ -n "$git" ] || return 0
+  # A worktree's or a submodule's .git is a file naming the folder that holds its HEAD,
+  # from where it is unless it is a full path.
+  if [ -f "$git" ]; then
+    { IFS= read -r -n 1024 line < "$git"; } 2>/dev/null
+    line="${line%$'\r'}"
+    [[ "$line" == "gitdir: "?* ]] || return 0
+    git="${line#gitdir: }"
+    [ "${git:0:1}" = / ] || git="$at/$git"
+  fi
+  # A regular file only: never a pipe or a device, which a read could wait on for ever.
+  [ -f "$git/HEAD" ] || return 0
+  line=""
+  { IFS= read -r -n 512 line < "$git/HEAD"; } 2>/dev/null
+  line="${line%$'\r'}"
+  if [[ "$line" == "ref: refs/heads/"?* ]]; then
+    branch="${line#ref: refs/heads/}"
+    # No part of a branch's name starts with ".", as a reftable's ".invalid" does.
+    [[ "/$branch" == */.* ]] && { branch=""; return 0; }
+  elif [[ "$line" =~ $commit ]]; then
+    branch="${line:0:7}"
+  else
+    return 0
+  fi
+  # Plain ASCII, as a branch's name mostly is, is kept as it is. Anything else goes
+  # through jq, which keeps only what shows as plain text on one line: no control
+  # characters, nothing invisible (zero-width spaces and joiners, the marks that reorder
+  # text, variation selectors, a blank braille pattern), no private-use characters, and
+  # white space as single spaces.
+  if ! [[ "$branch" =~ $ascii ]]; then
+    branch="$(jq -rn --arg b "$branch" '$b
+      | gsub("[\\p{Cc}\\p{Cf}\\p{Co}\\p{Cs}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\x{2800}\u034f\u115f\u1160\u17b4\u17b5\u3164\uffa0\ufffd]"; "")
+      | gsub("\\p{Zs}+"; " ") | sub("^ +"; "") | sub(" +$"; "")' 2>/dev/null)"
+  fi
+  [ "${#branch}" -gt 80 ] && branch="${branch:0:40}…${branch: -39}"
+  branch_short="$branch"
+  [ "${#branch}" -gt 20 ] && branch_short="${branch:0:10}…${branch: -9}"
+  return 0
+}
 # The project, when a session starts or is sent a prompt, or has none yet: the git
 # repository it works in, or else its folder. A plain chat in the ChatGPT app works in
 # a folder named after its prompt (~/Documents/Codex/<date>/<words>), which is neither
@@ -566,6 +636,20 @@ if [ "$kind" = start ] || [ "$kind" = prompt ] || [ -z "$previous" ]; then
       fi ;;
   esac
 fi
+# The branch, at every event, so that a checkout shows at the next: of the folder just
+# found, or of the one the session's file has. Where that can't be read without jq (a
+# folder with a quote in its name), the file's branch stands.
+branch="" branch_short="" branch_known=1
+where="$cwd"
+if [ "$known" != 1 ]; then
+  where=""
+  if [[ "$previous" =~ \"cwd\":\"([^\"\\]*)\" ]]; then
+    where="${BASH_REMATCH[1]}"
+  elif [[ "$previous" == *'"cwd":"'* ]]; then
+    branch_known=""
+  fi
+fi
+[ -n "$where" ] && git_branch "$where"
 
 # Codex's process: the hook's parent, or that shell's parent where Codex ran the hook
 # through one. Its number and age (ps's etime, [[dd-]hh:]mm:ss) are looked up when a
@@ -895,10 +979,12 @@ program='
      elif $kind == "interrupt" then "interrupted"
      else $over end) as $ended
   | (if $known == "1" then $project else ($p.project // "" | text) end) as $proj
+  | (if $branchKnown == "1" then $branch else ($p.branch // "" | text) end) as $branched
   | {
       version: 1,
       sessionId: $session,
       project: $proj,
+      branch: $branched,
       cwd: (if $known == "1" then $cwd else ($p.cwd // "" | text) end),
       # Events of an agent name its own rollout, which never holds the turn of the chat.
       transcriptPath: (if $agent == "" then ($in.transcript_path | text) else "" end
@@ -952,7 +1038,12 @@ program='
     } as $state
 
   # A banner, for the three that want you: its words, and the same as a URL query.
-  | (if $proj == "" then "" else " · " + $proj end) as $at
+  # Where the session is: the project, and the branch beside it, cut in the middle to
+  # as much as a banner has room for. Not where what is asked follows it beside the
+  # notch, which has room for only a few words.
+  | ($branched | if length > 20 then .[0:10] + "…" + .[-9:] else . end) as $branchShort
+  | (if $proj == "" or $branchShort == "" then $proj else $proj + " · " + $branchShort end) as $place
+  | (if $place == "" then "" else " · " + $place end) as $at
   | (if $kind == "stop" then
        {title: ("ChatGPT replied" + $at), subtitle: ($said | plain(120)),
         symbol: "checkmark.circle.fill", tint: "green", style: "card"}
@@ -964,7 +1055,7 @@ program='
      elif $kind == "tool-start" and $question and $w.askId == $use then
        ($in | given | if type == "object" then (.questions // []) else [] end | .[0]? // {}
         | if type == "object" then (.question // .header // "") else "" end | text | plain(90)) as $q
-       | {title: "ChatGPT has a question", subtitle: (if $q == "" then $proj else $q end),
+       | {title: "ChatGPT has a question", subtitle: (if $q == "" then $place else $q end),
           symbol: "questionmark.bubble.fill", tint: "orange", style: "card"}
      else null end) as $banner
 
@@ -973,7 +1064,10 @@ program='
        ($banner | map_values(text | one)) as $b
        | (if $session | test("^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$") then "&session=" + $session else "" end) as $named
        | (if $kind == "stop" and $named != "" then "&event=done" else "" end) as $event
-       | @sh "title=\($b.title) subtitle=\($b.subtitle) symbol=\($b.symbol) tint=\($b.tint) style=\($b.style) host=\($state.hostApp | one) query=\("title=\($b.title | @uri)&subtitle=\($b.subtitle | @uri)&symbol=\($b.symbol)&tint=\($b.tint)&style=\($b.style)&activity=chatGPT" + $named + $event)"
+       # The branch the words name, for Islet to take out when Settings asks it to.
+       | (if $branchShort != "" and ($b.title + "\n" + $b.subtitle | contains(" · " + ($branchShort | one)))
+          then "&branch=" + ($branchShort | one | @uri) else "" end) as $branchQuery
+       | @sh "title=\($b.title) subtitle=\($b.subtitle) symbol=\($b.symbol) tint=\($b.tint) style=\($b.style) host=\($state.hostApp | one) query=\("title=\($b.title | @uri)&subtitle=\($b.subtitle | @uri)&symbol=\($b.symbol)&tint=\($b.tint)&style=\($b.style)&activity=chatGPT" + $named + $event + $branchQuery)"
      end),
     (if $isTool then "" else
        {t: ($t | floor), event: $kind, session_id: $session, turn_id: $turn}
@@ -988,6 +1082,7 @@ program='
 update() { # previous
   printf '%s' "$input" | jq -rc --argjson prev "${1:-null}" --arg kind "$kind" --arg session "$session" \
     --arg known "$known" --arg project "$project" --arg cwd "$cwd" --arg host "$host" \
+    --arg branch "$branch" --arg branchKnown "$branch_known" \
     --arg pid "$pid" --arg age "$age" --arg waited "$waited" "$program" 2>/dev/null
 }
 out="$(update "$previous")"

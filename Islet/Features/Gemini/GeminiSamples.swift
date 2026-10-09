@@ -4,14 +4,14 @@ import Foundation
 /// lists, never the person's.
 enum GeminiSamples {
     private static func session(
-        _ id: String, project: String, title: String, state: GeminiSessionState, run: TimeInterval,
+        _ id: String, project: String, branch: String = "", title: String, state: GeminiSessionState, run: TimeInterval,
         since: TimeInterval? = nil, model: String = "Gemini 3 Pro", step: GeminiStep? = nil, steps: Int = 0,
         history: [GeminiHistoryEntry] = [], tasks: [(String, GeminiTaskList.Item.Status)] = [],
         ended: GeminiEnding = .none, error: String = "", waiting: GeminiWaiting? = nil,
         agents: [GeminiAgent] = [], now: Date
     ) -> GeminiSession {
         let record = GeminiSessionRecord(
-            id: "sample." + id, project: project, workspace: "", model: model, artifactDir: "",
+            id: "sample." + id, project: project, branch: branch, workspace: "", model: model, artifactDir: "",
             state: state, since: now.addingTimeInterval(-(since ?? run)), turnStarted: now.addingTimeInterval(-run),
             updated: now, ended: ended, error: error, step: step, lastStep: nil, steps: steps, history: history
         )
@@ -33,8 +33,9 @@ enum GeminiSamples {
     }
 
     static func working(now: Date) -> [GeminiSession] {
-        [session("orchard", project: "Orchard", title: "Add a dark theme to the settings screen", state: .working,
-                 run: 134, step: GeminiStep(kind: .shell, name: "npm", at: now.addingTimeInterval(-6)), steps: 11,
+        [session("orchard", project: "Orchard", branch: "dark-theme", title: "Add a dark theme to the settings screen",
+                 state: .working, run: 134, step: GeminiStep(kind: .shell, name: "npm", at: now.addingTimeInterval(-6)),
+                 steps: 11,
                  history: used([(.read, "Settings.tsx"), (.edit, "theme.ts"), (.edit, "Settings.tsx"), (.shell, "npm")]),
                  tasks: [("Find where colours are set", .completed), ("Add the dark palette", .completed),
                          ("Switch on the system setting", .inProgress), ("Check every screen", .pending)],
@@ -42,12 +43,12 @@ enum GeminiSamples {
     }
 
     static func asking(now: Date) -> [GeminiSession] {
-        [session("ledger", project: "Ledger", title: "Move the reports to the new database", state: .needsInput,
+        [session("ledger", project: "Ledger", branch: "main", title: "Move the reports to the new database", state: .needsInput,
                  run: 300, since: 24, steps: 9, waiting: .question, now: now)]
     }
 
     static func quota(now: Date) -> [GeminiSession] {
-        [session("ledger", project: "Ledger", title: "Move the reports to the new database", state: .error,
+        [session("ledger", project: "Ledger", branch: "main", title: "Move the reports to the new database", state: .error,
                  run: 420, since: 30, ended: .quota,
                  error: "Resource has been exhausted (e.g. check quota).", now: now)]
     }

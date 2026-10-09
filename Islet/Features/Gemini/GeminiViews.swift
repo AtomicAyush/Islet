@@ -94,9 +94,25 @@ enum GeminiText {
         var parts: [String] = []
         let title = title(session, showsText: showsText)
         if !record.project.isEmpty, record.project != title { parts.append(record.project) }
-        let model = oneLine(record.model)
-        if !model.isEmpty, model.lowercased() != "auto" { parts.append(model) }
+        if let model = model(session) { parts.append(model) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// The model, where Antigravity names one other than its own choice.
+    static func model(_ session: GeminiSession) -> String? {
+        let model = oneLine(session.record.model)
+        return model.isEmpty || model.lowercased() == "auto" ? nil : model
+    }
+
+    /// Where the branch goes, while Settings shows it and the hook found one: beside the
+    /// title where the title is the project, or else beside the project in the line under
+    /// it. `nil` where neither shows the project (a conversation stopped on an error says
+    /// why there instead).
+    static func branch(_ session: GeminiSession, showsText: Bool, showsBranch: Bool) -> (branch: String, inTitle: Bool)? {
+        let record = session.record
+        guard showsBranch, !record.project.isEmpty, !record.branch.isEmpty else { return nil }
+        if title(session, showsText: showsText) == record.project { return (record.branch, true) }
+        return session.state == .error ? nil : (record.branch, false)
     }
 
     /// How a conversation stands, in words.
@@ -397,6 +413,7 @@ struct GeminiExpanded: View {
     let model: GeminiModel
     let open: (GeminiSession) -> Void
     @AppStorage(GeminiPrefs.showPrompt) private var showsText = true
+    @AppStorage(GeminiPrefs.showBranch) private var showsBranch = true
 
     var body: some View {
         let sessions = model.shown
@@ -406,7 +423,7 @@ struct GeminiExpanded: View {
         ScrollView(.vertical) {
             VStack(spacing: GeminiLayout.sessionSpacing) {
                 ForEach(sessions) { session in
-                    GeminiSessionRow(session: session, showsText: showsText) { open(session) }
+                    GeminiSessionRow(session: session, showsText: showsText, showsBranch: showsBranch) { open(session) }
                         .transition(.opacity)
                 }
             }
@@ -432,11 +449,13 @@ struct GeminiExpanded: View {
 private struct GeminiSessionRow: View {
     let session: GeminiSession
     let showsText: Bool
+    let showsBranch: Bool
     let open: () -> Void
     @State private var isHovering = false
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let branch = GeminiText.branch(session, showsText: showsText, showsBranch: showsBranch)
 
         Button(action: open) {
             HStack(alignment: .top, spacing: 9) {
@@ -447,17 +466,34 @@ private struct GeminiSessionRow: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 8) {
-                        Text(GeminiText.title(session, showsText: showsText))
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.islandPrimary)
-                            .lineLimit(1)
+                        if let branch, branch.inTitle {
+                            FolderBranchLabel(folder: session.record.project, branch: branch.branch)
+                        } else {
+                            Text(GeminiText.title(session, showsText: showsText))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.islandPrimary)
+                                .lineLimit(1)
+                        }
                         Spacer(minLength: 8)
                         status
                     }
                     .frame(height: GeminiLayout.titleHeight)
                     .accessibilityElement(children: .combine)
 
-                    if let detail = GeminiText.detail(session, showsText: showsText) {
+                    if let branch, !branch.inTitle {
+                        // The project and its branch, then the model, kept whole.
+                        HStack(spacing: 0) {
+                            FolderBranchLabel(folder: session.record.project, branch: branch.branch, size: .detail)
+                            if let model = GeminiText.model(session) {
+                                Text(verbatim: " · " + model)
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .foregroundStyle(.islandText(0.5))
+                                    .lineLimit(1)
+                                    .fixedSize()
+                            }
+                        }
+                        .frame(height: GeminiLayout.textHeight, alignment: .leading)
+                    } else if let detail = GeminiText.detail(session, showsText: showsText) {
                         Text(detail)
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(.islandText(0.5))
@@ -625,6 +661,7 @@ private struct GeminiTaskChecklist: View {
 struct GeminiSettingsView: View {
     let model: GeminiModel
     @AppStorage(GeminiPrefs.showPrompt) private var showPrompt = true
+    @AppStorage(GeminiPrefs.showBranch) private var showBranch = true
     @AppStorage(GeminiPrefs.skipDoneOnScreen) private var skipDoneOnScreen = true
     @State private var copied = false
     @State private var setup: GeminiHookSetup?
@@ -634,6 +671,11 @@ struct GeminiSettingsView: View {
         Toggle(isOn: $showPrompt) {
             Text("Show what you asked")
             Text("Each conversation in the opened island goes by Antigravity's title for it, which says what you asked in a few words. Off, conversations show by workspace alone.")
+        }
+
+        Toggle(isOn: $showBranch) {
+            Text("Show the git branch")
+            Text("Beside each conversation's workspace, in the opened island and in its banners, the branch it's on, or the commit where none is checked out. The hook reads it at each event, so a checkout shows at the next. Off, the workspace alone.")
         }
 
         Toggle(isOn: $skipDoneOnScreen) {

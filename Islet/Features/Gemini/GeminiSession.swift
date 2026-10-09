@@ -86,6 +86,10 @@ struct GeminiSessionRecord: Equatable, Identifiable, Sendable {
     var id: String
     /// The git repository's folder name, or the workspace's; "" without one.
     var project: String = ""
+    /// The git branch the workspace is on, or a detached HEAD's commit, as of the
+    /// latest event, cleaned (`SessionBranch.clean`); "" for none, or from a hook that
+    /// did not say.
+    var branch: String = ""
     var workspace: String = ""
     var model: String = ""
     var artifactDir: String = ""
@@ -119,7 +123,7 @@ struct GeminiSessionRecord: Equatable, Identifiable, Sendable {
 
 extension GeminiSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
-        case sessionId, project, workspace, model, artifactDir, state, since, turnStarted, updated, ended, error
+        case sessionId, project, branch, workspace, model, artifactDir, state, since, turnStarted, updated, ended, error
         case step, lastStep, steps, history, parent, agent
     }
 
@@ -130,6 +134,7 @@ extension GeminiSessionRecord: Decodable {
             throw DecodingError.dataCorruptedError(forKey: .sessionId, in: c, debugDescription: "Bad id")
         }
         project = (try? c.decodeIfPresent(String.self, forKey: .project)) ?? ""
+        branch = SessionBranch.clean((try? c.decodeIfPresent(String.self, forKey: .branch)) ?? "")
         let workspace = (try? c.decodeIfPresent(String.self, forKey: .workspace)) ?? ""
         self.workspace = workspace.hasPrefix("/") ? workspace : ""
         model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? ""

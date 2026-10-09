@@ -105,7 +105,7 @@ final class BannerFeature: Feature {
     /// down the one showing and anything held. Both are understood, and do nothing,
     /// while the feature is off.
     func handle(_ url: URL) -> Bool {
-        guard let request = BannerRequest(url: url) else { return false }
+        guard let request = BannerRequest(url: url, showsBranch: SessionBranch.isShown(activity:)) else { return false }
         switch request {
         case .show(let banner):
             show(banner)

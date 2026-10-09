@@ -161,6 +161,10 @@ struct ChatGPTSessionRecord: Equatable, Identifiable, Sendable {
     var id: String
     /// The git repository's folder name, or "" for a plain chat.
     var project: String = ""
+    /// The git branch the folder is on, or a detached HEAD's commit, as of the
+    /// latest event, cleaned (`SessionBranch.clean`); "" for none, or from a hook that
+    /// did not say.
+    var branch: String = ""
     var cwd: String = ""
     var transcriptPath: String = ""
     /// The bundle id of the app Codex runs in, or "".
@@ -208,14 +212,15 @@ struct ChatGPTSessionRecord: Equatable, Identifiable, Sendable {
 
 extension ChatGPTSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
-        case sessionId, project, cwd, transcriptPath, hostApp, pid, pidStarted, state, since, turnId, turnStarted, prompted
-        case updated, prompt, reply, step, steps, plan, agents, codexHome, history, shells
+        case sessionId, project, branch, cwd, transcriptPath, hostApp, pid, pidStarted, state, since, turnId, turnStarted
+        case prompted, updated, prompt, reply, step, steps, plan, agents, codexHome, history, shells
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(String.self, forKey: .sessionId)
         project = (try? c.decodeIfPresent(String.self, forKey: .project)) ?? ""
+        branch = SessionBranch.clean((try? c.decodeIfPresent(String.self, forKey: .branch)) ?? "")
         cwd = (try? c.decodeIfPresent(String.self, forKey: .cwd)) ?? ""
         transcriptPath = (try? c.decodeIfPresent(String.self, forKey: .transcriptPath)) ?? ""
         hostApp = (try? c.decodeIfPresent(String.self, forKey: .hostApp)) ?? ""

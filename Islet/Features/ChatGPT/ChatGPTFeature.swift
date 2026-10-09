@@ -453,6 +453,12 @@ enum ChatGPTPrefs {
 
     static var showsPrompt: Bool { UserDefaults.standard.object(forKey: showPrompt) as? Bool ?? true }
 
+    /// Whether the git branch a session's folder is on shows beside the folder, in its
+    /// row and in its hook's banners.
+    static let showBranch = "chatGPT.showBranch"
+
+    static var showsBranch: Bool { UserDefaults.standard.object(forKey: showBranch) as? Bool ?? true }
+
     /// Whether permissions ChatGPT asks are shown in the island to answer there. On
     /// unless turned off: the hook, and the key beside it, are what opt in.
     static let approveFromIsland = "chatGPT.approveFromIsland"

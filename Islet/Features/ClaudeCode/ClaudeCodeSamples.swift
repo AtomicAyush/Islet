@@ -4,12 +4,12 @@ import Foundation
 /// never the person's.
 enum ClaudeCodeSamples {
     private static func session(
-        _ id: String, project: String, state: ClaudeSessionState, turn: TimeInterval, since: TimeInterval? = nil,
-        prompt: String, reply: String = "", workflows: [ClaudeWorkflow] = [], tasks: [ClaudeBackgroundTask] = [],
-        progress: [String: ClaudeTaskProgress] = [:], now: Date
+        _ id: String, project: String, branch: String = "", state: ClaudeSessionState, turn: TimeInterval,
+        since: TimeInterval? = nil, prompt: String, reply: String = "", workflows: [ClaudeWorkflow] = [],
+        tasks: [ClaudeBackgroundTask] = [], progress: [String: ClaudeTaskProgress] = [:], now: Date
     ) -> ClaudeSession {
         let record = ClaudeSessionRecord(
-            id: "sample." + id, project: project, cwd: "", transcriptPath: "", hostApp: "com.apple.Terminal",
+            id: "sample." + id, project: project, branch: branch, cwd: "", transcriptPath: "", hostApp: "com.apple.Terminal",
             state: state, since: now.addingTimeInterval(-(since ?? turn)),
             turnStarted: now.addingTimeInterval(-turn), updated: now,
             prompt: prompt, reply: reply, workflows: workflows, tasks: tasks
@@ -49,20 +49,20 @@ enum ClaudeCodeSamples {
     }
 
     static func working(now: Date) -> [ClaudeSession] {
-        [session("harbour", project: "Harbour", state: .working, turn: 134,
+        [session("harbour", project: "Harbour", branch: "tide-tables", state: .working, turn: 134,
                  prompt: "Add offline caching to the timetable screen", now: now)]
     }
 
     static func needsPermission(now: Date) -> [ClaudeSession] {
-        [session("lighthouse", project: "Lighthouse", state: .needsPermission, turn: 95, since: 12,
+        [session("lighthouse", project: "Lighthouse", branch: "main", state: .needsPermission, turn: 95, since: 12,
                  prompt: "Rename the settings keys and move the old values over", now: now)]
     }
 
     static func several(now: Date) -> [ClaudeSession] {
         [
-            session("lighthouse", project: "Lighthouse", state: .needsPermission, turn: 95, since: 12,
+            session("lighthouse", project: "Lighthouse", branch: "main", state: .needsPermission, turn: 95, since: 12,
                     prompt: "Rename the settings keys and move the old values over", now: now),
-            session("harbour", project: "Harbour", state: .working, turn: 134,
+            session("harbour", project: "Harbour", branch: "tide-tables", state: .working, turn: 134,
                     prompt: "Add offline caching to the timetable screen", now: now),
             session("study", project: "", state: .idle, turn: 1500, since: 1260,
                     prompt: "Compare three ways to keep the shelf's pictures",
@@ -89,7 +89,7 @@ enum ClaudeCodeSamples {
     /// Claude Code and one by its program alone.
     static func background(now: Date) -> [ClaudeSession] {
         [
-            session("harbour", project: "Harbour", state: .working, turn: 250,
+            session("harbour", project: "Harbour", branch: "tide-tables", state: .working, turn: 250,
                     prompt: "Split the timetable cache into its own module", workflows: [
                         workflow("w1", "timetable-cache-split", "Moves the cache out, then reviews and fixes",
                                  minutes: 38, now: now),

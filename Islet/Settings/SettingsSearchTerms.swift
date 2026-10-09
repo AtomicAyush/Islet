@@ -259,13 +259,13 @@ extension ClaudeCodeFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
             labels: ["Approve from the island", "Open the island for each request", "Approvals key", "Set Up",
-                     "Reset Key", "Show what you asked", "Skip Done when the chat is on screen", "Hooks",
-                     "Last heard from Claude Code", "Show usage limits", "Warn at 80% and 95%",
+                     "Reset Key", "Show what you asked", "Show the git branch", "Skip Done when the chat is on screen",
+                     "Hooks", "Last heard from Claude Code", "Show usage limits", "Warn at 80% and 95%",
                      "Usage ring in the compact island", "Claude app", "AI Usage"],
             keywords: ["hooks", "agents", "subagents", "workflows", "terminal", "sessions", "prompt", "coding",
                        "approve", "allow", "deny", "permission", "always allow", "key", "keychain", "done", "finished",
-                       "banner", "popup", "notification", "on screen", "chat", "usage", "limits", "rate limit",
-                       "quota", "5-hour", "weekly", "plan", "usage tile"]
+                       "banner", "popup", "notification", "on screen", "chat", "git", "branch", "folder", "repository",
+                       "usage", "limits", "rate limit", "quota", "5-hour", "weekly", "plan", "usage tile"]
         )
     }
 }
@@ -275,13 +275,15 @@ extension ChatGPTFeature {
         SettingsSearchTerms(
             labels: ["Approve from the island", "Open the island for each request", "Approvals key", "Set Up",
                      "Reset Key", "Wait in the island", "Wait longer for ChatGPT", "Copy Line", "Show what you asked",
-                     "Skip Done when the chat is on screen", "Hooks", "Last heard from ChatGPT", "Show usage limits",
-                     "Warn at 80% and 95%", "Usage ring in the compact island", "ChatGPT plan", "AI Usage"],
+                     "Show the git branch", "Skip Done when the chat is on screen", "Hooks", "Last heard from ChatGPT",
+                     "Show usage limits", "Warn at 80% and 95%", "Usage ring in the compact island", "ChatGPT plan",
+                     "AI Usage"],
             keywords: ["chatgpt", "codex", "openai", "gpt", "hooks.json", "hooks", "trust", "approve", "agents",
                        "subagents", "plan", "chats", "prompt", "coding", "progress", "tasks", "terminals",
                        "background commands", "goal", "queued", "allow", "deny", "permission", "always allow",
                        "key", "keychain", "wait", "done", "replied", "banner", "popup", "notification", "on screen",
-                       "usage", "limits", "rate limit", "quota", "5-hour", "weekly", "credits", "plus", "usage tile"]
+                       "git", "branch", "folder", "repository", "usage", "limits", "rate limit", "quota", "5-hour",
+                       "weekly", "credits", "plus", "usage tile"]
         )
     }
 }
@@ -289,11 +291,12 @@ extension ChatGPTFeature {
 extension GeminiFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
-            labels: ["Show what you asked", "Skip Done when the chat is on screen", "Hooks", "Copy Hooks",
-                     "Islet's hook", "Last heard from Gemini"],
+            labels: ["Show what you asked", "Show the git branch", "Skip Done when the chat is on screen", "Hooks",
+                     "Copy Hooks", "Islet's hook", "Last heard from Gemini"],
             keywords: ["gemini", "antigravity", "google", "agents", "agent manager", "hooks.json", "hooks",
                        "conversations", "tasks", "task list", "progress", "quota", "limit", "error", "done",
-                       "finished", "banner", "popup", "notification", "on screen", "accessibility", "coding"]
+                       "finished", "banner", "popup", "notification", "on screen", "accessibility", "coding", "git",
+                       "branch", "workspace", "repository"]
         )
     }
 }

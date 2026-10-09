@@ -35,6 +35,9 @@
 #   project         the git repository's folder name, or its folder's; "" for Claude's
 #                   scratch folders, the home folder and "/", which have no name worth
 #                   showing
+#   branch          the git branch the session's folder is on, as of its latest event, or
+#                   for a detached HEAD its commit's first seven digits; "" for none,
+#                   and wherever project is ""
 #   cwd             the folder the session is working in, as of its latest event
 #   transcriptPath  the session's transcript, which Claude Code writes as it goes:
 #                   Islet reads a session gone quiet on it as over
@@ -190,20 +193,92 @@ plain() {
   text="${text:0:$((limit - 1))}"
   printf '%s…' "${text% *}"
 }
+# The git branch folder $1 is on, read from the repository's own files rather than by
+# running git: the nearest .git at or above the folder (a folder, or a file naming one,
+# as a worktree's or a submodule's is), never the home folder's or one above it, and the
+# HEAD it holds. A branch checked out gives its name, a detached HEAD its commit's first
+# seven digits, and anything else none: no repository, a folder that has gone or is
+# named with a "." or ".." step, a HEAD that can't be read or says something else, as a
+# reftable repository's says (".invalid", which no branch can be named, whatever is
+# checked out; its branch is in its reftable). At most 64 folders are looked at and two
+# files read, a line of each and no more than a few hundred bytes of it. Sets branch to
+# one line of plain text, cut in the middle to at most 80 characters, and branch_short to
+# the same cut to 20 for a banner; both "" for none.
+git_branch() {
+  branch="" branch_short=""
+  local at="$1" git="" line n=0
+  local commit='^[0-9a-f]{40}([0-9a-f]{24})?$'
+  local ascii='^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/+@#,=-]+$'
+  [ "${at:0:1}" = / ] && [ "${#at}" -le 4096 ] && [ -d "$at" ] || return 0
+  # The walk takes folders off the path as spelt, which a "." or ".." step would lead
+  # astray, into a repository the folder is not in or past the home folder; doubled
+  # slashes are made single.
+  case "$at/" in */./*|*/../*) return 0 ;; esac
+  while [[ "$at" == *//* ]]; do at="${at//\/\///}"; done
+  while [ "$n" -lt 64 ]; do
+    at="${at%/}"
+    { [ -z "$at" ] || [ "$at" = "${HOME%/}" ]; } && return 0
+    if [ -e "$at/.git" ] || [ -L "$at/.git" ]; then git="$at/.git"; break; fi
+    at="${at%/*}" n=$((n + 1))
+  done
+  [ -n "$git" ] || return 0
+  # A worktree's or a submodule's .git is a file naming the folder that holds its HEAD,
+  # from where it is unless it is a full path.
+  if [ -f "$git" ]; then
+    { IFS= read -r -n 1024 line < "$git"; } 2>/dev/null
+    line="${line%$'\r'}"
+    [[ "$line" == "gitdir: "?* ]] || return 0
+    git="${line#gitdir: }"
+    [ "${git:0:1}" = / ] || git="$at/$git"
+  fi
+  # A regular file only: never a pipe or a device, which a read could wait on for ever.
+  [ -f "$git/HEAD" ] || return 0
+  line=""
+  { IFS= read -r -n 512 line < "$git/HEAD"; } 2>/dev/null
+  line="${line%$'\r'}"
+  if [[ "$line" == "ref: refs/heads/"?* ]]; then
+    branch="${line#ref: refs/heads/}"
+    # No part of a branch's name starts with ".", as a reftable's ".invalid" does.
+    [[ "/$branch" == */.* ]] && { branch=""; return 0; }
+  elif [[ "$line" =~ $commit ]]; then
+    branch="${line:0:7}"
+  else
+    return 0
+  fi
+  # Plain ASCII, as a branch's name mostly is, is kept as it is. Anything else goes
+  # through jq, which keeps only what shows as plain text on one line: no control
+  # characters, nothing invisible (zero-width spaces and joiners, the marks that reorder
+  # text, variation selectors, a blank braille pattern), no private-use characters, and
+  # white space as single spaces.
+  if ! [[ "$branch" =~ $ascii ]]; then
+    branch="$(jq -rn --arg b "$branch" '$b
+      | gsub("[\\p{Cc}\\p{Cf}\\p{Co}\\p{Cs}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\x{2800}\u034f\u115f\u1160\u17b4\u17b5\u3164\uffa0\ufffd]"; "")
+      | gsub("\\p{Zs}+"; " ") | sub("^ +"; "") | sub(" +$"; "")' 2>/dev/null)"
+  fi
+  [ "${#branch}" -gt 80 ] && branch="${branch:0:40}…${branch: -39}"
+  branch_short="$branch"
+  [ "${#branch}" -gt 20 ] && branch_short="${branch:0:10}…${branch: -9}"
+  return 0
+}
 # The project: the git repository the session works in, or else its folder. The
 # event's own folder, not CLAUDE_PROJECT_DIR, which is wherever the session was
 # first started. Claude's scratch folders have no project name worth showing, nor
 # have the home folder and "/", nor a repository of either (of settings, say).
 [ -z "$cwd" ] && cwd="$CLAUDE_PROJECT_DIR"
-project=""
+project="" branch="" branch_short=""
 case "${cwd%/}" in
   ""|"${HOME%/}"|*"/Library/Application Support/Claude/"*|/private/tmp/claude-*|/tmp/claude-*) ;;
   *) top="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"
      case "${top%/}" in ""|"${HOME%/}"|"$(cd "$HOME" 2>/dev/null && pwd -P)") top="$cwd" ;; esac
-     project="$(basename "$top")" ;;
+     project="$(basename "$top")"
+     git_branch "$cwd" ;;
 esac
-# "Title · Islet", or the title alone where there is no project.
-titled() { printf '%s' "$1${project:+ · $project}"; }
+# Where the session is, for its banners: the project, and the branch beside it. Not
+# where what is wanted follows it beside the notch, which has room for only a few words;
+# elsewhere there, Islet takes the branch out again where it would not show whole.
+place="$project${branch_short:+ · $branch_short}"
+# "Title · Islet · main", or the title alone where there is no project.
+titled() { printf '%s' "$1${place:+ · $place}"; }
 # Every banner here is news of the Claude Code activity, which shows each session: while
 # it holds the island, a banner beside the notch takes its place rather than going in a
 # row under it, where "Needs permission" would sit under its own raised hand. A card
@@ -211,11 +286,17 @@ titled() { printf '%s' "$1${project:+ · $project}"; }
 # compact one, and may still be up beside the notch once it closes. Each names its
 # session, so a click on it opens the session where Islet knows how; the Done card
 # says it is one (event=done), for Islet to leave down while the session is on screen.
+# One that names the branch beside the project says which it is (branch=), for Islet to
+# take out of its words when Settings asks for the folder alone.
 banner_session=""
+# The branch= a banner with words $1 and $2 takes, or "" where they don't name it.
+branch_query() {
+  [ -n "$branch_short" ] && [[ "$1"$'\n'"$2" == *" · $branch_short"* ]] && printf '&branch=%s' "$(enc "$branch_short")"
+}
 [[ "$session" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$ ]] && banner_session="$session"
 show() { # title subtitle symbol tint [style] [event]
   if [ -n "$ISLET_NOTIFY_DRY" ]; then echo "banner: $1 | $2 | $3 | $4 | ${5:-compact} | claudeCode"; return; fi
-  open -g "islet://banner?title=$(enc "$1")&subtitle=$(enc "$2")&symbol=$3&tint=$4&style=${5:-compact}&activity=claudeCode${banner_session:+&session=$banner_session}${6:+&event=$6}" 2>/dev/null
+  open -g "islet://banner?title=$(enc "$1")&subtitle=$(enc "$2")&symbol=$3&tint=$4&style=${5:-compact}&activity=claudeCode${banner_session:+&session=$banner_session}${6:+&event=$6}$(branch_query "$1" "$2")" 2>/dev/null
 }
 
 # The agent this script speaks for, to the approval block below.
@@ -575,7 +656,7 @@ case "$kind" in
     case "$wants" in
       # Not while a card in the island already asks.
       permission_prompt) approval_live "$session" || show "Needs permission" "${project:+$project · }$wanted" hand.raised.fill orange ;;
-      idle_prompt)       show "Waiting for you" "${project:-Claude}" ellipsis.bubble.fill blue ;;
+      idle_prompt)       show "Waiting for you" "${place:-Claude}" ellipsis.bubble.fill blue ;;
       agent_needs_input|elicitation_dialog|elicitation_url_dialog)
                          show "$(titled "Needs input")" "$message" questionmark.bubble.fill orange card ;;
       agent_completed)   show "$(titled "Agent finished")" "$message" checkmark.seal.fill purple card ;;
@@ -587,7 +668,7 @@ case "$kind" in
     # TaskCompleted: an item on the task list marked done (not a background
     # workflow; those are caught below).
     name="$(plain "$task_name")"
-    show "Task done" "${name:-$project}" checkmark.circle.fill purple
+    show "Task done" "${name:-$place}" checkmark.circle.fill purple
     ;;
   failure)
     # StopFailure. A turn turned away at the usage limit tells Islet, which puts up the
@@ -830,6 +911,7 @@ program='
       version: 1,
       sessionId: $session,
       project: $project,
+      branch: $branch,
       cwd: $cwd,
       transcriptPath: ((try $in.transcript_path catch null) | text
                        | if . == "" then ($p.transcriptPath // "") else . end),
@@ -877,7 +959,7 @@ host_session=""
 [[ "${CLAUDE_CODE_HOST_SESSION_ID:-}" =~ ^local_[A-Za-z0-9-]{1,64}$ ]] && host_session="$CLAUDE_CODE_HOST_SESSION_ID"
 update() { # previous
   printf '%s' "$input" | jq -c --argjson prev "${1:-null}" --arg kind "$kind" --arg session "$session" \
-    --arg project "$project" --arg cwd "$cwd" --arg host "${__CFBundleIdentifier:-}" \
+    --arg project "$project" --arg branch "$branch" --arg cwd "$cwd" --arg host "${__CFBundleIdentifier:-}" \
     --arg hostSession "$host_session" --arg tty "$tty" \
     --arg pid "$pid" --arg age "$age" --arg reply "$message" --arg agent "$agent" --arg tool "$tool" \
     --arg toolUse "$tool_use" --arg duration "$duration" --arg given "$given" --arg command "$command" \

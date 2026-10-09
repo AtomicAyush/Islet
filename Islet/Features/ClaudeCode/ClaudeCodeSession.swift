@@ -92,6 +92,10 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
     var id: String
     /// The git repository's folder name, or "" for Claude's scratch folders.
     var project: String = ""
+    /// The git branch the folder is on, or a detached HEAD's commit, as of the
+    /// latest event, cleaned (`SessionBranch.clean`); "" for none, or from a hook that
+    /// did not say.
+    var branch: String = ""
     var cwd: String = ""
     var transcriptPath: String = ""
     /// The bundle id of the app Claude Code runs in, or "".
@@ -139,7 +143,7 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
 
 extension ClaudeSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
-        case sessionId, project, cwd, transcriptPath, hostApp, hostSession, tty, pid, pidStarted, state, since
+        case sessionId, project, branch, cwd, transcriptPath, hostApp, hostSession, tty, pid, pidStarted, state, since
         case turnStarted, updated, prompt, reply, workflows, tasks, pending
     }
 
@@ -147,6 +151,7 @@ extension ClaudeSessionRecord: Decodable {
         let c = try decoder.container(keyedBy: Keys.self)
         id = try c.decode(String.self, forKey: .sessionId)
         project = (try? c.decodeIfPresent(String.self, forKey: .project)) ?? ""
+        branch = SessionBranch.clean((try? c.decodeIfPresent(String.self, forKey: .branch)) ?? "")
         cwd = (try? c.decodeIfPresent(String.self, forKey: .cwd)) ?? ""
         transcriptPath = (try? c.decodeIfPresent(String.self, forKey: .transcriptPath)) ?? ""
         hostApp = (try? c.decodeIfPresent(String.self, forKey: .hostApp)) ?? ""

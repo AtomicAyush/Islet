@@ -178,6 +178,14 @@ enum ClaudeCodeText {
         return ClaudeHostApps.name(for: record.hostApp) ?? "Claude Code"
     }
 
+    /// The branch beside the title, where the title is the project and the hook found
+    /// one, while Settings shows it.
+    static func branch(_ session: ClaudeSession, showsBranch: Bool) -> String? {
+        let record = session.record
+        guard showsBranch, !record.project.isEmpty, !record.branch.isEmpty else { return nil }
+        return record.branch
+    }
+
     /// The start of `text`, cut at a word to at most `titleLimit` characters.
     static func firstWords(_ text: String) -> String? {
         let text = oneLine(text)
@@ -679,6 +687,7 @@ struct ClaudeCodeExpanded: View {
     var usage: UsageCenter? = nil
     let open: (ClaudeSession) -> Void
     @AppStorage(ClaudeCodePrefs.showPrompt) private var showsText = true
+    @AppStorage(ClaudeCodePrefs.showBranch) private var showsBranch = true
     /// How deep the fade at the head of the rows is: as far as they are scrolled down,
     /// up to `ClaudeCodeLayout.topFade`.
     @State private var headFade: CGFloat = 0
@@ -769,7 +778,7 @@ struct ClaudeCodeExpanded: View {
     private func rows(_ sessions: [ClaudeSession]) -> some View {
         VStack(spacing: ClaudeCodeLayout.sessionSpacing) {
             ForEach(sessions) { session in
-                ClaudeSessionRow(session: session, showsText: showsText) { open(session) }
+                ClaudeSessionRow(session: session, showsText: showsText, showsBranch: showsBranch) { open(session) }
                     .transition(.opacity)
             }
         }
@@ -807,6 +816,7 @@ private struct ClaudeCodeListFade: ViewModifier {
 private struct ClaudeSessionRow: View {
     let session: ClaudeSession
     let showsText: Bool
+    let showsBranch: Bool
     let open: () -> Void
     @State private var isHovering = false
 
@@ -821,10 +831,14 @@ private struct ClaudeSessionRow: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 8) {
-                        Text(ClaudeCodeText.title(session, showsText: showsText))
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.islandPrimary)
-                            .lineLimit(1)
+                        if let branch = ClaudeCodeText.branch(session, showsBranch: showsBranch) {
+                            FolderBranchLabel(folder: session.record.project, branch: branch)
+                        } else {
+                            Text(ClaudeCodeText.title(session, showsText: showsText))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.islandPrimary)
+                                .lineLimit(1)
+                        }
                         Spacer(minLength: 8)
                         status
                     }
@@ -1124,6 +1138,7 @@ private struct ClaudeTaskTag: View {
 struct ClaudeCodeSettingsView: View {
     let model: ClaudeCodeModel
     @AppStorage(ClaudeCodePrefs.showPrompt) private var showPrompt = true
+    @AppStorage(ClaudeCodePrefs.showBranch) private var showBranch = true
     @State private var copied = false
 
     @AppStorage(ClaudeCodePrefs.approveFromIsland) private var approveFromIsland = true
@@ -1147,6 +1162,11 @@ struct ClaudeCodeSettingsView: View {
         Toggle(isOn: $showPrompt) {
             Text("Show what you asked")
             Text("Under each session in the opened island, its latest prompt, or the start of Claude's reply once it's done; a session outside a project goes by its prompt. Off, sessions show by project alone.")
+        }
+
+        Toggle(isOn: $showBranch) {
+            Text("Show the git branch")
+            Text("Beside each session's project, in the opened island and in its banners, the branch it's on, or the commit where none is checked out. The hook reads it at each event, so a checkout shows at the next. Off, the project alone.")
         }
 
         Toggle(isOn: $skipDoneOnScreen) {

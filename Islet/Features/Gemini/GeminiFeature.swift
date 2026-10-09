@@ -263,7 +263,9 @@ enum GeminiDoneOnScreen {
 /// waiting. It names the conversation, so a click brings Antigravity forward.
 enum GeminiWaitBanner {
     static func banner(for session: GeminiSession) -> CustomBanner? {
-        let at = session.record.project.isEmpty ? "" : " · " + session.record.project
+        let record = session.record
+        let branch = GeminiPrefs.showsBranch ? SessionBranch.bannerSuffix(record.branch) : ""
+        let at = record.project.isEmpty ? "" : " · " + record.project + branch
         let (title, symbol): (String, String) = switch session.waiting {
         case .question?: ("Gemini has a question", "questionmark.bubble.fill")
         case .approval?: ("Gemini is waiting for approval", "hand.raised.fill")
@@ -367,6 +369,12 @@ enum GeminiPrefs {
     static let showPrompt = "gemini.showPrompt"
 
     static var showsPrompt: Bool { UserDefaults.standard.object(forKey: showPrompt) as? Bool ?? true }
+
+    /// Whether the git branch a conversation's workspace is on shows beside the
+    /// workspace, in its row and in its banners.
+    static let showBranch = "gemini.showBranch"
+
+    static var showsBranch: Bool { UserDefaults.standard.object(forKey: showBranch) as? Bool ?? true }
 
     /// Whether an agent finishing in the conversation on screen puts up no banner.
     static let skipDoneOnScreen = "gemini.skipDoneOnScreen"

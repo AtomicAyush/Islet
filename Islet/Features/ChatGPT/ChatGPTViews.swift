@@ -184,6 +184,14 @@ enum ChatGPTText {
         return ClaudeHostApps.name(for: record.hostApp) ?? "ChatGPT"
     }
 
+    /// The branch beside the title, where the title is the project and the hook found
+    /// one, while Settings shows it.
+    static func branch(_ session: ChatGPTSession, showsBranch: Bool) -> String? {
+        let record = session.record
+        guard showsBranch, !record.project.isEmpty, !record.branch.isEmpty else { return nil }
+        return record.branch
+    }
+
     /// The start of `text`, cut at a word to at most `limit` characters.
     static func firstWords(_ text: String, limit: Int = titleLimit) -> String? {
         let text = oneLine(text)
@@ -625,6 +633,7 @@ struct ChatGPTExpanded: View {
     var usage: UsageCenter? = nil
     let open: (ChatGPTSession) -> Void
     @AppStorage(ChatGPTPrefs.showPrompt) private var showsText = true
+    @AppStorage(ChatGPTPrefs.showBranch) private var showsBranch = true
     /// How deep the fade at the head of the rows is: as far as they are scrolled down,
     /// up to `ChatGPTLayout.topFade`.
     @State private var headFade: CGFloat = 0
@@ -708,7 +717,7 @@ struct ChatGPTExpanded: View {
     private func rows(_ sessions: [ChatGPTSession]) -> some View {
         VStack(spacing: ChatGPTLayout.sessionSpacing) {
             ForEach(sessions) { session in
-                ChatGPTSessionRow(session: session, showsText: showsText) { open(session) }
+                ChatGPTSessionRow(session: session, showsText: showsText, showsBranch: showsBranch) { open(session) }
                     .transition(.opacity)
             }
         }
@@ -743,6 +752,7 @@ private struct ChatGPTListFade: ViewModifier {
 private struct ChatGPTSessionRow: View {
     let session: ChatGPTSession
     let showsText: Bool
+    let showsBranch: Bool
     let open: () -> Void
     @State private var isHovering = false
 
@@ -759,10 +769,14 @@ private struct ChatGPTSessionRow: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 8) {
-                        Text(ChatGPTText.title(session, showsText: showsText))
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.islandPrimary)
-                            .lineLimit(1)
+                        if let branch = ChatGPTText.branch(session, showsBranch: showsBranch) {
+                            FolderBranchLabel(folder: session.record.project, branch: branch)
+                        } else {
+                            Text(ChatGPTText.title(session, showsText: showsText))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.islandPrimary)
+                                .lineLimit(1)
+                        }
                         Spacer(minLength: 8)
                         status
                     }
@@ -1097,6 +1111,7 @@ private struct ChatGPTTaskTag: View {
 struct ChatGPTSettingsView: View {
     let model: ChatGPTModel
     @AppStorage(ChatGPTPrefs.showPrompt) private var showPrompt = true
+    @AppStorage(ChatGPTPrefs.showBranch) private var showBranch = true
     @State private var copied = false
 
     @AppStorage(ChatGPTPrefs.approveFromIsland) private var approveFromIsland = true
@@ -1146,6 +1161,11 @@ struct ChatGPTSettingsView: View {
         Toggle(isOn: $showPrompt) {
             Text("Show what you asked")
             Text("Under each chat in the opened island, its latest prompt, or the start of ChatGPT's reply once it's done; a chat outside a project goes by its prompt. Off, chats show by project alone.")
+        }
+
+        Toggle(isOn: $showBranch) {
+            Text("Show the git branch")
+            Text("Beside each chat's project, in the opened island and in its banners, the branch it's on, or the commit where none is checked out. The hook reads it at each event, so a checkout shows at the next. Off, the project alone.")
         }
 
         Toggle(isOn: $skipDoneOnScreen) {

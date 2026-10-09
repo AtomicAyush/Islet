@@ -277,15 +277,19 @@ enum BannerStyle: String, CaseIterable, Sendable {
 /// seconds, `style` (`compact` or `card`), `sound` (a system sound's name),
 /// `interruption` (`passive` lets a Focus hold it back) and `activity`, the activity it
 /// is news of (`claudeCode`, `chatGPT` or `gemini`), whose place it takes rather than
-/// riding under it. With an activity, `session` names the session it is news of, and
-/// `event=done` says a reply finished. Names are read in any case, the last of a
-/// repeated one wins, and anything unknown is ignored.
+/// riding under it. With an activity, `session` names the session it is news of,
+/// `event=done` says a reply finished, and `branch` names the git branch its title, or
+/// else its subtitle, gives beside the session's folder (" · main"), which is taken out
+/// of it while that activity's setting hides the branch, and beside the notch where it
+/// would not show whole. Names are read in any case, the last of a repeated one wins,
+/// and anything unknown is ignored.
 enum BannerRequest: Equatable {
     case show(CustomBanner)
     case dismiss
 
-    /// `nil` for a path it does not know, and for a banner with no title.
-    init?(url: URL) {
+    /// `nil` for a path it does not know, and for a banner with no title. `showsBranch`
+    /// says whether an activity, by its id, shows the branch.
+    init?(url: URL, showsBranch: (String) -> Bool = { _ in true }) {
         var path = url.path().lowercased()
         while path.hasSuffix("/") { path.removeLast() }
         switch path {
@@ -304,9 +308,25 @@ enum BannerRequest: Equatable {
         }
 
         let style = BannerStyle(rawValue: query["style"]?.lowercased() ?? "") ?? .compact
+        // The branch is taken out where the hook put it, in the title or else the subtitle
+        // and nowhere else, before the words are cleaned and cut: while the activity's
+        // setting hides it, and beside the notch where its side would not show it whole.
+        var title = query["title"], subtitle = query["subtitle"]
+        if let branch = query["branch"], let activity = CustomBanner.newsActivity(query["activity"]) {
+            let shown = showsBranch(activity)
+            let hidden = { (words: String) in
+                !shown || (style == .compact
+                    && CustomBannerLayout.textWidth(words, font: CustomBannerLayout.font) > CustomBannerLayout.maximumTextWidth)
+            }
+            if let words = title, SessionBranch.removed(branch, from: words) != words {
+                if hidden(words) { title = SessionBranch.removed(branch, from: words) }
+            } else if let words = subtitle, hidden(words) {
+                subtitle = SessionBranch.removed(branch, from: words)
+            }
+        }
         guard let banner = CustomBanner(
-            title: query["title"],
-            subtitle: query["subtitle"],
+            title: title,
+            subtitle: subtitle,
             symbol: query["symbol"],
             tint: Self.tint(["tint", "colour", "color"].compactMap { query[$0] }, fragment: url.fragment()),
             duration: query["duration"].flatMap { Double($0.trimmingCharacters(in: .whitespaces)) },

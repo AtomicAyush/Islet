@@ -342,9 +342,9 @@ camera and the turn's time counts up right of it. While it waits for your permis
 sparkle becomes an orange hand, and while it has asked you something, an orange question mark;
 while background workflows run, a ring fills as they get through their phases, with how many
 are running beside it when there are several (in the bubble beside music, the ring goes round
-the sparkle). Opened, there is a row for each session: its project (or the start of its prompt,
-for one outside a project), what it is doing and for how long, what you asked, and its
-background work under it: each workflow with the phase it is in ("Implement · 3 of 8 done"), a
+the sparkle). Opened, there is a row for each session: its project and the git branch it is on
+(or the start of its prompt, for one outside a project), what it is doing and for how long,
+what you asked, and its background work under it: each workflow with the phase it is in ("Implement · 3 of 8 done"), a
 bar, the agents at work in it now, any it has given up on or is trying again, and for how long;
 each agent sent off in the background with what it is doing ("Editing Store.swift") and how
 many steps it has taken, marked quiet once it has written nothing for ten minutes; and each
@@ -373,6 +373,17 @@ shows only once the approved command or agent next writes, so for a long command
 stays until it is done. A permission Claude asks can be answered in the island itself, with
 Allow and Deny on its page (see [Approving from the island](#approving-from-the-island)).
 
+The branch comes from each agent's hook, Claude Code's, ChatGPT's and Gemini's alike, which reads
+it at every event from the repository's own files (the nearest `.git` above the folder, a
+worktree's or a submodule's included, and the `HEAD` it names) without running git, so a
+checkout shows at the session's next event. A detached HEAD shows its commit's first seven
+digits; a branch's name is kept to one line of plain text, and a long one is cut in the middle
+so its start and end both show. Banners that name the project name the branch beside it too,
+cut shorter; beside the notch, only where it fits whole, and never in a permission's, where
+what is asked keeps the room.
+Settings → Activities → Claude Code, ChatGPT or Gemini → Show the git branch turns it off for
+that agent, rows and banners alike.
+
 How far the background work has got comes from the files Claude Code keeps beside the
 session's transcript in `~/.claude/projects`: each workflow run's journal of agents started and
 finished, the phases its script plans, the record written as a run ends, and each background
@@ -393,7 +404,7 @@ place of the time, beside a ring that fills as the chat gets on where there is a
 (its plan's steps done, else its agents done), or beside a spinner without one; the ring round
 the speech bubble in the bubble beside music fills the same way. Commands left running are not
 counted there, as Claude Code's are not, so a chat that once started a server keeps its time.
-Opened, there is a row for each chat: its project (or the start of
+Opened, there is a row for each chat: its project and its git branch (or the start of
 what you asked, for a plain chat outside a project), what it is doing ("Running swift", "Editing
 Store.swift and 2 more") and for how long, with how many follow-ups wait their turn ("2
 queued"); what you asked; the turn's steps so far ("14 steps · swift, Store.swift, the computer
@@ -435,9 +446,9 @@ mark at its corner, and the time counts how long it has waited; when one stops o
 because Antigravity's quota has run out, it shows a warning and "Error" or "Quota" for a few
 minutes. Opened, there is a row for each
 conversation: Antigravity's title for it (or its workspace, with Settings → Activities → Gemini →
-Show what you asked off), the workspace and the model, what the agent is doing ("Running npm",
-"Editing Store.swift") and for how long, the tools it has used so far ("11 steps · npm,
-Settings.tsx, theme.ts"), the subagents it has sent off and what each is doing, and its task
+Show what you asked off), the workspace and its git branch, and the model, what the agent is
+doing ("Running npm", "Editing Store.swift") and for how long, the tools it has used so far
+("11 steps · npm, Settings.tsx, theme.ts"), the subagents it has sent off and what each is doing, and its task
 list as a checklist with a bar ("2 of 4 done"), from where it has got to. Banners say when an
 agent finishes, has a question, waits for your approval or needs your input, reaches its step
 limit, stops on an error or runs out of quota ("Gemini quota reached"); a run you stop yourself

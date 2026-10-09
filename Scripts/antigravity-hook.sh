@@ -44,6 +44,8 @@
 #   sessionId       Antigravity's conversation id, as in the file's name
 #   project         the git repository's folder name, or the workspace's; "" for none, the
 #                   home folder or Antigravity's own folders
+#   branch          the git branch the workspace is on, as of the latest event, or for a
+#                   detached HEAD its commit's first seven digits; "" for none
 #   workspace       the conversation's first workspace folder, a full path; "" for none
 #   model           the model Antigravity names, at most 40 characters
 #   transcriptPath  where Antigravity says it writes the conversation, as given
@@ -167,6 +169,73 @@ trap '[ "$(head -c 16 "$lock" 2>/dev/null)" = "$$" ] && rm -f "$lock"; kill "$wa
 previous=""
 [ -f "$file" ] && [ ! -L "$file" ] && IFS= read -r -d '' previous < <(head -c 262144 "$file")
 
+# The git branch folder $1 is on, read from the repository's own files rather than by
+# running git: the nearest .git at or above the folder (a folder, or a file naming one,
+# as a worktree's or a submodule's is), never the home folder's or one above it, and the
+# HEAD it holds. A branch checked out gives its name, a detached HEAD its commit's first
+# seven digits, and anything else none: no repository, a folder that has gone or is
+# named with a "." or ".." step, a HEAD that can't be read or says something else, as a
+# reftable repository's says (".invalid", which no branch can be named, whatever is
+# checked out; its branch is in its reftable). At most 64 folders are looked at and two
+# files read, a line of each and no more than a few hundred bytes of it. Sets branch to
+# one line of plain text, cut in the middle to at most 80 characters, and branch_short to
+# the same cut to 20 for a banner; both "" for none.
+git_branch() {
+  branch="" branch_short=""
+  local at="$1" git="" line n=0
+  local commit='^[0-9a-f]{40}([0-9a-f]{24})?$'
+  local ascii='^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/+@#,=-]+$'
+  [ "${at:0:1}" = / ] && [ "${#at}" -le 4096 ] && [ -d "$at" ] || return 0
+  # The walk takes folders off the path as spelt, which a "." or ".." step would lead
+  # astray, into a repository the folder is not in or past the home folder; doubled
+  # slashes are made single.
+  case "$at/" in */./*|*/../*) return 0 ;; esac
+  while [[ "$at" == *//* ]]; do at="${at//\/\///}"; done
+  while [ "$n" -lt 64 ]; do
+    at="${at%/}"
+    { [ -z "$at" ] || [ "$at" = "${HOME%/}" ]; } && return 0
+    if [ -e "$at/.git" ] || [ -L "$at/.git" ]; then git="$at/.git"; break; fi
+    at="${at%/*}" n=$((n + 1))
+  done
+  [ -n "$git" ] || return 0
+  # A worktree's or a submodule's .git is a file naming the folder that holds its HEAD,
+  # from where it is unless it is a full path.
+  if [ -f "$git" ]; then
+    { IFS= read -r -n 1024 line < "$git"; } 2>/dev/null
+    line="${line%$'\r'}"
+    [[ "$line" == "gitdir: "?* ]] || return 0
+    git="${line#gitdir: }"
+    [ "${git:0:1}" = / ] || git="$at/$git"
+  fi
+  # A regular file only: never a pipe or a device, which a read could wait on for ever.
+  [ -f "$git/HEAD" ] || return 0
+  line=""
+  { IFS= read -r -n 512 line < "$git/HEAD"; } 2>/dev/null
+  line="${line%$'\r'}"
+  if [[ "$line" == "ref: refs/heads/"?* ]]; then
+    branch="${line#ref: refs/heads/}"
+    # No part of a branch's name starts with ".", as a reftable's ".invalid" does.
+    [[ "/$branch" == */.* ]] && { branch=""; return 0; }
+  elif [[ "$line" =~ $commit ]]; then
+    branch="${line:0:7}"
+  else
+    return 0
+  fi
+  # Plain ASCII, as a branch's name mostly is, is kept as it is. Anything else goes
+  # through jq, which keeps only what shows as plain text on one line: no control
+  # characters, nothing invisible (zero-width spaces and joiners, the marks that reorder
+  # text, variation selectors, a blank braille pattern), no private-use characters, and
+  # white space as single spaces.
+  if ! [[ "$branch" =~ $ascii ]]; then
+    branch="$(jq -rn --arg b "$branch" '$b
+      | gsub("[\\p{Cc}\\p{Cf}\\p{Co}\\p{Cs}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\x{2800}\u034f\u115f\u1160\u17b4\u17b5\u3164\uffa0\ufffd]"; "")
+      | gsub("\\p{Zs}+"; " ") | sub("^ +"; "") | sub(" +$"; "")' 2>/dev/null)"
+  fi
+  [ "${#branch}" -gt 80 ] && branch="${branch:0:40}…${branch: -39}"
+  branch_short="$branch"
+  [ "${#branch}" -gt 20 ] && branch_short="${branch:0:10}…${branch: -9}"
+  return 0
+}
 # The workspace: the first full path given, without a step up in it; and the project,
 # the git repository it is in, found by looking for .git rather than by running git, or
 # else the folder itself.
@@ -189,6 +258,15 @@ case "$workspace" in
     done
     project="${top:-$workspace}"
     project="${project##*/}" ;;
+esac
+# The branch, at every event, so that a checkout shows at the next: of the workspace, or
+# where the event names none, of the one the conversation's file has.
+branch="" branch_short=""
+where="$workspace"
+[ -z "$where" ] && [[ "$previous" =~ \"workspace\":\"([^\"\\]*)\" ]] && where="${BASH_REMATCH[1]}"
+case "$where" in
+  ""|/|"$HOME"|"$HOME/"|"$HOME/.gemini"|"$HOME/.gemini/"*) ;;
+  *) git_branch "$where" ;;
 esac
 
 # The conversation's title, for a banner, from Antigravity's own list of conversations,
@@ -342,6 +420,7 @@ program='
       version: 1,
       sessionId: $session,
       project: (if $workspace != "" then $project else ($p.project // "" | text) end),
+      branch: $branch,
       workspace: (if $workspace != "" then $workspace else ($p.workspace // "" | text) end),
       model: ($in.modelName // "" | text | plain(40) | if . == "" then ($p.model // "" | text) else . end),
       transcriptPath: ($in.transcriptPath // "" | text | select(startswith("/")) // ($p.transcriptPath // "" | text)
@@ -368,8 +447,11 @@ program='
       agent: ($in.agentName // "" | text | plain(40) | if . == "" and $parent != "" then ($p.agent // "" | text) else . end
               | if $parent == "" then "" else . end)
     } as $state
-  # A banner, for what wants you: its words, and the same as a URL query.
-  | ($state.project | if . == "" then "" else " · " + . end) as $at
+  # A banner, for what wants you: its words, and the same as a URL query. Where the
+  # conversation is: the project, and the branch beside it, cut in the middle to as much
+  # as a banner has room for.
+  | ($branch | if length > 20 then .[0:10] + "…" + .[-9:] else . end) as $branchShort
+  | ($state.project | if . == "" then "" elif $branchShort == "" then " · " + . else " · " + . + " · " + $branchShort end) as $at
   | ($title | plain(100)) as $named
   # A subagent finishing, asking or reaching its step limit is for the conversation that
   # sent it off to take up, which goes on; an error or its quota is told, naming that
@@ -399,7 +481,10 @@ program='
        | (if $kind == "stop" and $ended == "done" then "&event=done" else "" end) as $event
        | ($ended | if . == "" then "needsInput" else . end) as $what
        | (if $sub then $parent else $session end) as $about
-       | @sh "what=\($what) query=\("title=\($b.title | @uri)&subtitle=\($b.subtitle | @uri)&symbol=\($b.symbol)&tint=\($b.tint)&style=\($b.style)&activity=gemini&session=\($about)" + $event)"
+       # The branch the words name, for Islet to take out when Settings asks it to.
+       | (if $branchShort != "" and ($b.title + "\n" + $b.subtitle | contains(" · " + ($branchShort | one)))
+          then "&branch=" + ($branchShort | one | @uri) else "" end) as $branchQuery
+       | @sh "what=\($what) query=\("title=\($b.title | @uri)&subtitle=\($b.subtitle | @uri)&symbol=\($b.symbol)&tint=\($b.tint)&style=\($b.style)&activity=gemini&session=\($about)" + $event + $branchQuery)"
      end),
     ({t: ($t | floor), event: $kind, conversationId: $session, keys: ($in | keys_unsorted | map(.[0:40]) | .[0:24])}
      + {subagent: ($parent != "")}
@@ -413,7 +498,8 @@ program='
   end'
 update() { # previous
   printf '%s' "$input" | jq -rc --argjson prev "${1:-null}" --arg kind "$kind" --arg session "$session" \
-    --arg workspace "$workspace" --arg project "$project" --arg title "$title" "$program" 2>/dev/null
+    --arg workspace "$workspace" --arg project "$project" --arg branch "$branch" --arg title "$title" \
+    "$program" 2>/dev/null
 }
 out="$(update "$previous")"
 # A file that is not JSON (edited by hand, say) is started afresh.
