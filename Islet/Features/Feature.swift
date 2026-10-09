@@ -99,6 +99,7 @@ final class FeatureRegistry {
         BannerFeature(),
         ClaudeCodeFeature(approvals: .shared),
         ChatGPTFeature(approvals: .shared),
+        GeminiFeature(),
         DropZoneFeature(),
         DownloadsFeature(),
         FileCopiesFeature(),

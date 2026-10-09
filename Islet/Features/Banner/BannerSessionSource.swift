@@ -1,7 +1,7 @@
 import AppKit
 
 /// A feature whose hooks' banners name its sessions (`CustomBanner.sessionID`): Claude
-/// Code and ChatGPT. Anything on the Mac can open the URL a banner comes by, so the
+/// Code, ChatGPT and Gemini. Anything on the Mac can open the URL a banner comes by, so the
 /// name is all a banner gives: the feature looks it up in its own records, and only a
 /// session found there is opened, in the app and at the chat those records say.
 @MainActor

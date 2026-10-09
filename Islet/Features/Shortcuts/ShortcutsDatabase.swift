@@ -270,6 +270,14 @@ enum ShortcutsDatabase {
             return sqlite3_column_int64(statement, column)
         }
 
+        /// A blob's bytes, copied out.
+        func data(_ column: Int32) -> Data? {
+            guard sqlite3_column_type(statement, column) == SQLITE_BLOB else { return nil }
+            let count = Int(sqlite3_column_bytes(statement, column))
+            guard count > 0, let bytes = sqlite3_column_blob(statement, column) else { return Data() }
+            return Data(bytes: bytes, count: count)
+        }
+
         /// Core Data's dates: seconds since 2001.
         func date(_ column: Int32) -> Date? {
             let type = sqlite3_column_type(statement, column)

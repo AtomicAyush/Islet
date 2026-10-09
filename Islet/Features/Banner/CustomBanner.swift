@@ -60,13 +60,14 @@ struct CustomBanner: Equatable {
         "Morse", "Ping", "Pop", "Purr", "Sosumi", "Submarine", "Tink",
     ]
 
-    /// The activities a banner from outside Islet may be news of: Claude Code's and
-    /// ChatGPT's, whose sessions scripts tell Islet about (`Scripts/claude-code-hook.sh`,
-    /// `Scripts/chatgpt-hook.sh`), and whose news under them would say twice what they
+    /// The activities a banner from outside Islet may be news of: Claude Code's,
+    /// ChatGPT's and Gemini's, whose sessions scripts tell Islet about
+    /// (`Scripts/claude-code-hook.sh`, `Scripts/chatgpt-hook.sh`,
+    /// `Scripts/antigravity-hook.sh`), and whose news under them would say twice what they
     /// already show. Islet's own activities give their own news, and a banner from
     /// anywhere else rides under them, so whatever it says, the music or the timer stays
     /// in sight.
-    static let newsActivities = ["claudeCode", "chatGPT"]
+    static let newsActivities = ["claudeCode", "chatGPT", "gemini"]
 
     /// Long enough to read a title at a glance; a card, with more to read, stays longer.
     static func defaultDuration(for style: BannerStyle) -> TimeInterval {
@@ -271,8 +272,8 @@ enum BannerStyle: String, CaseIterable, Sendable {
 /// or hex as `ff9500` or `%23ff9500`; `color` and `colour` are read too), `duration` in
 /// seconds, `style` (`compact` or `card`), `sound` (a system sound's name),
 /// `interruption` (`passive` lets a Focus hold it back) and `activity`, the activity it
-/// is news of (`claudeCode` or `chatGPT`), whose place it takes rather than riding
-/// under it. With an activity, `session` names the session it is news of, and
+/// is news of (`claudeCode`, `chatGPT` or `gemini`), whose place it takes rather than
+/// riding under it. With an activity, `session` names the session it is news of, and
 /// `event=done` says a reply finished. Names are read in any case, the last of a
 /// repeated one wins, and anything unknown is ignored.
 enum BannerRequest: Equatable {

@@ -287,11 +287,11 @@ shortcut is picked.
 
 **Presentation Mode.** While you share or record your screen, are on a call, or play a slideshow
 in Keynote or PowerPoint, the island holds back what would show your own things to everyone
-watching: banners from scripts, Claude Code and ChatGPT, what a shortcut hands back, screenshots
-and finished downloads, which Focus comes on, a new song and the line being sung. The home page
+watching: banners from scripts, Claude Code, ChatGPT and Gemini, what a shortcut hands back,
+screenshots and finished downloads, which Focus comes on, a new song and the line being sung. The home page
 keeps its tiles where they are, but the clipboard, the shelf, the calendar, the Focus and the
 music say only "Hidden", and the island opens on home rather than on the calendar, the music,
-downloads, Claude Code or ChatGPT, whose tabs still open them. A tile you hid stays gone rather
+downloads, Claude Code, ChatGPT or Gemini, whose tabs still open them. A tile you hid stays gone rather
 than saying "Hidden", and one held back can still be moved or hidden while you edit the page. On
 a call the calendar's Join camera stays beside the notch and still joins it: it says only which
 service the call is on, while the event's title waits on the calendar's page. A banner that
@@ -427,9 +427,42 @@ on screen turns this off, and every reply in the app then gets a banner. A permi
 asks while you're in another app can be answered in the island too (see [Approving from the
 island](#approving-from-the-island)).
 
+**Gemini.** While one of Gemini's agents in Google Antigravity works on a conversation, a wand
+breathes left of the camera and the run's time counts up right of it, or, once the agent has
+written its task list, a ring fills as the list gets done. When an agent asks you a question,
+waits for you to allow a tool, or stops to wait on you, the wand turns orange with a question
+mark at its corner, and the time counts how long it has waited; when one stops on an error, or
+because Antigravity's quota has run out, it shows a warning and "Error" or "Quota" for a few
+minutes. Opened, there is a row for each
+conversation: Antigravity's title for it (or its workspace, with Settings → Activities → Gemini →
+Show what you asked off), the workspace and the model, what the agent is doing ("Running npm",
+"Editing Store.swift") and for how long, the tools it has used so far ("11 steps · npm,
+Settings.tsx, theme.ts"), the subagents it has sent off and what each is doing, and its task
+list as a checklist with a bar ("2 of 4 done"), from where it has got to. Banners say when an
+agent finishes, has a question, waits for your approval or needs your input, reaches its step
+limit, stops on an error or runs out of quota ("Gemini quota reached"); a run you stop yourself
+gets none, and a subagent's only for an error or its quota. Antigravity has no measure of quota
+left that Islet could read without signing in as you, so that banner is all there is.
+Click a conversation, or a banner, to bring Antigravity forward: it can't be asked from outside
+to open a conversation, so you pick it there. A finish in the conversation Antigravity has in
+front, while it is in front and the screen unlocked, puts up no banner; Islet tells by
+Antigravity's window title, which it reads through Accessibility, so without Accessibility for
+Islet every finish gets its banner. Settings → Activities → Gemini → Skip Done when the chat is
+on screen turns this off. A wait gets its banner only while Antigravity isn't in front. Like
+Claude Code and ChatGPT it sits in the bubble beside music or a timer, behind the Sound Mixer
+unless a conversation is waiting for you. Antigravity tells Islet all this through its hooks,
+with the script in `Scripts/` (see [Antigravity hooks](#antigravity-hooks)); nothing shows until
+the hook is added. Nothing can be approved or denied from the island: the hook only tells. The
+hooks say when the model is called, when each tool finishes and when the agent stops, but not
+while a question or a tool waits on you, nor always when you stop an agent yourself, so Islet
+also reads Antigravity's list of conversations: a step waiting on you there makes the
+conversation wait (and puts up its banner), a conversation the list says is idle is over half a
+minute after its last event, one quiet for ten minutes is over (an hour while the list says it
+runs, background tasks and all), and a wait is let go after two hours.
+
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the
-bubble beside the island, unless a Claude Code or ChatGPT session is waiting for you. macOS has
+bubble beside the island, unless a Claude Code, ChatGPT or Gemini session is waiting for you. macOS has
 no per-app volume, so Islet makes one with Core Audio process taps (macOS 14.2 or later): the
 first time you move a slider, macOS asks to let Islet record system audio, which is how it
 passes the app's sound through at the level you set.
@@ -863,9 +896,9 @@ open "islet://timer/start?minutes=25"
 | `style` | `compact`, beside the notch, or `card` |
 | `sound` | One of the Mac's alert sounds (`Glass`, `Ping`, `Basso` and the rest of /System/Library/Sounds); silent without |
 | `interruption` | `passive` lets a Focus that asks for quiet hold it back, as it does a song change |
-| `activity` | `claudeCode` or `chatGPT`: the banner is news of the Claude Code or ChatGPT activity, so while that holds the island, one beside the notch takes its place rather than going in a row under it; anything else is ignored |
+| `activity` | `claudeCode`, `chatGPT` or `gemini`: the banner is news of the Claude Code, ChatGPT or Gemini activity, so while that holds the island, one beside the notch takes its place rather than going in a row under it; anything else is ignored |
 | `session` | With `activity`, the session the banner is news of, by the id its hook was given (letters, digits, `.`, `-` and `_`, up to 128): a click on the banner opens that session as a click on its row does, if Islet has a session by that id for that activity, and otherwise opens the island; resting the pointer on it does not open the island, so it stays to be clicked |
-| `event` | `done`, with `session`: the banner says a reply finished, and stays down while that session's chat is on screen (see Claude Code and ChatGPT above) |
+| `event` | `done`, with `session`: the banner says a reply finished, and stays down while that session's chat is on screen (see Claude Code, ChatGPT and Gemini above) |
 
 Spaces go in as `%20` (a `+` stays a plus), and a `#` as `%23`, since a bare one ends the
 query. Titles are cut at 60 characters and subtitles at 120, and a colour that would not show
@@ -896,7 +929,8 @@ A Stop hook in `~/.claude/settings.json` whose command is
 `open -g 'islet://banner?title=Claude%20finished&symbol=checkmark.circle.fill&tint=green'`
 flashes the island whenever Claude Code finishes, after every reply, short ones too. The hook
 script in [Claude Code hooks](#claude-code-hooks) does that and more, and the one in
-[ChatGPT hooks](#chatgpt-hooks) does the same for ChatGPT.
+[ChatGPT hooks](#chatgpt-hooks) does the same for ChatGPT, as the one in
+[Antigravity hooks](#antigravity-hooks) does for Gemini.
 
 And a test run can say how it went:
 
@@ -1069,6 +1103,88 @@ the script is quick, prints nothing (but an answer given in the island) and alwa
 chat's file holds. A new version of the script is installed by copying it over the old one; the
 hooks' lines stay as they are, since a changed hook has to be trusted again (only the longer wait
 for approving from the island changes one, if you choose it).
+
+### Antigravity hooks
+
+`Scripts/antigravity-hook.sh` is a hook script for Google Antigravity, where Gemini's agents
+run. It puts up banners — an agent finished (a card with the conversation's title), stopped to
+wait on you, reached its step limit, stopped on an error or ran out of quota — each naming its
+conversation, and keeps a small file for each conversation in
+`~/Library/Application Support/Islet/Gemini/Sessions`, which the Gemini activity follows. It
+is for Antigravity, not Gemini CLI, whose hooks are different. Copy it into a folder of its own
+in `~/.gemini`:
+
+```bash
+mkdir -p ~/.gemini/hooks
+cp Scripts/antigravity-hook.sh ~/.gemini/hooks/islet-antigravity.sh
+```
+
+and add Islet's hook to `~/.gemini/config/hooks.json` (Settings → Activities → Gemini shows it
+and copies it, and says whether it is set up). The file is one JSON object, a key for each named
+hook; if it is there already, put `"islet"` inside its braces beside the others. Islet never
+writes to `~/.gemini`: you add the hook yourself, and Islet only reads there. Reading
+Antigravity's list of conversations, a SQLite database Antigravity keeps open, SQLite marks the
+reader's place in the database's shared-memory index (its `-shm` file), as it does for any
+reader; nothing in the database or in Antigravity's settings changes.
+
+```json
+{
+  "islet": {
+    "PreInvocation": [
+      { "type": "command", "timeout": 5,
+        "command": "/bin/bash ~/.gemini/hooks/islet-antigravity.sh invocation" }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [
+        { "type": "command", "timeout": 5,
+          "command": "/bin/bash ~/.gemini/hooks/islet-antigravity.sh tool" }
+      ] }
+    ],
+    "Stop": [
+      { "type": "command", "timeout": 5,
+        "command": "/bin/bash ~/.gemini/hooks/islet-antigravity.sh stop" }
+    ]
+  }
+}
+```
+
+Each hook hands the script its kind of event. PreInvocation, before each call to the model,
+marks the conversation working (and starts a new run after the last one stopped); PostToolUse,
+after each tool, counts it and keeps what sort of tool it was; Stop marks the run done, waiting
+for you (when the agent's last tool was `notify_user` waiting on you), at its step limit,
+stopped by you (no banner), stopped on an error, or out of quota (an error that says
+`RESOURCE_EXHAUSTED`, quota, a rate limit or a 429 status), or still going in the background,
+when Antigravity says background tasks are not done. It reads how a run stopped by the
+documentation's words (`model_stop`, `max_steps_exceeded`, `error`) or by the names Antigravity
+gives its reasons (`EXECUTOR_TERMINATION_REASON_MAX_INVOCATIONS` and the like). A question
+(`ask_question`) or a tool waiting for your leave sends no event until you answer, so Islet
+learns of those from Antigravity's list of conversations instead. A subagent's run, one a
+conversation sends off, is kept with the conversation that sent it off (`parentConversationId`)
+and listed under it, and gets a banner only for an error or its quota, naming that conversation.
+The script keeps no command, file contents, folder, question, message, prompt or
+reply: only the program a command runs, the name of the file a tool wrote or read, an MCP
+server's name or the tool's own, and the first 120 characters of an error that stopped the
+agent. Each conversation's title comes from Antigravity's list of conversations
+(`~/.gemini/antigravity/conversation_summaries.db`), and its task list from the `task.md` among
+its own files (`~/.gemini/antigravity/brain/<conversation>/`), both read-only and only inside
+`~/.gemini`; from the list, only each conversation's title, the start of it, how its run stands
+and whether a step of it waits on you, and on what.
+
+The script only tells: it never changes what Antigravity does. Antigravity takes a hook's
+standard output as its answer, and the script prints exactly the answer Antigravity's
+documentation gives for leaving things as they are, before it reads anything: `{}` for
+PostToolUse (which "expects an empty JSON object"), PreInvocation (nothing to inject) and Stop
+(only `"decision": "continue"` would keep the agent going). It isn't on PreToolUse: every
+decision the documentation gives a PreToolUse hook (`allow`, `deny`, `ask`, `force_ask`) overrules
+Antigravity's own, and it gives none that leaves it be; should you put the script there anyway
+it prints nothing, and Settings says so. It always exits 0, within three seconds at most (a
+watchdog ends it, well inside the hook's five), reads the whole event however large, and keeps
+only its first megabyte. It needs `jq`, part of macOS from 15 on (`brew install jq` before that).
+It keeps the last 200 or so events in `.hook-log.jsonl` beside the conversations' files, by the
+names of what each carries, never their values but a tool's name and how a run stopped, which
+says what a new version of Antigravity sends; `ISLET_NOTIFY_DRY=1` writes its banners to standard
+error instead of showing them. Its header lists what each conversation's file holds. A new version
+of the script is installed by copying it over the old one.
 
 ### Approving from the island
 

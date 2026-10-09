@@ -282,6 +282,18 @@ extension ChatGPTFeature {
     }
 }
 
+extension GeminiFeature {
+    var searchTerms: SettingsSearchTerms {
+        SettingsSearchTerms(
+            labels: ["Show what you asked", "Skip Done when the chat is on screen", "Hooks", "Copy Hooks",
+                     "Islet's hook", "Last heard from Gemini"],
+            keywords: ["gemini", "antigravity", "google", "agents", "agent manager", "hooks.json", "hooks",
+                       "conversations", "tasks", "task list", "progress", "quota", "limit", "error", "done",
+                       "finished", "banner", "popup", "notification", "on screen", "accessibility", "coding"]
+        )
+    }
+}
+
 extension DropZoneFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
