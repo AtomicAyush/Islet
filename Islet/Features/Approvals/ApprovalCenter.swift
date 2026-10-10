@@ -25,10 +25,31 @@ struct ApprovalItem: Equatable, Identifiable, Sendable {
 /// A few words telling one session from another in the same folder: "since 10:42".
 /// The branch beside the folder is the session's own (`ApprovalBranch`).
 enum ApprovalSessionLabel {
-    static func make(_ request: ApprovalRequest, startTime: (Int32) -> Date?) -> String {
+    static func make(_ request: ApprovalRequest, startTime: (Int32) -> Date?,
+                     locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
         guard request.agentPid > 1, let started = startTime(request.agentPid) else { return "" }
-        let label = "since " + started.formatted(date: .omitted, time: .shortened)
+        let label = "since " + time(started, locale: locale, timeZone: timeZone)
         return ApprovalText.hiddenCharacter(in: label, rule: .strict) == nil ? label : ""
+    }
+
+    /// The time, short, as the Mac's clock gives it, in only what the card's strict rule
+    /// takes: the clock's own spaces, such as the narrow no-break one before AM or PM on a
+    /// 12-hour clock or the no-break one some languages put there, as plain ones, and
+    /// without the marks that set the direction of its words. These are Islet's words, not
+    /// the agent's, so the rule stays as strict for everything the agent sends; it still
+    /// checks the label, which shows only if it passes.
+    static func time(_ date: Date, locale: Locale = .autoupdatingCurrent,
+                     timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        let shown = date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, timeZone: timeZone))
+        var scalars = String.UnicodeScalarView()
+        for scalar in shown.unicodeScalars {
+            switch scalar.properties.generalCategory {
+            case .spaceSeparator: scalars.append(" ")
+            case .format: continue
+            default: scalars.append(scalar)
+            }
+        }
+        return String(scalars)
     }
 }
 
