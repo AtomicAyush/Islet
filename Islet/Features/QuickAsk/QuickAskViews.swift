@@ -264,11 +264,11 @@ private struct QuickAskFailureRow: View {
 
 /// Where a question goes when its provider can't answer it.
 enum QuickAskFallback {
-    /// ChatGPT, or Claude, whichever is ready first: for an answer from this Mac. `seeing`,
-    /// the question came with a picture, and only one that can see it will do.
+    /// ChatGPT, Claude or Gemini, whichever is ready first: for an answer from this Mac.
+    /// `seeing`, the question came with a picture, and only one that can see it will do.
     @MainActor
     static func cloud(_ ask: QuickAskModel, seeing: Bool = false) -> AskProvider? {
-        [AskProvider.chatGPT, .claude].first { ask.status(of: $0) == .ready && (!seeing || ask.takesImages($0)) }
+        [AskProvider.chatGPT, .claude, .gemini].first { ask.status(of: $0) == .ready && (!seeing || ask.takesImages($0)) }
     }
 
     /// Another that can see a picture, for one that can't: this Mac first, where it stays.
@@ -318,7 +318,7 @@ struct QuickAskProviderChip: View {
     var body: some View {
         let current = session.provider
         Menu {
-            ForEach(AskProvider.allCases) { provider in
+            ForEach(AskProvider.allCases.filter { $0 == current || AskProvider.isOffered($0, session.ask.status(of:)) }) { provider in
                 let status = session.ask.status(of: provider)
                 Button {
                     session.choose(provider)

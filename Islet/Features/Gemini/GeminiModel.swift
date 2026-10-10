@@ -31,8 +31,10 @@ final class GeminiModel {
     private(set) var sessions: [GeminiSession] = []
     /// Made-up conversations a preview is showing, in place of the real ones.
     private(set) var samples: [GeminiSession] = []
-    /// When the hook last wrote anything, for Settings; `nil` if it never has.
+    /// When Antigravity's hook last wrote anything, for Settings; `nil` if it never has.
     private(set) var lastHeard: Date?
+    /// The same, for Gemini CLI's.
+    private(set) var lastHeardCLI: Date?
 
     /// Called after every change to what is shown.
     @ObservationIgnored var onChange: () -> Void = {}
@@ -52,8 +54,9 @@ final class GeminiModel {
         return fractions.isEmpty ? nil : fractions.reduce(0, +) / Double(fractions.count)
     }
 
-    func update(_ sessions: [GeminiSession], lastHeard: Date?) {
+    func update(_ sessions: [GeminiSession], lastHeard: Date?, lastHeardCLI: Date?) {
         self.lastHeard = lastHeard
+        self.lastHeardCLI = lastHeardCLI
         guard sessions != self.sessions else { return }
         self.sessions = sessions
         if samples.isEmpty { onChange() }

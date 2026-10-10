@@ -15,7 +15,7 @@ struct QuickAskSettings: View {
 
     var body: some View {
         Picker("Answer with", selection: chosen) {
-            ForEach(AskProvider.allCases) { provider in
+            ForEach(AskProvider.allCases.filter { $0 == chosen.wrappedValue || AskProvider.isOffered($0, model.status(of:)) }) { provider in
                 Text(provider.title).tag(provider)
             }
         }
@@ -29,7 +29,7 @@ struct QuickAskSettings: View {
         }
         Toggle(isOn: $readsCalendar) {
             Text("Let Apple's model read your calendar")
-            Text("When you ask it, like \"am I free today at 8?\", Apple's model looks up your events and free time in the calendars Quick Calendar checks. It only reads, here on your Mac: nothing is sent anywhere, and ChatGPT and Claude are never given your calendar.")
+            Text("When you ask it, like \"am I free today at 8?\", Apple's model looks up your events and free time in the calendars Quick Calendar checks. It only reads, here on your Mac: nothing is sent anywhere, and ChatGPT, Claude and Gemini are never given your calendar.")
         }
         LabeledContent("Shortcut") {
             ShortcutRecorder(combo: model.shortcut, problem: model.shortcutProblem) { model.setShortcut($0) }
@@ -154,6 +154,11 @@ struct QuickAskSettings: View {
         once, with your next question: to On this Mac, it stays on your Mac; to ChatGPT or Claude, it is sent with \
         it (to ChatGPT through a private file that goes as soon as it has been read). Follow-ups don't send it \
         again, and it is forgotten with the conversation. Quick questions to ChatGPT count towards the same usage as the ChatGPT app. A file of \
-        instructions for Codex in ~/.codex (AGENTS.md) would go with each question to ChatGPT.
+        instructions for Codex in ~/.codex (AGENTS.md) would go with each question to ChatGPT. **Gemini**, offered once \
+        Gemini CLI is installed and signed in, sends your question, with the conversation so far (and a picture, if one \
+        goes, from a private file in the run's own folder), to Google through Gemini CLI with its fast model, no tools, \
+        extensions, MCP servers or context files, and none of your hooks; it counts towards Gemini CLI's quota. Gemini \
+        CLI saves every session, so it runs in a folder of Islet's, and Islet deletes that question's session from \
+        ~/.gemini/tmp as it ends, or with the next question should Islet quit first; what Google keeps is up to its own privacy policy.
         """
 }

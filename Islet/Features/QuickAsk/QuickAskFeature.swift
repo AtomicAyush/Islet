@@ -5,14 +5,14 @@ import Observation
 /// A quick question, asked from the island and answered there, and forgotten as the
 /// island closes. ⌥⇧Space (or the tile, or the Shortcuts action) opens the box on the
 /// display under the pointer, ready to type; Return asks. Apple's on-device model answers
-/// where it can, and ChatGPT or Claude through their own apps' command line tools, a tap
-/// away.
+/// where it can, and ChatGPT or Claude through their own apps' command line tools, or
+/// Gemini through Gemini CLI, a tap away.
 ///
 /// Islet keeps nothing of it: the questions and answers are in memory while the island
 /// is open, for follow-ups to go on from, and are gone when it closes. Nothing is written
 /// to disk or the defaults, logged, put in a URL, or copied unless Copy is pressed; the
 /// tools are run so that they keep nothing either (`AskProcess`, `CodexAskBackend`,
-/// `ClaudeAskBackend`).
+/// `ClaudeAskBackend`, `GeminiAskBackend`).
 @MainActor
 final class QuickAskFeature: Feature {
     let id = "quickask"
@@ -45,8 +45,9 @@ final class QuickAskFeature: Feature {
     }
 
     func start() {
-        // Runs cut short by a crash leave their folders behind.
+        // Runs cut short by a crash leave their folders behind, and Gemini's its session.
         AskProcess.removeLeftovers()
+        GeminiAskBackend.removeLeftovers()
         AskNetwork.shared.start()
         let model = model
         model.refreshStatuses()
@@ -130,7 +131,7 @@ final class QuickAskModel {
         capturer: (any ScreenCapturer)? = nil,
         calendar: AskCalendar? = nil
     ) {
-        let backends = backends ?? [AppleAskBackend(), CodexAskBackend(), ClaudeAskBackend()]
+        let backends = backends ?? [AppleAskBackend(), CodexAskBackend(), ClaudeAskBackend(), GeminiAskBackend()]
         self.backends = Dictionary(uniqueKeysWithValues: backends.map { ($0.provider, $0) })
         self.defaults = defaults
         self.pasteboard = pasteboard

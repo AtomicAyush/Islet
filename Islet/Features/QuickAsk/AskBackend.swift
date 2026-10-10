@@ -8,6 +8,8 @@ enum AskProvider: String, CaseIterable, Identifiable {
     case chatGPT = "chatgpt"
     /// Claude, through the Claude app's own command line tool.
     case claude
+    /// Gemini, through Gemini CLI, signed in as it is. Offered only once it can answer.
+    case gemini
 
     var id: String { rawValue }
 
@@ -16,6 +18,7 @@ enum AskProvider: String, CaseIterable, Identifiable {
         case .onDevice: "On this Mac"
         case .chatGPT: "ChatGPT"
         case .claude: "Claude"
+        case .gemini: "Gemini"
         }
     }
 
@@ -25,6 +28,7 @@ enum AskProvider: String, CaseIterable, Identifiable {
         case .onDevice: "Apple's model"
         case .chatGPT: "ChatGPT"
         case .claude: "Claude"
+        case .gemini: "Gemini"
         }
     }
 
@@ -33,6 +37,7 @@ enum AskProvider: String, CaseIterable, Identifiable {
         case .onDevice: "laptopcomputer"
         case .chatGPT: "bubble.left.fill"
         case .claude: "sparkle"
+        case .gemini: "wand.and.stars"
         }
     }
 
@@ -42,10 +47,17 @@ enum AskProvider: String, CaseIterable, Identifiable {
         case .onDevice: "Stays on this Mac"
         case .chatGPT: "Sent to ChatGPT with your question"
         case .claude: "Sent to Claude with your question"
+        case .gemini: "Sent to Gemini with your question"
         }
     }
 
-    /// The first ready of On this Mac, ChatGPT and Claude, or On this Mac when none is.
+    /// Whether it is offered in the menu of who answers: Gemini only once it can answer,
+    /// being installed and signed in; the others always, saying why where they can't.
+    static func isOffered(_ provider: AskProvider, _ status: (AskProvider) -> AskStatus) -> Bool {
+        provider != .gemini || status(provider) == .ready
+    }
+
+    /// The first ready of On this Mac, ChatGPT, Claude and Gemini, or On this Mac when none is.
     static func firstReady(_ status: (AskProvider) -> AskStatus) -> AskProvider {
         allCases.first { status($0) == .ready } ?? .onDevice
     }
@@ -67,8 +79,14 @@ enum AskStatus: Equatable {
     func text(for provider: AskProvider) -> String {
         switch self {
         case .ready: "Ready"
-        case .notInstalled: "Install the \(provider.title) app to ask \(provider.title)"
-        case .signInNeeded: provider == .claude ? "Connect Claude in Settings" : "Sign in to the \(provider.title) app"
+        case .notInstalled:
+            provider == .gemini ? "Install Gemini CLI to ask Gemini" : "Install the \(provider.title) app to ask \(provider.title)"
+        case .signInNeeded:
+            switch provider {
+            case .claude: "Connect Claude in Settings"
+            case .gemini: "Sign in to Gemini CLI: run gemini in Terminal once"
+            default: "Sign in to the \(provider.title) app"
+            }
         case .notReady: "ChatGPT isn't ready — open the ChatGPT app once"
         case .appleIntelligenceOff: "Turn on Apple Intelligence in System Settings"
         case .modelDownloading: "Apple's model is still downloading"
@@ -120,7 +138,8 @@ enum AskFailure: Error, Equatable {
         case .notSignedIn: return AskStatus.signInNeeded.text(for: provider)
         case .notReady: return AskStatus.notReady.text(for: provider)
         case .usageLimit(let resets):
-            let limit = "\(provider.title)'s usage limit is reached\(resets.map { " — it resets \($0)" } ?? "")"
+            let reached = provider == .gemini ? "Gemini's quota is used up for now" : "\(provider.title)'s usage limit is reached"
+            let limit = reached + (resets.map { " — it resets \($0)" } ?? "")
             return limit + (other.map { ". Ask \($0.name) instead?" } ?? "")
         case .offline: return "You're offline" + instead
         case .busy: return "\(provider.title) is busy — try again" + (other.map { " or ask \($0.name)" } ?? "")

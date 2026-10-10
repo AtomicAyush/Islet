@@ -471,6 +471,28 @@ conversation wait (and puts up its banner), a conversation the list says is idle
 minute after its last event, one quiet for ten minutes is over (an hour while the list says it
 runs, background tasks and all), and a wait is let go after two hours.
 
+Gemini CLI's sessions show on the same page, beside Antigravity's conversations, each row saying
+where it runs ("Terminal", "iTerm" or "Antigravity"): your latest prompt (or the folder, with Show
+what you asked off), the folder and its git branch, the model that last answered, what Gemini is
+doing and for how long, the steps so far, and its to-do list as a checklist once it writes one.
+When Gemini asks your permission for a tool, the wand turns orange and the row says what for
+("Asks to run npm"); a question (its ask_user tool) or a plan to approve shows the same way.
+Banners say Gemini finished (a card with the start of its reply), needs permission, has a question
+or a plan for you, stopped on an error, or ran out of quota ("Gemini quota reached"); a turn you
+stop yourself, or a tool you turn down, gets none. Click a session, or its banner, and Terminal or
+iTerm comes forward at the session's tab, as for Claude Code in a terminal (macOS asks once whether
+Islet may select tabs there). A finish in the tab in front puts up no banner, which Islet tells by
+asking the terminal which tab that is, only once you've let it select tabs; until then, and in any
+other app, every finish gets its banner. Nothing is approved from the island: Gemini CLI gives a
+hook no way to allow a tool, so you answer in the terminal. Gemini CLI says when a session starts
+and ends, each prompt, each tool before and after, each permission it asks and each turn's end,
+but not a tool you turn down or a turn cut short, so a session that was waiting on you is over
+once its own file is written without a word from the hook, and one asking permission whose tool
+has started a process was allowed; a session whose process has gone is over, and one quiet for ten
+minutes (an hour while a tool runs). It tells Islet through its hooks, with the script in
+`Scripts/` (see [Gemini CLI hooks](#gemini-cli-hooks)); Gemini CLI runs hooks only in folders you
+trust, so a session in a folder you haven't trusted doesn't show.
+
 **Usage limits.** How much of your Claude and ChatGPT plans' limits you have used, from files on
 this Mac alone: no second sign-in, and nothing asked of Anthropic or OpenAI. The **AI Usage**
 tile on the home page has a column for each, a bar per window (Claude's five hours and week;
@@ -663,13 +685,16 @@ conversation with it; choosing another page, the Mac sleeping or locking, or hal
 the pointer away lets go too (Escape pressed in the other app is that app's). The first time an
 answer shows while you're heading for another app, the header says so, once.
 
-Three can answer, chosen from the chip beside the field and remembered: **On this Mac**, Apple's
+Up to four can answer, chosen from the chip beside the field and remembered: **On this Mac**, Apple's
 on-device model (macOS 26 or later, with Apple Intelligence on), which is the fastest and sends
 nothing anywhere; **ChatGPT**, through the command line tool inside the ChatGPT app, signed in as
 the app is; and **Claude**, through the command line tool inside the Claude app. Claude's app
 keeps its sign-in to itself, so Settings › Quick Ask › Connect Claude shows the command to run
 once in Terminal (`claude setup-token`) and takes the token it prints, which Islet keeps in its
-own keychain item. Until you choose, the first that can answer does, in that order; under an
+own keychain item. **Gemini** answers through Gemini CLI, signed in as it is, and is in the chip
+only once Gemini CLI is installed and signed in (Islet tells from the kind of sign-in in
+`~/.gemini/settings.json` and whether its credentials file is there, never reading it), with its
+fast model (`flash-lite`). Until you choose, the first that can answer does, in that order; under an
 answer from this Mac, one click asks ChatGPT (or Claude) the same question. What goes wrong is
 said in a line with what might help: the app not installed, not signed in, a usage limit and
 when it resets, offline, busy, Apple's model refusing or too full (with Start afresh to ask
@@ -683,9 +708,9 @@ Islet's own windows are never in it. It's shown over the field before anything i
 it is of and where it will go — "Stays on this Mac" for On this Mac, "Sent to ChatGPT (or Claude)
 with your question" — and ✕ to take it away. It goes with that one question, made no larger than
 1600 pixels on its longest side: On this Mac is handed it in memory (Apple's model sees pictures
-on macOS 27), Claude's tool gets it on its standard input beside the question, and ChatGPT's tool,
-which only takes a file, gets a private one in its run's own folder that goes as soon as ChatGPT
-has read it. A provider that can't see pictures says so and offers one that can, in one click; the
+on macOS 27), Claude's tool gets it on its standard input beside the question, and ChatGPT's and
+Gemini's tools, which only take a file, get a private one in the run's own folder that goes as
+soon as they have read it. A provider that can't see pictures says so and offers one that can, in one click; the
 picture is never quietly left behind. Follow-ups don't send it again: ChatGPT and Claude are told
 in words that an earlier question came with one (press the eye again for a fresh look), and On
 this Mac, whose conversation stays in memory, still has it. The day summed up never takes it. The
@@ -718,7 +743,16 @@ unless you press Copy. On this Mac answers with Apple's on-device model; nothing
 Mac. ChatGPT and Claude send your question to OpenAI or Anthropic through their app's own
 command-line tool, with no history or session saved on this Mac, no tools, and none of your
 hooks, plugins or MCP servers; what OpenAI and Anthropic keep is up to their own privacy
-policies. Your calendar is never sent to ChatGPT or Claude; after your day is summed up in the
+policies. Gemini sends your question, with the conversation so far, to Google through Gemini
+CLI, with no tools, extensions, MCP servers, skills or context files, none of your hooks, and no
+telemetry or usage statistics (a settings file and Islet's own instructions in the run's folder,
+which Gemini CLI applies over yours); Gemini CLI saves every session, so it runs in a folder of
+Islet's (`~/Library/Application Support/Islet/Gemini/Quick Ask`, which Gemini CLI records once in
+`~/.gemini/projects.json`), and Islet deletes that question's session file from `~/.gemini/tmp` as
+it ends (one left by Islet quitting mid-answer goes with the next question, or as Islet starts),
+and nothing else there; Gemini CLI's own temporary folder is the run's, so an error report it
+writes, which holds the question, goes with it too. It counts towards Gemini CLI's quota, and a quota used up, a
+sign-in missing or being offline is said in the box. Your calendar is never sent to ChatGPT or Claude; after your day is summed up in the
 box, or On this Mac answers from your calendar, they're told only that it was, and On this Mac
 alone is given it, for a follow-up. A
 picture of your screen is taken only when you press the eye, is never written anywhere but that
@@ -975,8 +1009,8 @@ A Stop hook in `~/.claude/settings.json` whose command is
 `open -g 'islet://banner?title=Claude%20finished&symbol=checkmark.circle.fill&tint=green'`
 flashes the island whenever Claude Code finishes, after every reply, short ones too. The hook
 script in [Claude Code hooks](#claude-code-hooks) does that and more, and the one in
-[ChatGPT hooks](#chatgpt-hooks) does the same for ChatGPT, as the one in
-[Antigravity hooks](#antigravity-hooks) does for Gemini.
+[ChatGPT hooks](#chatgpt-hooks) does the same for ChatGPT, as the ones in
+[Antigravity hooks](#antigravity-hooks) and [Gemini CLI hooks](#gemini-cli-hooks) do for Gemini.
 
 And a test run can say how it went:
 
@@ -1162,7 +1196,8 @@ run. It puts up banners — an agent finished (a card with the conversation's ti
 wait on you, reached its step limit, stopped on an error or ran out of quota — each naming its
 conversation, and keeps a small file for each conversation in
 `~/Library/Application Support/Islet/Gemini/Sessions`, which the Gemini activity follows. It
-is for Antigravity, not Gemini CLI, whose hooks are different. Copy it into a folder of its own
+is for Antigravity, not Gemini CLI, whose hooks are different (see
+[Gemini CLI hooks](#gemini-cli-hooks)). Copy it into a folder of its own
 in `~/.gemini`:
 
 ```bash
@@ -1236,6 +1271,86 @@ names of what each carries, never their values but a tool's name and how a run s
 says what a new version of Antigravity sends; `ISLET_NOTIFY_DRY=1` writes its banners to standard
 error instead of showing them. Its header lists what each conversation's file holds. A new version
 of the script is installed by copying it over the old one.
+
+### Gemini CLI hooks
+
+`Scripts/gemini-cli-hook.sh` is a hook script for Gemini CLI. It puts up banners — Gemini
+finished (a card with the start of its reply), needs your permission for a tool, has a question
+or a plan for you, stopped on an error or ran out of quota — each naming its session, and keeps a
+small file for each session beside Antigravity's conversations in
+`~/Library/Application Support/Islet/Gemini/Sessions`, marked as the CLI's, which the Gemini
+activity follows. Copy it into `~/.gemini`:
+
+```bash
+mkdir -p ~/.gemini/hooks
+cp Scripts/gemini-cli-hook.sh ~/.gemini/hooks/islet-gemini-cli.sh
+```
+
+and add Islet's hooks to `~/.gemini/settings.json`, inside its outer braces beside what is
+there (Settings → Activities → Gemini shows it and copies it, and says whether it is set up; if
+the file has `"hooks"` already, put each event in it). Timeouts are in milliseconds. Gemini CLI
+runs hooks only in folders you trust; Islet never writes to `~/.gemini`.
+
+```json
+"hooks": {
+  "SessionStart": [
+    { "hooks": [ { "name": "islet", "type": "command", "timeout": 5000,
+        "command": "/bin/bash ~/.gemini/hooks/islet-gemini-cli.sh start" } ] }
+  ],
+  "SessionEnd": [
+    { "hooks": [ { "name": "islet", "type": "command", "timeout": 5000,
+        "command": "/bin/bash ~/.gemini/hooks/islet-gemini-cli.sh end" } ] }
+  ],
+  "BeforeAgent": [
+    { "hooks": [ { "name": "islet", "type": "command", "timeout": 5000,
+        "command": "/bin/bash ~/.gemini/hooks/islet-gemini-cli.sh prompt" } ] }
+  ],
+  "AfterAgent": [
+    { "hooks": [ { "name": "islet", "type": "command", "timeout": 5000,
+        "command": "/bin/bash ~/.gemini/hooks/islet-gemini-cli.sh stop" } ] }
+  ],
+  "BeforeTool": [
+    { "hooks": [ { "name": "islet", "type": "command", "timeout": 5000,
+        "command": "/bin/bash ~/.gemini/hooks/islet-gemini-cli.sh tool-start" } ] }
+  ],
+  "AfterTool": [
+    { "hooks": [ { "name": "islet", "type": "command", "timeout": 5000,
+        "command": "/bin/bash ~/.gemini/hooks/islet-gemini-cli.sh tool" } ] }
+  ],
+  "Notification": [
+    { "hooks": [ { "name": "islet", "type": "command", "timeout": 5000,
+        "command": "/bin/bash ~/.gemini/hooks/islet-gemini-cli.sh notification" } ] }
+  ]
+}
+```
+
+SessionStart notes the session, its terminal (its tty, and in iTerm its session's id) and the app
+it runs in; SessionEnd deletes its file; BeforeAgent starts a turn and keeps your prompt's first
+line; BeforeTool and AfterTool say what tool is under way and count each one, keeping only the
+program a command runs, the name of the file a tool wrote or read, or an MCP server's name, and
+the to-do list Gemini's write_todos tool gives; Notification, when Gemini asks your permission
+(ToolPermission), says what for, or that it has a question or a plan; AfterAgent ends the turn:
+done where it ended on Gemini's reply, else stopped on an error (or quota) where Gemini wrote an
+error report for the turn in the ten seconds before it ended
+(`gemini-client-error-Turn.run-sendMessageStream-*.json` in `$TMPDIR`, of which the first 8 KB
+are read for the message), else stopped by you, which gets no banner. A command you stop with
+Escape while it runs ends the turn there, as Gemini CLI says nothing more. Of the session's own file
+(the transcript Gemini keeps in `~/.gemini/tmp`) the script reads only the kind of its last
+message and the model named last, from its last 256 KB; it keeps no command, file contents,
+folder, question, plan or reply (the reply's start goes only into the Done banner).
+
+The script only tells: it never changes what Gemini CLI does. Gemini CLI takes a hook's standard
+output (or, where that is empty, its standard error) as its answer and any exit status but 0 as a
+failure or a refusal; the script prints exactly `{}` for every event, which Gemini CLI's hooks
+documentation gives as the answer that does nothing, before it reads anything, keeps everything
+else off both, and always exits 0, within three seconds at most (a watchdog ends it, well inside
+the hook's five). Gemini CLI gives a hook no way to allow a tool, only to refuse one, and the
+script refuses nothing. It reads the whole event however large and keeps only its first megabyte.
+It needs `jq`, part of macOS from 15 on. It keeps the last 200 or so events in
+`.cli-hook-log.jsonl` beside the sessions' files, by the names of what each carries, never their
+values but a tool's name, the kind of a notification and how a turn ended; `ISLET_NOTIFY_DRY=1`
+writes its banners to standard error instead of showing them. Its header lists what each
+session's file holds.
 
 ### Approving from the island
 

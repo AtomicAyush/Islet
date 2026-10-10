@@ -1,12 +1,13 @@
 import Darwin
 import Foundation
 
-/// One run of a command line tool that answers a question: ChatGPT's or Claude's. The
+/// One run of a command line tool that answers a question: ChatGPT's, Claude's or Gemini's. The
 /// question goes in on its standard input, never in its arguments, where every process
 /// on the Mac could read it; its output comes back a line at a time as it prints it.
 ///
 /// It runs in a folder of its own, empty but for the files the run is given, which goes
-/// as the tool exits, with exactly the environment it is given and nothing of Islet's,
+/// as the tool exits (or, where it is given one, in a working folder of Islet's, the run's
+/// own folder still holding its files), with exactly the environment it is given and nothing of Islet's,
 /// in a process group of its own: stopping it stops whatever it started too. Stopping
 /// is SIGTERM to the group, then SIGKILL a second on. It is given up on and stopped
 /// when it prints nothing for `firstOutput`, or runs past `total`, or when whoever reads
@@ -28,6 +29,12 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         var readOnce: (name: String, isRead: @Sendable (String) -> Bool)?
         /// What the tool reads on its standard input.
         var input: Data
+        /// The same, given the run's own folder, where the input names a file in it; in
+        /// place of `input`.
+        var inputFor: ((URL) -> Data)?
+        /// Where the tool runs, in place of the run's own folder: Gemini's, which keeps a
+        /// record of every folder it runs in, runs in one of Islet's that stays.
+        var workingDirectory: URL?
         var firstOutput: TimeInterval = AskLimits.firstOutput
         var total: TimeInterval = AskLimits.total
         /// Where the run's folder is made. Tests give their own.
@@ -115,7 +122,7 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         posix_spawn_file_actions_adddup2(&actions, input[0], 0)
         posix_spawn_file_actions_adddup2(&actions, output[1], 1)
         posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
-        posix_spawn_file_actions_addchdir_np(&actions, folder.path)
+        posix_spawn_file_actions_addchdir_np(&actions, (launch.workingDirectory ?? folder).path)
 
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
@@ -157,7 +164,7 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         lock.unlock()
         ChildProcesses.shared.insert(self)
 
-        let data = launch.input
+        let data = launch.inputFor?(folder) ?? launch.input
         DispatchQueue.global(qos: .userInitiated).async {
             Self.write(data, to: input[1])
             close(input[1])

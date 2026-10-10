@@ -75,27 +75,40 @@ enum GeminiText {
     static let stepNameLimit = 22
     static let historyNameLimit = 18
 
-    /// Antigravity's title for the conversation, or the start of it, while Settings shows
-    /// what was asked; else its project; else the app.
+    /// Antigravity's title for the conversation, or the start of it, or a CLI session's
+    /// latest prompt, while Settings shows what was asked; else its project; else the app.
     static func title(_ session: GeminiSession, showsText: Bool) -> String {
-        if showsText, let words = firstWords(session.title) ?? firstWords(session.preview) { return words }
-        if !session.record.project.isEmpty { return session.record.project }
-        return "Antigravity"
+        let record = session.record
+        if showsText, let words = record.isCLI ? firstWords(record.prompt)
+            : firstWords(session.title) ?? firstWords(session.preview) { return words }
+        if !record.project.isEmpty { return record.project }
+        return record.isCLI ? "Gemini CLI" : "Antigravity"
     }
 
-    /// The line under the title: why it stopped, for one stopped by an error; else the
-    /// project, where the title is not it, and the model.
+    /// Where the conversation runs, at the start of the line under the title: Antigravity,
+    /// or the app a CLI session's terminal is ("Terminal", "iTerm").
+    static func source(_ session: GeminiSession) -> String {
+        let record = session.record
+        guard record.isCLI else { return "Antigravity" }
+        return GeminiCLIHost.appNames[record.hostApp] ?? "Terminal"
+    }
+
+    /// The line under the title: where it runs, then why it stopped, for one stopped by an
+    /// error, where the error says more than the status does; else the project, where the
+    /// title is not it, and the model.
     static func detail(_ session: GeminiSession, showsText: Bool) -> String? {
         let record = session.record
+        let place = source(session)
         if session.state == .error {
             let error = oneLine(session.error)
-            return error.isEmpty ? (session.isQuota ? "Antigravity is out of quota for now" : nil) : error
+            if !error.isEmpty { return place + " · " + error }
+            return session.isQuota ? place + " · Until the quota resets" : place
         }
-        var parts: [String] = []
+        var parts = [place]
         let title = title(session, showsText: showsText)
         if !record.project.isEmpty, record.project != title { parts.append(record.project) }
         if let model = model(session) { parts.append(model) }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        return parts.joined(separator: " · ")
     }
 
     /// The model, where Antigravity names one other than its own choice.
@@ -125,7 +138,8 @@ enum GeminiText {
         case .needsInput:
             switch session.waiting {
             case .question?: return "Has a question"
-            case .approval?: return "Waiting for approval"
+            case .approval?: return session.record.isCLI ? "Needs permission" : "Waiting for approval"
+            case .plan?: return "Has a plan for you"
             case .input?, nil: return "Needs your input"
             }
         case .error:
@@ -182,9 +196,29 @@ enum GeminiText {
         }
     }
 
+    /// What a CLI session asks permission for, while it waits: "Asks to run npm".
+    static func asking(_ session: GeminiSession) -> String? {
+        guard session.record.isCLI, session.state == .needsInput, session.waiting == .approval,
+              let step = session.record.asking
+        else { return nil }
+        let name = middle(oneLine(step.name), stepNameLimit)
+        return switch step.kind {
+        case .shell: name.isEmpty ? "Asks to run a command" : "Asks to run \(name)"
+        case .edit: name.isEmpty ? "Asks to change a file" : "Asks to change \(name)"
+        case .mcp: name.isEmpty ? "Asks to use a tool" : "Asks to use \(name)"
+        case .web: "Asks to fetch from the web"
+        default: name.isEmpty ? "Asks to use a tool" : "Asks to use \(GeminiToolWords.readable(name))"
+        }
+    }
+
     /// The run's tools so far, once it has used two or more: how many, and the latest
-    /// programs and files among them, "14 steps · swift, Store.swift +2".
+    /// programs and files among them, "14 steps · swift, Store.swift +2". For a CLI session
+    /// asking permission, what for, and how many steps before it.
     static func history(_ session: GeminiSession) -> String? {
+        if let asking = asking(session) {
+            let steps = session.record.steps
+            return steps > 0 ? asking + " · \(steps) step\(steps == 1 ? "" : "s") so far" : asking
+        }
         let steps = session.record.steps
         guard !session.history.isEmpty, steps >= 2 else { return nil }
         var names: [String] = []
@@ -481,8 +515,13 @@ private struct GeminiSessionRow: View {
                     .accessibilityElement(children: .combine)
 
                     if let branch, !branch.inTitle {
-                        // The project and its branch, then the model, kept whole.
+                        // Where it runs, the project and its branch, then the model, kept whole.
                         HStack(spacing: 0) {
+                            Text(verbatim: GeminiText.source(session) + " · ")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(.islandText(0.5))
+                                .lineLimit(1)
+                                .fixedSize()
                             FolderBranchLabel(folder: session.record.project, branch: branch.branch, size: .detail)
                             if let model = GeminiText.model(session) {
                                 Text(verbatim: " · " + model)
@@ -507,7 +546,7 @@ private struct GeminiSessionRow: View {
                             .foregroundStyle(.islandText(0.45))
                             .lineLimit(1)
                             .frame(height: GeminiLayout.historyHeight, alignment: .leading)
-                            .accessibilityLabel("Steps so far: \(history)")
+                            .accessibilityLabel(GeminiText.asking(session) == nil ? "Steps so far: \(history)" : history)
                     }
 
                     let agents = GeminiText.agentLines(session)
@@ -535,7 +574,7 @@ private struct GeminiSessionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .help("Go to Antigravity")
+        .help("Go to \(GeminiText.source(session))")
     }
 
     private var status: some View {
@@ -664,13 +703,15 @@ struct GeminiSettingsView: View {
     @AppStorage(GeminiPrefs.showBranch) private var showBranch = true
     @AppStorage(GeminiPrefs.skipDoneOnScreen) private var skipDoneOnScreen = true
     @State private var copied = false
+    @State private var copiedCLI = false
     @State private var setup: GeminiHookSetup?
+    @State private var cliSetup: GeminiCLIHookSetup?
     @State private var canReadTitles = AXIsProcessTrusted()
 
     var body: some View {
         Toggle(isOn: $showPrompt) {
             Text("Show what you asked")
-            Text("Each conversation in the opened island goes by Antigravity's title for it, which says what you asked in a few words. Off, conversations show by workspace alone.")
+            Text("Each conversation in the opened island goes by Antigravity's title for it, which says what you asked in a few words, and each Gemini CLI session by your latest prompt. Off, they show by workspace alone.")
         }
 
         Toggle(isOn: $showBranch) {
@@ -683,6 +724,7 @@ struct GeminiSettingsView: View {
             Text(canReadTitles
                  ? "No banner when an agent finishes in the conversation Antigravity has in front; its row still updates. Islet reads Antigravity's window title to tell, and never changes anything in it. Off, every finish gets a banner."
                  : "No banner when an agent finishes in the conversation Antigravity has in front. Islet tells by Antigravity's window title, which needs Accessibility for Islet in System Settings › Privacy & Security; until then every finish gets a banner.")
+            Text("For Gemini CLI, none when Gemini finishes in the Terminal or iTerm tab in front. Islet asks the terminal which tab that is only once you've let it select tabs, with a click on a session's row; until then, and in any other app, every finish gets a banner.")
         }
 
         LabeledContent {
@@ -696,7 +738,7 @@ struct GeminiSettingsView: View {
                 copied = false
             }
         } label: {
-            Text("Hooks")
+            Text("Antigravity hooks")
             Text("Copy Scripts/antigravity-hook.sh from Islet's source to \(GeminiHooks.script) and add this to \(GeminiHooks.file), beside any hooks already there (it is a JSON object: put \"\(GeminiHooks.name)\" inside its braces). Antigravity reads it as it starts an agent. Islet never writes to ~/.gemini: you add the hook yourself.")
             Text(GeminiHooks.entryJSON)
                 .font(.system(size: 10.5, design: .monospaced))
@@ -725,10 +767,54 @@ struct GeminiSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+
+        cli
     }
 
-    static func heard(_ date: Date?, now: Date) -> String {
-        guard let date else { return "Not yet: once the hook is added, start an agent in Antigravity" }
+    /// Gemini CLI's hooks, their state, and when they were last heard from.
+    @ViewBuilder
+    private var cli: some View {
+        LabeledContent {
+            Button(copiedCLI ? "Copied" : "Copy Hooks") {
+                GeminiCLIHooks.copy()
+                copiedCLI = true
+            }
+            .task(id: copiedCLI) {
+                guard copiedCLI else { return }
+                try? await Task.sleep(for: .seconds(2))
+                copiedCLI = false
+            }
+        } label: {
+            Text("Gemini CLI hooks")
+            Text("Copy Scripts/gemini-cli-hook.sh from Islet's source to \(GeminiCLIHooks.script) and add this to \(GeminiCLIHooks.file), inside its outer braces beside what is there (if it has \"hooks\" already, put each event in it). Gemini CLI reads it as a session starts, and runs hooks only in folders you trust. Islet never writes to ~/.gemini: you add the hooks yourself.")
+            Text(GeminiCLIHooks.entryJSON)
+                .font(.system(size: 10.5, design: .monospaced))
+                .textSelection(.enabled)
+            Text("The hook only tells Islet what Gemini CLI does: it answers every event with {}, which Gemini CLI's documentation gives as the answer that changes nothing, and Gemini CLI gives a hook no way to allow a tool, so a permission it asks shows in the island and is answered in the terminal. Of each tool only the program it runs, the file it touches or the tool's name is kept, never the command, the change or what came back; of your prompt, its first line. The session's own file is read only for whether a turn ended on Gemini's reply and which model gave it.")
+        }
+
+        LabeledContent("Islet's Gemini CLI hook") {
+            Text(cliSetup?.words ?? "Looking…")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+        }
+        .task {
+            while !Task.isCancelled {
+                cliSetup = await Task.detached(priority: .utility) { GeminiCLIHookSetup.check() }.value
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
+
+        LabeledContent("Last heard from Gemini CLI") {
+            TimelineView(.everyMinute) { context in
+                Text(Self.heard(model.lastHeardCLI, now: context.date, from: "start a session in a folder you trust"))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    static func heard(_ date: Date?, now: Date, from start: String = "start an agent in Antigravity") -> String {
+        guard let date else { return "Not yet: once the hook is added, \(start)" }
         guard now.timeIntervalSince(date) >= 60 else { return "Just now" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full

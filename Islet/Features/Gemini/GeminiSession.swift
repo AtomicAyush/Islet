@@ -1,10 +1,19 @@
 import Foundation
 
-/// What a Gemini conversation in Google Antigravity is doing, as its hook last said.
+/// Where a Gemini conversation runs: one of Google Antigravity's agents, or a Gemini CLI
+/// session in a terminal.
+enum GeminiSource: String, Equatable, Sendable {
+    case antigravity
+    case cli
+}
+
+/// What a Gemini conversation is doing, as its hook last said: one in Google Antigravity
+/// (`Scripts/antigravity-hook.sh`) or a Gemini CLI session (`Scripts/gemini-cli-hook.sh`).
 enum GeminiSessionState: String, Equatable, Sendable {
     /// The agent is at work on the conversation.
     case working
-    /// The agent stopped to ask the person something, and waits for the answer.
+    /// The agent stopped to ask the person something, and waits for the answer: in Gemini
+    /// CLI, a tool waiting for their permission too.
     case needsInput
     /// The agent stopped on an error, its quota among them.
     case error
@@ -25,7 +34,7 @@ enum GeminiEnding: String, Equatable, Sendable {
     case background
     /// Stopped at Antigravity's limit on steps.
     case maxSteps
-    /// Stopped by the person.
+    /// Stopped by the person: in Gemini CLI, a tool they turned down too.
     case cancelled
     case error
     /// Stopped by its quota running out: the error said so.
@@ -79,9 +88,10 @@ struct GeminiHistoryEntry: Equatable, Sendable {
     var n = 1
 }
 
-/// One conversation's file, as `Scripts/antigravity-hook.sh` writes it. Its header lists
-/// the fields. Anything missing reads as empty, so a file from a later version of the
-/// hook with more in it, or less, still reads.
+/// One conversation's file, as `Scripts/antigravity-hook.sh` or, for a Gemini CLI session
+/// (`source` "cli"), `Scripts/gemini-cli-hook.sh` writes it. Their headers list the
+/// fields. Anything missing reads as empty, so a file from a later version of either hook
+/// with more in it, or less, still reads.
 struct GeminiSessionRecord: Equatable, Identifiable, Sendable {
     var id: String
     /// The git repository's folder name, or the workspace's; "" without one.
@@ -115,16 +125,42 @@ struct GeminiSessionRecord: Equatable, Identifiable, Sendable {
     /// A subagent's name, as Antigravity gives it; "" otherwise.
     var agent: String = ""
 
+    // Gemini CLI's alone.
+    var source: GeminiSource = .antigravity
+    /// The latest prompt's first line, plain.
+    var prompt: String = ""
+    /// The session's own file, only inside `~/.gemini/tmp`: Islet looks at when it was
+    /// written, never what it holds.
+    var transcriptPath: String = ""
+    /// The bundle id of the app Gemini CLI runs in, or "".
+    var hostApp: String = ""
+    /// The terminal it runs in, as `ttys003`; "" when unknown. Terminal and iTerm find the
+    /// tab by it.
+    var tty: String = ""
+    /// In iTerm, its session's own id, a UUID; "" elsewhere.
+    var itermSession: String = ""
+    /// Gemini CLI's own process, and when it started; `nil` when the hook could not find it.
+    var pid: Int32?
+    var pidStarted: Date?
+    /// What Gemini asks the person, while it does.
+    var waitingFor: GeminiWaiting?
+    /// What a permission asked is for: a step's kind and name.
+    var asking: GeminiStep?
+    /// The agent's to-do list, as its write_todos tool last gave it.
+    var todos: GeminiTaskList?
+
     /// When the run on show began: its start, or failing that the state's.
     var turnStart: Date { turnStarted ?? since }
     /// Whether it stopped for its quota.
     var isQuota: Bool { ended == .quota }
+    var isCLI: Bool { source == .cli }
 }
 
 extension GeminiSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
         case sessionId, project, branch, workspace, model, artifactDir, state, since, turnStarted, updated, ended, error
         case step, lastStep, steps, history, parent, agent
+        case source, prompt, transcriptPath, hostApp, tty, itermSession, pid, pidStarted, waiting, asking, todos
     }
 
     init(from decoder: Decoder) throws {
@@ -162,6 +198,37 @@ extension GeminiSessionRecord: Decodable {
         let parent = (try? c.decodeIfPresent(String.self, forKey: .parent)) ?? ""
         self.parent = parent != id && GeminiSessionRecord.isValidID(parent) ? parent : ""
         agent = self.parent.isEmpty ? "" : (try? c.decodeIfPresent(String.self, forKey: .agent)) ?? ""
+
+        source = GeminiSource(rawValue: (try? c.decodeIfPresent(String.self, forKey: .source)) ?? "") ?? .antigravity
+        guard source == .cli else { return }
+        // A CLI session has no subagents of its own here, and is never one.
+        self.parent = ""
+        agent = ""
+        prompt = (try? c.decodeIfPresent(String.self, forKey: .prompt)) ?? ""
+        let transcript = (try? c.decodeIfPresent(String.self, forKey: .transcriptPath)) ?? ""
+        transcriptPath = transcript.hasPrefix("/") && transcript.hasSuffix(".jsonl") ? transcript : ""
+        // Kept only in the shapes the hook writes them in, since each ends up in a script's
+        // argument or is compared with what a terminal says.
+        let host = (try? c.decodeIfPresent(String.self, forKey: .hostApp)) ?? ""
+        hostApp = host.range(of: #"^[A-Za-z0-9.-]{1,128}$"#, options: .regularExpression) != nil ? host : ""
+        tty = (try? c.decodeIfPresent(String.self, forKey: .tty)).flatMap { $0 }.flatMap(ClaudeHostApps.validTTY) ?? ""
+        let iterm = (try? c.decodeIfPresent(String.self, forKey: .itermSession)) ?? ""
+        itermSession = UUID(uuidString: iterm) != nil ? iterm : ""
+        pid = (try? c.decodeIfPresent(Int32.self, forKey: .pid)).flatMap { $0 }.flatMap { $0 > 1 ? $0 : nil }
+        pidStarted = (try? c.decodeIfPresent(Double.self, forKey: .pidStarted)).flatMap { $0 }
+            .map(Date.init(timeIntervalSince1970:))
+        waitingFor = switch (try? c.decodeIfPresent(String.self, forKey: .waiting)) ?? "" {
+        case "permission": .approval
+        case "question": .question
+        case "plan": .plan
+        default: nil
+        }
+        asking = (try? c.decodeIfPresent(GeminiLenient<GeminiStep>.self, forKey: .asking))?.value
+        let todos = ((try? c.decodeIfPresent([GeminiLenient<GeminiTodo>].self, forKey: .todos)) ?? [])
+            .compactMap(\.value).prefix(GeminiTaskList.itemLimit)
+            .map { GeminiTaskList.Item(text: GeminiTaskList.plain($0.text), status: $0.status) }
+            .filter { !$0.text.isEmpty }
+        self.todos = todos.isEmpty ? nil : GeminiTaskList(items: Array(todos))
     }
 
     /// An id as Antigravity gives one, and as the hook names a file by: letters, digits,
@@ -198,6 +265,26 @@ extension GeminiHistoryEntry: Decodable {
         name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
         count = max(0, (try? c.decodeIfPresent(Int.self, forKey: .count)) ?? 0)
         n = max(1, (try? c.decodeIfPresent(Int.self, forKey: .n)) ?? 1)
+    }
+}
+
+/// An item of a Gemini CLI session's to-do list, as the hook keeps it.
+private struct GeminiTodo: Decodable {
+    var text: String
+    var status: GeminiTaskList.Item.Status
+
+    private enum Keys: String, CodingKey {
+        case text, status
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        text = try c.decode(String.self, forKey: .text)
+        status = switch (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "" {
+        case "completed": .completed
+        case "inProgress": .inProgress
+        default: .pending
+        }
     }
 }
 
@@ -272,7 +359,7 @@ struct GeminiSession: Equatable, Identifiable, Sendable {
     /// Since when it has waited on the person: since its last event, for a wait only
     /// Antigravity's list tells of; else since the hook said so.
     var waitingSince: Date {
-        guard waiting != nil else { return record.since }
+        guard waiting != nil, !record.isCLI else { return record.since }
         if let agent = agents.first(where: { $0.state == .needsInput }) {
             return agent.waiting != nil ? agent.record.updated : agent.record.since
         }
@@ -365,6 +452,14 @@ struct GeminiTaskList: Equatable, Sendable {
 /// last said was working is then waiting on the person. A subagent's conversation is
 /// listed under the one that sent it off rather than on its own, where that one is
 /// known.
+///
+/// A Gemini CLI session says more: its end, and each tool it asks the person about. But a
+/// tool they turn down, or a turn stopped before the agent was done with its tools, sends
+/// nothing, so one waiting on them whose own file has been written since it asked was
+/// answered without a word, and is over; one whose tool has started a process since was
+/// allowed, and works. A session whose process has gone is over, whatever its file says,
+/// and one silent for ten minutes too (an hour while a tool runs), its own file counting
+/// as heard from (`GeminiCLILook`).
 enum GeminiLiveness {
     /// A run silent this long is taken to be over.
     static let staleAfter: TimeInterval = 10 * 60
@@ -383,10 +478,16 @@ enum GeminiLiveness {
         now.timeIntervalSince(record.updated) > forgottenAfter
     }
 
+    /// How long after the asking a CLI session's own file may still be written by what
+    /// came before it.
+    static let answeredAfter: TimeInterval = 1
+
     /// What `record`'s conversation is doing now. `run` is what Antigravity's list says
-    /// of it, `nil` when it says nothing.
+    /// of it, `nil` when it says nothing; `cli`, for a Gemini CLI session, what the Mac
+    /// says of it.
     static func state(of record: GeminiSessionRecord, run: GeminiRunStatus? = nil, waiting: GeminiWaiting? = nil,
-                      now: Date) -> GeminiSessionState {
+                      cli: GeminiCLILook? = nil, now: Date) -> GeminiSessionState {
+        if record.isCLI { return cliState(of: record, look: cli ?? GeminiCLILook(), now: now) }
         switch record.state {
         case .idle:
             return .idle
@@ -405,6 +506,27 @@ enum GeminiLiveness {
             }
             let limit = record.step != nil || run == .running ? longStaleAfter : staleAfter
             return now.timeIntervalSince(record.updated) > limit ? .idle : .working
+        }
+    }
+
+    /// What a Gemini CLI session is doing now, from its file and what `look` says.
+    static func cliState(of record: GeminiSessionRecord, look: GeminiCLILook, now: Date) -> GeminiSessionState {
+        if look.isRunning == false { return .idle }
+        switch record.state {
+        case .idle:
+            return .idle
+        case .error:
+            return now.timeIntervalSince(record.since) > errorShownFor ? .idle : .error
+        case .needsInput:
+            if look.toolStarted { return .working }
+            if let written = look.transcriptModified, written > record.updated.addingTimeInterval(answeredAfter) {
+                return .idle
+            }
+            return now.timeIntervalSince(record.since) > askShownFor ? .idle : .needsInput
+        case .working:
+            let heard = max(record.updated, look.transcriptModified ?? .distantPast)
+            let limit = record.step != nil ? longStaleAfter : staleAfter
+            return now.timeIntervalSince(heard) > limit ? .idle : .working
         }
     }
 
@@ -433,6 +555,10 @@ enum GeminiLiveness {
         var agents: [String: [GeminiAgent]] = [:]
         var top: [GeminiSessionRecord] = []
         for record in records {
+            if record.isCLI {
+                top.append(record)
+                continue
+            }
             let root = root(of: record, in: byID)
             guard root != record.id else {
                 top.append(record)
@@ -445,6 +571,12 @@ enum GeminiLiveness {
             agents[root, default: []].append(GeminiAgent(record: record, state: state, waiting: waiting))
         }
         let shown = top.compactMap { record -> GeminiSession? in
+            if record.isCLI {
+                let state = cliState(of: record, look: snapshot.cli[record.id] ?? GeminiCLILook(), now: now)
+                guard state != .idle else { return nil }
+                return GeminiSession(record: record, state: state, tasks: record.todos,
+                                     waiting: state == .needsInput ? record.waitingFor : nil)
+            }
             let summary = snapshot.summaries[record.id]
             let own = state(of: record, run: summary?.run, waiting: summary?.waiting, now: now)
             let atWork = (agents[record.id] ?? []).sorted { $0.record.turnStart < $1.record.turnStart }

@@ -291,9 +291,12 @@ extension ChatGPTFeature {
 extension GeminiFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
-            labels: ["Show what you asked", "Show the git branch", "Skip Done when the chat is on screen", "Hooks",
-                     "Copy Hooks", "Islet's hook", "Last heard from Gemini"],
+            labels: ["Show what you asked", "Show the git branch", "Skip Done when the chat is on screen",
+                     "Antigravity hooks", "Copy Hooks", "Islet's hook", "Last heard from Gemini", "Gemini CLI hooks",
+                     "Islet's Gemini CLI hook", "Last heard from Gemini CLI"],
             keywords: ["gemini", "antigravity", "google", "agents", "agent manager", "hooks.json", "hooks",
+                       "gemini cli", "cli", "settings.json", "terminal", "iterm", "tab", "sessions", "prompt",
+                       "permission", "approval", "trust", "trusted folders", "plan", "question",
                        "conversations", "tasks", "task list", "progress", "quota", "limit", "error", "done",
                        "finished", "banner", "popup", "notification", "on screen", "accessibility", "coding", "git",
                        "branch", "workspace", "repository"]
@@ -355,11 +358,13 @@ extension ClipboardFeature {
 extension QuickAskFeature {
     var searchTerms: SettingsSearchTerms {
         SettingsSearchTerms(
-            labels: ["Answer with", "On this Mac", "ChatGPT", "Claude", "Shortcut", "Connect Claude", "Connect", "Token",
-                     "Remove", "Copy", "Ask anything", "Ask", "Ask ChatGPT", "Ask Claude", "Try again", "None",
+            labels: ["Answer with", "On this Mac", "ChatGPT", "Claude", "Gemini", "Shortcut", "Connect Claude", "Connect",
+                     "Token", "Remove", "Copy", "Ask anything", "Ask", "Ask ChatGPT", "Ask Claude", "Ask Gemini",
+                     "Try again", "None",
                      "Look at my screen", "Front window", "Whole display", "Screen Recording", "Open System Settings",
                      "Let Apple's model read your calendar", "Ask Apple's model"],
             keywords: ["ai", "assistant", "chatgpt", "gpt", "openai", "codex", "claude", "anthropic", "haiku",
+                       "gemini", "gemini cli", "google", "flash", "flash-lite", "quota",
                        "keep open", "stay open", "stay", "pin", "keep answer", "read while typing", "type elsewhere",
                        "apple intelligence", "on-device", "llm", "question", "chat", "quick question", "hotkey",
                        "keyboard shortcut", "private", "spotlight", "screen", "screenshot", "look", "see", "image",

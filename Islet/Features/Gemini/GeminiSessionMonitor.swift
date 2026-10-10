@@ -7,11 +7,11 @@ struct GeminiMonitorCache: Sendable {
     var tasks: [String: (stamp: GeminiData.Stamp, list: GeminiTaskList?)] = [:]
 }
 
-/// Follows the folder the hook writes a file per conversation into, reading it off the
-/// main thread whenever a file is written, moved in or deleted (`FolderWatcher`); and
-/// between times as `GeminiLiveness.watch` asks, for what only Antigravity's own files
-/// and the clock say: every few seconds while a conversation is shown, once a minute
-/// while a quiet one might yet carry on.
+/// Follows the folder the hooks write a file per conversation into, Antigravity's and
+/// Gemini CLI's alike, reading it off the main thread whenever a file is written, moved in
+/// or deleted (`FolderWatcher`); and between times as `GeminiLiveness.watch` asks, for what
+/// only Antigravity's own files, the Mac and the clock say: every few seconds while a
+/// conversation is shown, once a minute while a quiet one might yet carry on.
 ///
 /// The folder is Islet's own, in Application Support, and is made if it is not there,
 /// so it can be watched before the hook has ever run. Nothing else is written: without
@@ -146,8 +146,9 @@ final class GeminiSessionMonitor {
 
     /// Every conversation file in `directory` that reads, less those a day old; what
     /// Antigravity's list says of each not idle, or with a subagent not idle, and the
-    /// task list of each of those. Hidden files (the hook's locks and log) are passed
-    /// over, but for the log's date, which counts as heard from. Called off the main thread.
+    /// task list of each of those; and for each Gemini CLI session not idle, what the Mac
+    /// says of it (`GeminiCLILook`). Hidden files (the hooks' locks and logs) are passed
+    /// over, but for the logs' dates, which count as heard from. Called off the main thread.
     nonisolated static func read(
         _ directory: URL, home: URL, now: Date, known: GeminiMonitorCache
     ) -> (GeminiSessionSnapshot, GeminiMonitorCache) {
@@ -157,31 +158,42 @@ final class GeminiSessionMonitor {
             at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles]
         )) ?? []
+        func heard(_ date: Date?, cli: Bool) {
+            guard let date else { return }
+            if cli {
+                snapshot.lastHeardCLI = max(snapshot.lastHeardCLI ?? date, date)
+            } else {
+                snapshot.lastHeard = max(snapshot.lastHeard ?? date, date)
+            }
+        }
         for file in files where file.pathExtension == "json" {
             let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
             guard values?.isRegularFile == true else { continue }
             let modified = values?.contentModificationDate
-            if let modified { snapshot.lastHeard = max(snapshot.lastHeard ?? modified, modified) }
-            if let modified, now.timeIntervalSince(modified) > GeminiLiveness.forgottenAfter { continue }
             guard let handle = try? FileHandle(forReadingFrom: file) else { continue }
             let data = try? handle.read(upToCount: 256 * 1024)
             try? handle.close()
-            guard let data, let record = try? JSONDecoder().decode(GeminiSessionRecord.self, from: data),
-                  file.deletingPathExtension().lastPathComponent == record.id,
+            let record = data.flatMap { try? JSONDecoder().decode(GeminiSessionRecord.self, from: $0) }
+            heard(modified, cli: record?.isCLI == true)
+            if let modified, now.timeIntervalSince(modified) > GeminiLiveness.forgottenAfter { continue }
+            guard let record, file.deletingPathExtension().lastPathComponent == record.id,
                   !GeminiLiveness.isForgotten(record, now: now)
             else { continue }
             snapshot.records.append(record)
         }
-        let log = directory.appendingPathComponent(".hook-log.jsonl")
-        if let logged = (try? log.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
-            snapshot.lastHeard = max(snapshot.lastHeard ?? logged, logged)
+        for (name, cli) in [(".hook-log.jsonl", false), (".cli-hook-log.jsonl", true)] {
+            let log = directory.appendingPathComponent(name)
+            heard((try? log.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, cli: cli)
         }
         snapshot.records.sort { $0.id < $1.id }
+        for record in snapshot.records where record.isCLI && record.state != .idle {
+            snapshot.cli[record.id] = GeminiCLILook.look(at: record, home: home)
+        }
 
         // The conversations under way, and those that sent off a subagent under way,
         // which are listed for it.
         var asked = Set<String>()
-        for record in snapshot.records where record.state != .idle {
+        for record in snapshot.records where record.state != .idle && !record.isCLI {
             asked.insert(record.id)
             if !record.parent.isEmpty { asked.insert(record.parent) }
         }

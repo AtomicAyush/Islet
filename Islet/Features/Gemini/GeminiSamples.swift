@@ -53,6 +53,57 @@ enum GeminiSamples {
                  error: "Resource has been exhausted (e.g. check quota).", now: now)]
     }
 
+    /// A made-up Gemini CLI session in Terminal.
+    private static func cli(
+        _ id: String, project: String, branch: String = "", prompt: String, state: GeminiSessionState, run: TimeInterval,
+        since: TimeInterval? = nil, model: String = "gemini-3-flash-preview", step: GeminiStep? = nil, steps: Int = 0,
+        history: [GeminiHistoryEntry] = [], todos: [(String, GeminiTaskList.Item.Status)] = [],
+        waiting: GeminiWaiting? = nil, asking: GeminiStep? = nil, ended: GeminiEnding = .none, error: String = "",
+        now: Date
+    ) -> GeminiSession {
+        var record = GeminiSessionRecord(
+            id: "sample." + id, project: project, branch: branch, workspace: "", model: model, artifactDir: "",
+            state: state, since: now.addingTimeInterval(-(since ?? run)), turnStarted: now.addingTimeInterval(-run),
+            updated: now, ended: ended, error: error, step: step, lastStep: nil, steps: steps, history: history
+        )
+        record.source = .cli
+        record.prompt = prompt
+        record.hostApp = ClaudeHostApps.terminal
+        record.waitingFor = waiting
+        record.asking = asking
+        record.todos = todos.isEmpty ? nil
+            : GeminiTaskList(items: todos.map { GeminiTaskList.Item(text: $0.0, status: $0.1) })
+        return GeminiSession(record: record, state: state, tasks: record.todos, waiting: state == .needsInput ? waiting : nil)
+    }
+
+    static func cliWorking(now: Date) -> [GeminiSession] {
+        [cli("harbour", project: "Harbour", branch: "offline-cache", prompt: "Cache the timetable for offline use",
+             state: .working, run: 96, step: GeminiStep(kind: .shell, name: "swift", at: now.addingTimeInterval(-4)),
+             steps: 7, history: used([(.read, "Timetable.swift"), (.edit, "Cache.swift"), (.shell, "swift")]),
+             todos: [("Find where the timetable loads", .completed), ("Add a cache on disk", .inProgress),
+                     ("Run the tests", .pending)],
+             now: now)]
+    }
+
+    static func cliPermission(now: Date) -> [GeminiSession] {
+        [cli("harbour", project: "Harbour", branch: "offline-cache", prompt: "Cache the timetable for offline use",
+             state: .needsInput, run: 140, since: 12, steps: 7, waiting: .approval,
+             asking: GeminiStep(kind: .shell, name: "npm", at: .distantPast), now: now)]
+    }
+
+    static func cliQuota(now: Date) -> [GeminiSession] {
+        [cli("harbour", project: "Harbour", branch: "main", prompt: "Write the release notes", state: .error, run: 30,
+             since: 20, ended: .quota, error: "You have exhausted your daily quota on this model.", now: now)]
+    }
+
+    /// Gemini CLI in Terminal and an agent in Antigravity, side by side.
+    static func together(now: Date) -> [GeminiSession] {
+        cliPermission(now: now) + working(now: now)
+            + [cli("notes", project: "Notes", prompt: "Explain the sync code", state: .working, run: 22,
+                   model: "gemini-3.1-flash-lite", steps: 2, history: used([(.read, "Sync.swift"), (.search, "")]),
+                   now: now)]
+    }
+
     static func several(now: Date) -> [GeminiSession] {
         asking(now: now) + working(now: now) + [
             session("atlas", project: "Atlas", title: "Write tests for the map tiles", state: .working, run: 48,

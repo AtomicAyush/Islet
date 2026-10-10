@@ -29,6 +29,8 @@ enum GeminiWaiting: Equatable, Sendable {
     case question
     /// A tool waits for the person to allow it.
     case approval
+    /// A plan waits for the person to approve it (Gemini CLI's exit_plan_mode).
+    case plan
     /// Something else waits on them.
     case input
 
@@ -60,7 +62,8 @@ enum GeminiWaiting: Equatable, Sendable {
         switch self {
         case .question: 0
         case .approval: 1
-        case .input: 2
+        case .plan: 2
+        case .input: 3
         }
     }
 }
@@ -122,15 +125,21 @@ struct GeminiSummary: Equatable, Sendable {
     var waiting: GeminiWaiting?
 }
 
-/// The session files as last read, and what Antigravity's own files say of them.
+/// The session files as last read, and what Antigravity's own files, and the Mac, say of
+/// them.
 struct GeminiSessionSnapshot: Equatable, Sendable {
     var records: [GeminiSessionRecord] = []
     /// By conversation id, from Antigravity's list of conversations.
     var summaries: [String: GeminiSummary] = [:]
     /// By conversation id, from its task.md.
     var tasks: [String: GeminiTaskList] = [:]
-    /// When any file was last written: when Islet last heard from the hook at all.
+    /// By session id, for each Gemini CLI session not idle (`GeminiCLILook`).
+    var cli: [String: GeminiCLILook] = [:]
+    /// When any of Antigravity's files was last written: when Islet last heard from its
+    /// hook at all.
     var lastHeard: Date?
+    /// The same, for Gemini CLI's hook.
+    var lastHeardCLI: Date?
 }
 
 /// What Antigravity keeps of its conversations that Islet reads, read-only: its list of

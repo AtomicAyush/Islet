@@ -1,15 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// Gemini at work in Google Antigravity, beside the notch: a wand left of the camera
-/// while an agent works on a conversation, a question mark while one has stopped to ask
+/// Gemini at work, in Google Antigravity and in Gemini CLI, beside the notch: a wand left
+/// of the camera while an agent works on a conversation, a question mark while one has stopped to ask
 /// something, a warning while one has stopped on an error or run out of quota, and right
 /// of it how long the run has been going, or a ring filling as its task list gets done.
-/// Opened, a row for each conversation: its title (Antigravity's, or the start of what
-/// was asked), its workspace and model, what it is doing and for how long, the tools it
-/// has used so far, and its task list as a checklist. Clicking one, or a banner its hook
-/// put up, brings Antigravity forward; Antigravity can't be asked from outside to open a
-/// conversation.
+/// Opened, a row for each conversation, labelled with where it runs (Antigravity, or the
+/// terminal a Gemini CLI session is in): its title (Antigravity's, the start of what was
+/// asked, or a CLI session's latest prompt), its workspace and model, what it is doing and
+/// for how long, the tools it has used so far, and its task list as a checklist. Clicking
+/// one, or a banner its hook put up, brings Antigravity forward, which can't be asked from
+/// outside to open a conversation; or for a CLI session, Terminal or iTerm at its tab, as
+/// for Claude Code in a terminal (`GeminiCLIHost`).
 ///
 /// Antigravity says what its agents do through its hooks, and
 /// `Scripts/antigravity-hook.sh` keeps a file per conversation for Islet
@@ -17,12 +19,17 @@ import SwiftUI
 /// it answers each event with the answer that leaves Antigravity's own course alone, and
 /// is never asked about a tool before it runs. So nothing is approved from the island.
 /// Each conversation's title and task list come from Antigravity's own files, read-only
-/// (`GeminiData`). Without the hook there are no files, and nothing shows.
+/// (`GeminiData`). Gemini CLI tells Islet through its own hooks
+/// (`Scripts/gemini-cli-hook.sh`), into the same folder, each file marked as the CLI's: it
+/// answers every event with the answer that changes nothing, and Gemini CLI gives a hook no
+/// way to allow a tool, so its permissions are told, not answered. Without the hooks there
+/// are no files, and nothing shows.
 ///
 /// An agent finishing in the conversation Antigravity has in front puts up no banner
 /// unless Settings asks for one (`GeminiDoneOnScreen`): Antigravity names the
 /// conversation it shows in its window's title, which Islet reads through Accessibility.
-/// Where it cannot be read, the banner shows.
+/// For a CLI session the tab in front of Terminal or iTerm says, where Islet may already
+/// ask them (`GeminiTerminalFront`). Where it cannot be told, the banner shows.
 ///
 /// A question the agent puts, or a tool waiting for leave, sends no hook event while
 /// it waits; Antigravity's list of conversations says so, and the feature puts up the
@@ -36,7 +43,7 @@ final class GeminiFeature: Feature {
     let id = "gemini"
     let title = "Gemini"
     let symbol = "wand.and.stars"
-    let summary = "What Gemini's agents in Google Antigravity are doing, from its hooks."
+    let summary = "What Gemini's agents in Google Antigravity and Gemini CLI are doing, from their hooks."
     var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 77) }
 
     /// How long a preview's made-up conversations show.
@@ -50,6 +57,8 @@ final class GeminiFeature: Feature {
     private let windowTitle: @MainActor (_ bundleID: String) -> String?
     private let titles: () -> [String: String]?
     private let announce: @MainActor (CustomBanner) -> Void
+    private let openCLI: @MainActor (GeminiSessionRecord) -> Bool
+    private let terminalTab: @MainActor (_ bundleID: String) -> GeminiTerminalTab?
     /// The conversations whose wait has had its banner, and what they wait for.
     private var announced: [String: GeminiWaiting] = [:]
     private lazy var activity = GeminiActivity(model: model) { [weak self] session in
@@ -63,7 +72,8 @@ final class GeminiFeature: Feature {
 
     /// Tests give a monitor on a folder of their own, a clock, a stand-in for bringing
     /// Antigravity forward, their own look at the screen, its window's title and the
-    /// conversations' titles, and a stand-in for putting up a banner.
+    /// conversations' titles, a stand-in for putting up a banner, and for a CLI session,
+    /// stand-ins for bringing its terminal forward and for the tab a terminal has in front.
     init(
         monitor: GeminiSessionMonitor? = nil,
         clock: @escaping () -> Date = Date.init,
@@ -73,7 +83,9 @@ final class GeminiFeature: Feature {
         titles: @escaping () -> [String: String]? = GeminiWindowTitle.conversationTitles,
         announce: @escaping @MainActor (CustomBanner) -> Void = { banner in
             FeatureRegistry.shared.feature(BannerFeature.self)?.show(banner)
-        }
+        },
+        openCLI: @escaping @MainActor (GeminiSessionRecord) -> Bool = GeminiCLIHost.open,
+        terminalTab: @escaping @MainActor (_ bundleID: String) -> GeminiTerminalTab? = GeminiTerminalFront.frontTab
     ) {
         self.monitor = monitor ?? GeminiSessionMonitor(now: clock)
         self.clock = clock
@@ -82,6 +94,8 @@ final class GeminiFeature: Feature {
         self.windowTitle = windowTitle
         self.titles = titles
         self.announce = announce
+        self.openCLI = openCLI
+        self.terminalTab = terminalTab
         model.onChange = { [weak self] in self?.sync() }
         self.monitor.onChange = { [weak self] snapshot in self?.received(snapshot) }
     }
@@ -104,7 +118,7 @@ final class GeminiFeature: Feature {
         defaultsObserver = nil
         monitor.stop()
         announced = [:]
-        model.update([], lastHeard: model.lastHeard)
+        model.update([], lastHeard: model.lastHeard, lastHeardCLI: model.lastHeardCLI)
         sync()
     }
 
@@ -128,6 +142,12 @@ final class GeminiFeature: Feature {
             FeaturePreview(title: "Several agents") { [weak self] in
                 self?.preview(GeminiSamples.several(now: Date()))
             },
+            FeaturePreview(title: "Gemini CLI asking permission") { [weak self] in
+                self?.preview(GeminiSamples.cliPermission(now: Date()))
+            },
+            FeaturePreview(title: "Gemini CLI beside Antigravity") { [weak self] in
+                self?.preview(GeminiSamples.together(now: Date()))
+            },
         ]
     }
 
@@ -135,17 +155,17 @@ final class GeminiFeature: Feature {
 
     private func received(_ snapshot: GeminiSessionSnapshot) {
         let sessions = GeminiLiveness.sessions(snapshot, now: clock())
-        model.update(isRunning ? sessions : [], lastHeard: snapshot.lastHeard)
+        model.update(isRunning ? sessions : [], lastHeard: snapshot.lastHeard, lastHeardCLI: snapshot.lastHeardCLI)
         if isRunning { announceWaits(sessions) }
     }
 
     /// Puts up a banner for each conversation newly waiting on the person where only
     /// Antigravity's list says so, as the hook hears nothing until the wait is over; a
-    /// wait the hook told of has had its banner from the hook. Only while Antigravity is
-    /// not in front, where the person sees the wait already.
+    /// wait the hook told of has had its banner from the hook, as every CLI session's has.
+    /// Only while Antigravity is not in front, where the person sees the wait already.
     private func announceWaits(_ sessions: [GeminiSession]) {
         var waiting: [String: GeminiWaiting] = [:]
-        for session in sessions where session.state == .needsInput {
+        for session in sessions where session.state == .needsInput && !session.record.isCLI {
             if let kind = session.waiting { waiting[session.id] = kind }
         }
         let fresh = sessions.filter { session in
@@ -174,10 +194,15 @@ final class GeminiFeature: Feature {
         }
     }
 
-    /// A conversation's row was clicked: Antigravity comes forward, if it is running.
+    /// A conversation's row was clicked: Antigravity comes forward, if it is running, or a
+    /// CLI session's terminal, at its tab.
     private func open(_ session: GeminiSession) {
         guard !model.isPreviewing else { return }
-        _ = activate(GeminiHostApp.antigravity)
+        if session.record.isCLI {
+            _ = openCLI(session.record)
+        } else {
+            _ = activate(GeminiHostApp.antigravity)
+        }
     }
 
     private func preview(_ samples: [GeminiSession]) {
@@ -196,10 +221,11 @@ final class GeminiFeature: Feature {
 
 extension GeminiFeature: BannerSessionSource {
     /// Brings Antigravity forward for a conversation Islet has a file of; Antigravity
-    /// can't be asked for the conversation itself.
+    /// can't be asked for the conversation itself. For a CLI session, its terminal at its
+    /// tab.
     func openSession(_ id: String) -> Bool {
-        guard isRunning, monitor.snapshot.records.contains(where: { $0.id == id }) else { return false }
-        return activate(GeminiHostApp.antigravity)
+        guard isRunning, let record = monitor.snapshot.records.first(where: { $0.id == id }) else { return false }
+        return record.isCLI ? openCLI(record) : activate(GeminiHostApp.antigravity)
     }
 
     /// Whether the agent finishing in conversation `id` is in front of the person: Settings
@@ -209,6 +235,9 @@ extension GeminiFeature: BannerSessionSource {
     /// Antigravity's list) leaves the banner to show.
     func skipsDone(for id: String) -> Bool {
         guard GeminiPrefs.skipsDoneOnScreen else { return false }
+        if let record = monitor.snapshot.records.first(where: { $0.id == id }), record.isCLI {
+            return isRunning && cliOnScreen(record)
+        }
         let screen = look(GeminiHostApp.antigravity)
         guard screen.shows(GeminiHostApp.antigravity),
               let window = windowTitle(GeminiHostApp.antigravity),
@@ -217,6 +246,17 @@ extension GeminiFeature: BannerSessionSource {
         else { return false }
         let others = titles.compactMap { $0.key == id ? nil : $0.value }
         return GeminiDoneOnScreen.isOnScreen(conversation: title, window: window, others: others)
+    }
+
+    /// Whether a CLI session's tab is in front of the person: Terminal or iTerm in front
+    /// with a window up and the screen awake, and the tab its front window shows the
+    /// session's. Any other app, or a tab that can't be told, leaves the banner to show.
+    private func cliOnScreen(_ record: GeminiSessionRecord) -> Bool {
+        guard [ClaudeHostApps.terminal, ClaudeHostApps.iTerm].contains(record.hostApp), !record.tty.isEmpty,
+              look(record.hostApp).shows(record.hostApp),
+              let tab = terminalTab(record.hostApp)
+        else { return false }
+        return GeminiTerminalFront.matches(record, tab)
     }
 }
 
@@ -269,6 +309,7 @@ enum GeminiWaitBanner {
         let (title, symbol): (String, String) = switch session.waiting {
         case .question?: ("Gemini has a question", "questionmark.bubble.fill")
         case .approval?: ("Gemini is waiting for approval", "hand.raised.fill")
+        case .plan?: ("Gemini has a plan for you", "checklist")
         case .input?, nil: ("Gemini needs your input", "questionmark.bubble.fill")
         }
         let named = GeminiText.firstWords(session.title, limit: 100) ?? "Antigravity is waiting for you"
