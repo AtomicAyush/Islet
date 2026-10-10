@@ -382,7 +382,7 @@ so its start and end both show. Banners that name the project name the branch be
 cut shorter; beside the notch, only where it fits whole, and never in a permission's, where
 what is asked keeps the room.
 Settings → Activities → Claude Code, ChatGPT or Gemini → Show the git branch turns it off for
-that agent, rows and banners alike.
+that agent, rows, banners and approval cards alike.
 
 How far the background work has got comes from the files Claude Code keeps beside the
 session's transcript in `~/.claude/projects`: each workflow run's journal of agents started and
@@ -1358,15 +1358,21 @@ When Claude Code or ChatGPT asks permission (to run a command, write or edit a f
 page or use a tool from an MCP server), the island can show the request on the agent's page and
 take your answer there. It shows what is asked in full: the command or the file's new content
 line by line, numbered, with `↩` where a long line wraps; every setting the tool was given; the
-folder, the app and any subagent asking, with the branch and when the session started; and the
-agent's own words about it, never taken for Islet's. A hand stands beside the notch with
-"Allow?" ("Answer?" where Allow isn't offered; for ChatGPT, the seconds left), and the island
-opens on the
-request by itself once, unless you're presenting, the screen is locked, the app that asks is in
-front or you're already using the island; it closes after 12 seconds unless you move the pointer
-into it. Several requests queue behind the one shown ("1 of 3", and a row of those waiting that
-brings each forward); while the pointer is in the island the one in front never changes under
-it. Nothing makes a sound, and the card never takes the keyboard.
+folder, the app and any subagent asking, with the session's git branch beside the folder as on
+its row (from Islet's own record of the session, never from the request) and when the session
+started; and the agent's own words about it, never taken for Islet's. On a narrow line the app
+keeps its name and a subagent its own before the folder and the branch give way in their
+middles. The branch is left out where it has punctuation, a symbol or a digit from outside
+ASCII, which could pass for the line's own dots or a time, and underlined in the attention
+colour where it has other letters from outside ASCII; characters a reader could not see are
+taken out by the hook before Islet sees the name, so a name differing from another only by
+them shows as that other, on the card as on the rows. A hand stands beside the
+notch with "Allow?" ("Answer?" where Allow isn't offered; for ChatGPT, the seconds left), and
+the island opens on the request by itself once, unless you're presenting, the screen is locked,
+the app that asks is in front or you're already using the island; it closes after 12 seconds
+unless you move the pointer into it. Several requests queue behind the one shown ("1 of 3", and
+a row of those waiting that brings each forward); while the pointer is in the island the one in
+front never changes under it. Nothing makes a sound, and the card never takes the keyboard.
 
 - **Answer in the app** brings the app that asked forward, where its own prompt is waiting.
   Claude's prompt shows at the same moment and still works; answering there takes the card away.

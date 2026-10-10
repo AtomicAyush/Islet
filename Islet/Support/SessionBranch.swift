@@ -116,17 +116,22 @@ struct FolderBranchLabel: View {
         case title
         /// The quieter line under a row's title, both in its words.
         case detail
+        /// The line under an approval card's headline, both in its words and colour.
+        case caption
     }
 
     let folder: String
     let branch: String
     var size: Size = .title
+    /// Marks the branch as having letters that could pass for others, as an approval
+    /// card marks them: underlined, in the attention colour.
+    var isMarked = false
 
     var body: some View {
         HStack(spacing: 0) {
             Text(verbatim: folder)
                 .font(folderFont)
-                .foregroundStyle(size == .title ? .islandPrimary : .islandText(0.5))
+                .foregroundStyle(folderStyle)
                 .truncationMode(.middle)
             Text(verbatim: " · ")
                 .font(branchFont)
@@ -138,7 +143,8 @@ struct FolderBranchLabel: View {
                 .padding(.trailing, 2)
             Text(verbatim: branch)
                 .font(branchFont)
-                .foregroundStyle(.islandText(size == .title ? 0.6 : 0.5))
+                .foregroundStyle(branchStyle)
+                .underline(isMarked)
                 .truncationMode(.middle)
         }
         .lineLimit(1)
@@ -147,10 +153,34 @@ struct FolderBranchLabel: View {
     }
 
     private var folderFont: Font {
-        size == .title ? .system(size: 13, weight: .semibold) : .system(size: 11.5, weight: .medium)
+        switch size {
+        case .title: .system(size: 13, weight: .semibold)
+        case .detail: .system(size: 11.5, weight: .medium)
+        case .caption: .system(size: 11)
+        }
     }
 
     private var branchFont: Font {
-        size == .title ? .system(size: 12, weight: .medium) : .system(size: 11.5, weight: .medium)
+        switch size {
+        case .title: .system(size: 12, weight: .medium)
+        case .detail: .system(size: 11.5, weight: .medium)
+        case .caption: .system(size: 11)
+        }
+    }
+
+    private var folderStyle: IslandStyle {
+        switch size {
+        case .title: .islandPrimary
+        case .detail: .islandText(0.5)
+        case .caption: .islandText(0.6)
+        }
+    }
+
+    private var branchStyle: IslandStyle {
+        if isMarked { return ClaudeCodePalette.attentionText }
+        switch size {
+        case .title, .caption: return .islandText(0.6)
+        case .detail: return .islandText(0.5)
+        }
     }
 }

@@ -725,8 +725,10 @@ struct ClaudeCodeExpanded: View {
             // The request above the rows, which get what room is left.
             let block = ApprovalLayout.height(for: card.item, waiting: approvals.waiting(for: .claude).count,
                                               isPrivate: approvals.isPrivate)
+            // The branch beside the folder, from the asking session's own file.
+            let branch = ApprovalBranch.of(card.item.request, claude: model.sessions.map(\.record), showsBranch: showsBranch)
             VStack(spacing: 0) {
-                ApprovalBlock(center: approvals, item: card.item, decided: card.decided) { request in
+                ApprovalBlock(center: approvals, item: card.item, decided: card.decided, branch: branch) { request in
                     // At the session, as its row would, where it has one.
                     if let session = model.sessions.first(where: { $0.id == request.sessionId && !$0.record.hostApp.isEmpty }) {
                         open(session)

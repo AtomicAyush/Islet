@@ -103,6 +103,9 @@ struct ApprovalBlock: View {
     /// Set for a moment once answered from the island: the buttons are off, and it says
     /// what was answered.
     var decided: ApprovalDecision? = nil
+    /// The git branch the asking session is on, beside the folder (`ApprovalBranch`);
+    /// `nil` for none.
+    var branch: String? = nil
     /// Brings the app that asked forward.
     let openHost: (ApprovalRequest) -> Void
     @State private var state: ApprovalCardState
@@ -111,11 +114,12 @@ struct ApprovalBlock: View {
 
     private static let bodySpace = "approvalBody"
 
-    init(center: ApprovalCenter, item: ApprovalItem, decided: ApprovalDecision? = nil,
+    init(center: ApprovalCenter, item: ApprovalItem, decided: ApprovalDecision? = nil, branch: String? = nil,
          openHost: @escaping (ApprovalRequest) -> Void) {
         self.center = center
         self.item = item
         self.decided = decided
+        self.branch = branch
         self.openHost = openHost
         _state = State(initialValue: ApprovalCardState(item: item, openedAt: center.openedFor[item.id]))
     }
@@ -198,11 +202,35 @@ struct ApprovalBlock: View {
                         .foregroundStyle(.islandText(0.6))
                 }
             }
+            placeLine
+        }
+        .frame(height: ApprovalLayout.headerHeight, alignment: .top)
+    }
+
+    /// Who asks and where, on one line. With a branch, the folder and the branch as a
+    /// session's row shows them (`ApprovalPlaceLayout`): the app keeps its name, a
+    /// subagent's name keeps its room before the folder and the branch give way in their
+    /// middles, and it goes whole, never cut to a sliver, only when they would not
+    /// otherwise stay readable.
+    @ViewBuilder
+    private var placeLine: some View {
+        if let branch {
+            let place = Self.placeParts(request)
+            ApprovalPlaceLayout {
+                Text(verbatim: place.host).truncationMode(.tail)
+                Text(verbatim: place.agent.isEmpty ? "" : " · " + place.agent).truncationMode(.tail)
+                Text(verbatim: " · ")
+                FolderBranchLabel(folder: place.folder, branch: branch, size: .caption,
+                                  isMarked: ApprovalBranch.isLookAlike(branch))
+                Text(verbatim: item.session.isEmpty ? "" : " · " + item.session)
+            }
+            .font(.system(size: 11)).lineLimit(1)
+            .foregroundStyle(.islandText(0.6))
+        } else {
             Text(verbatim: Self.place(request, session: item.session)).font(.system(size: 11)).lineLimit(1)
                 .truncationMode(.head)
                 .foregroundStyle(.islandText(0.6))
         }
-        .frame(height: ApprovalLayout.headerHeight, alignment: .top)
     }
 
     /// Running outside the sandbox says so in the attention colour.
@@ -210,16 +238,21 @@ struct ApprovalBlock: View {
         request.input["dangerouslyDisableSandbox"] == .bool(true) ? ClaudeCodePalette.attentionText : .islandText(1)
     }
 
-    /// Where it runs: the host, a subagent's name, the folder with `~`, and the
-    /// session's branch and start.
+    /// Where it runs: the host, a subagent's name, the folder with `~`, and when the
+    /// session started.
     static func place(_ request: ApprovalRequest, session: String = "") -> String {
+        let place = placeParts(request)
+        return ([place.host] + (place.agent.isEmpty ? [] : [place.agent]) + [place.folder]
+            + (session.isEmpty ? [] : [session])).joined(separator: " · ")
+    }
+
+    /// Who asks (the host, and a subagent's name or "") and the folder with `~`.
+    static func placeParts(_ request: ApprovalRequest) -> (host: String, agent: String, folder: String) {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let folder = request.cwd.hasPrefix(home + "/") ? "~" + request.cwd.dropFirst(home.count) : request.cwd
-        var parts = [request.hostName.isEmpty ? request.agent.name : request.hostName]
-        if !request.agentType.isEmpty { parts.append("agent name \"\(request.agentType)\"") }
-        parts.append(folder)
-        if !session.isEmpty { parts.append(session) }
-        return parts.joined(separator: " · ")
+        let host = request.hostName.isEmpty ? request.agent.name : request.hostName
+        let agent = request.agentType.isEmpty ? "" : "agent name \"\(request.agentType)\""
+        return (host, agent, String(folder))
     }
 
     /// The requests behind this one, each brought forward by a click.
@@ -482,6 +515,53 @@ struct ApprovalBlock: View {
             .frame(height: ApprovalLayout.buttonHeight)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The line under a card's headline with a branch, from its five parts: the host, a
+/// subagent's part (" · agent name …", or empty), " · ", the folder and branch, and when
+/// the session started (" · since …", or empty). All at their own widths where they
+/// fit. Where they don't, the separator and the session's part keep theirs; the host
+/// keeps its name, up to a third of the rest; the subagent's part keeps all it can while
+/// the folder and branch are left `labelLeast` (or all they need), and goes whole when
+/// that leaves it less than `agentLeast`, so it is never cut to a sliver; the folder and
+/// branch take what is left, each giving way in its middle.
+struct ApprovalPlaceLayout: Layout {
+    /// The least the folder and branch are left before a subagent's name gives way:
+    /// room for the start and end of each.
+    static let labelLeast: CGFloat = 200
+    /// The least a subagent's part is drawn in: " · agent name" and a few letters.
+    static let agentLeast: CGFloat = 96
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let widths = widths(for: proposal.width, subviews)
+        let height = zip(subviews, widths).map { subview, width in
+            subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        }.max() ?? 0
+        return CGSize(width: widths.reduce(0, +), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        for (subview, width) in zip(subviews, widths(for: bounds.width, subviews)) {
+            subview.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading,
+                          proposal: ProposedViewSize(width: width, height: bounds.height))
+            x += width
+        }
+    }
+
+    /// Each part's width within `available`.
+    private func widths(for available: CGFloat?, _ subviews: Subviews) -> [CGFloat] {
+        let ideal = subviews.map { $0.sizeThatFits(.unspecified).width }
+        guard ideal.count == 5, let available, ideal.reduce(0, +) > available else { return ideal }
+        let (host, agent, separator, label, session) = (ideal[0], ideal[1], ideal[2], ideal[3], ideal[4])
+        var rest = max(0, available - separator - session)
+        let hostWidth = min(host, rest / 3)
+        rest -= hostWidth
+        var agentWidth = min(agent, max(0, rest - min(label, Self.labelLeast)))
+        if agentWidth < min(agent, Self.agentLeast) { agentWidth = 0 }
+        rest -= agentWidth
+        return [hostWidth, agentWidth, separator, min(label, rest), session]
     }
 }
 

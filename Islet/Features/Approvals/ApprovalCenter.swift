@@ -16,54 +16,81 @@ struct ApprovalItem: Equatable, Identifiable, Sendable {
     var body: ApprovalBody
     /// When it first came; the queue is blocking requests first, then the oldest.
     var arrived: Date
-    /// Which session asks, beside its folder: the branch checked out there and when the
-    /// agent started (`ApprovalSessionLabel`), so two sessions in one folder are told apart.
+    /// Which session asks, beside its folder: when the agent started
+    /// (`ApprovalSessionLabel`), so two sessions in one folder are told apart.
     var session: String = ""
     var id: String { request.id }
 }
 
-/// A few words telling one session from another in the same folder: "main · since
-/// 10:42".
+/// A few words telling one session from another in the same folder: "since 10:42".
+/// The branch beside the folder is the session's own (`ApprovalBranch`).
 enum ApprovalSessionLabel {
     static func make(_ request: ApprovalRequest, startTime: (Int32) -> Date?) -> String {
-        var parts: [String] = []
-        if let branch = branch(at: request.cwd) { parts.append(branch) }
-        if request.agentPid > 1, let started = startTime(request.agentPid) {
-            parts.append("since " + started.formatted(date: .omitted, time: .shortened))
-        }
-        let label = parts.joined(separator: " · ")
+        guard request.agentPid > 1, let started = startTime(request.agentPid) else { return "" }
+        let label = "since " + started.formatted(date: .omitted, time: .shortened)
         return ApprovalText.hiddenCharacter(in: label, rule: .strict) == nil ? label : ""
     }
+}
 
-    /// The branch checked out in the repository `folder` is in (a worktree's own), or a
-    /// detached commit's first seven characters; `nil` outside one.
-    static func branch(at folder: String) -> String? {
-        var url = URL(fileURLWithPath: folder).standardizedFileURL
-        for _ in 0..<32 {
-            let dotGit = url.appendingPathComponent(".git")
-            if let gitDir = gitDirectory(dotGit),
-               let file = ApprovalFiles.read(gitDir.appendingPathComponent("HEAD"), limit: 512, forbidden: 0) {
-                let head = String(decoding: file.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                if head.hasPrefix("ref: refs/heads/") { return String(head.dropFirst(16)).prefix(48).description }
-                return head.count >= 7 && head.allSatisfy(\.isHexDigit) ? String(head.prefix(7)) : nil
-            }
-            guard url.pathComponents.count > 1 else { return nil }
-            url.deleteLastPathComponent()
-        }
-        return nil
+/// The git branch a card names beside its folder, as the session's row does: the one in
+/// Islet's own file for the session that asks (`branch`, which the agent's hook keeps at
+/// each event), found by the session's id among that agent's sessions. Never anything
+/// the request says, so a request cannot name a branch of its own. None while the
+/// agent's Show the git branch is off, for a session with no file or no branch, or for a
+/// name that could pass the rest off as more of the line: one with white space, `~ ^ : ?
+/// * [ \` (which git never lets a branch's name hold), anything a reader could not see,
+/// or punctuation, a symbol or a digit from outside ASCII (but the ellipsis a long name
+/// is cut at), which could stand in for the line's own ` · ` or a time's colon.
+enum ApprovalBranch {
+    /// The most of a branch's name the card shows, cut in the middle as the rows cut
+    /// it, so the folder keeps its room.
+    static let limit = 32
+    /// What git never lets a branch's name hold, besides white space.
+    private static let forbidden = Set("~^:?*[\\".unicodeScalars)
+    /// The ellipsis where a long name was cut in the middle, by the hook, the session's
+    /// file or the card.
+    private static let cut: Unicode.Scalar = "\u{2026}"
+
+    /// The branch for `request` from Claude Code's sessions.
+    static func of(_ request: ApprovalRequest, claude records: [ClaudeSessionRecord], showsBranch: Bool) -> String? {
+        guard request.agent == .claude, showsBranch, !request.sessionId.isEmpty else { return nil }
+        return shown(records.first { $0.id == request.sessionId }?.branch)
     }
 
-    /// The git folder `.git` stands for: itself, or the one a worktree's `.git` file names.
-    private static func gitDirectory(_ dotGit: URL) -> URL? {
-        var isFolder: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: dotGit.path, isDirectory: &isFolder) else { return nil }
-        if isFolder.boolValue { return dotGit }
-        guard let file = ApprovalFiles.read(dotGit, limit: 1024, forbidden: 0) else { return nil }
-        let text = String(decoding: file.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.hasPrefix("gitdir: ") else { return nil }
-        let path = String(text.dropFirst(8))
-        return path.hasPrefix("/") ? URL(fileURLWithPath: path)
-            : dotGit.deletingLastPathComponent().appendingPathComponent(path).standardizedFileURL
+    /// The branch for `request` from ChatGPT's sessions.
+    static func of(_ request: ApprovalRequest, chatGPT records: [ChatGPTSessionRecord], showsBranch: Bool) -> String? {
+        guard request.agent == .chatgpt, showsBranch, !request.sessionId.isEmpty else { return nil }
+        return shown(records.first { $0.id == request.sessionId }?.branch)
+    }
+
+    /// `branch` as the card shows it, or `nil` for none.
+    static func shown(_ branch: String?) -> String? {
+        guard let branch, !branch.isEmpty,
+              ApprovalText.hiddenCharacter(in: branch, rule: .strict) == nil,
+              !branch.unicodeScalars.contains(where: { $0.properties.isWhitespace || forbidden.contains($0) || !isAllowed($0) })
+        else { return nil }
+        return SessionBranch.middle(branch, limit: limit)
+    }
+
+    /// Whether a branch's name may hold `scalar`: anything in ASCII and the ellipsis
+    /// where a long name was cut, and from beyond them only letters and the marks that
+    /// go on them, which the card then marks.
+    private static func isAllowed(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar.isASCII || scalar == cut { return true }
+        switch scalar.properties.generalCategory {
+        case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
+             .nonspacingMark, .spacingMark, .enclosingMark:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Whether `branch`, as `shown` gives it, has letters that could pass for others, or
+    /// marks on letters: all it may hold from outside ASCII besides the ellipsis where it
+    /// was cut. The card marks it as it marks such words in a request.
+    static func isLookAlike(_ branch: String) -> Bool {
+        branch.unicodeScalars.contains { !$0.isASCII && $0 != cut }
     }
 }
 
