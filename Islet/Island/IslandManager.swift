@@ -212,6 +212,10 @@ final class IslandManager {
             withAnimation(.islandMorph) { controller.model.bubblePlacement = placement }
             controller.measureMenus()
         }
+        let ringWidth = Prefs.islandRing?.thickness.width ?? 0
+        for controller in controllers.values where controller.model.ringWidth != ringWidth {
+            controller.model.ringWidth = ringWidth
+        }
         applyFullScreen()
     }
 

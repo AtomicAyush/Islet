@@ -148,6 +148,12 @@ enum Prefs {
         )
     }
 
+    /// The ring round the island, if there is one, for AppKit code outside a SwiftUI
+    /// body. Views read `\.islandRing` from the environment instead.
+    static var islandRing: IslandRing? {
+        IslandRing(pref: store.string(forKey: Key.islandRing) ?? IslandRing.offPref)
+    }
+
     static var displays: DisplayChoice {
         DisplayChoice(rawValue: store.string(forKey: Key.displays) ?? "") ?? .notched
     }

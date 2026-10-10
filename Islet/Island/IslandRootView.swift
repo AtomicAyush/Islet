@@ -134,6 +134,15 @@ private struct IslandSurface: View {
             bottomRadius: layout.bottomRadius,
             topRadius: layout.topRadius
         )
+        // With a ring under a notch, the squash never lifts the island's bottom into the
+        // housing's plate, which holds still over it: the ring would go under the plate
+        // along the bottom for as long as the squash lasts. The sideways squash and the
+        // rebound are kept.
+        let lowestSquash = ring.map { ring -> CGFloat in
+            guard model.metrics.hasNotch, layout.wearsColour, layout.size.height > 0 else { return 0 }
+            let band = min(ring.thickness.width, layout.ringRoom.band)
+            return min((layout.notch.height + band) / layout.size.height, 1)
+        } ?? 0
 
         ZStack(alignment: .top) {
             if isBlack {
@@ -227,8 +236,8 @@ private struct IslandSurface: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
-        .keyframeAnimator(initialValue: Squash(), trigger: model.contentKey) { [reduceMotion] view, squash in
-            view.scaleEffect(x: reduceMotion ? 1 : squash.x, y: reduceMotion ? 1 : squash.y, anchor: .top)
+        .keyframeAnimator(initialValue: Squash(), trigger: model.contentKey) { [reduceMotion, lowestSquash] view, squash in
+            view.scaleEffect(x: reduceMotion ? 1 : squash.x, y: reduceMotion ? 1 : max(squash.y, lowestSquash), anchor: .top)
         } keyframes: { _ in
             // A brief squash and rebound on every change of shape, like the iPhone's
             // island absorbing the impact of new content.
@@ -249,7 +258,9 @@ private struct IslandSurface: View {
         // hangs from a clear view the island's size, since a frame round the plate
         // itself would grow to the plate and clip nothing.
         .overlay(alignment: .top) {
-            // Over a ring as well, which would otherwise run under the housing.
+            // Over a ring as well, which would otherwise run under the housing. An island
+            // with a ring reaches a band below the plate (`IslandLayout.make(for:)`), so
+            // along the bottom the ring runs beneath it rather than under it.
             if !isBlack || ring != nil, model.metrics.hasNotch {
                 Color.clear
                     .overlay(alignment: .top) { NotchPlate(notch: layout.notch) }

@@ -891,12 +891,15 @@ drawn and names those that were moved. A ring of colour can run round the island
 strip of lights, over any fill — a black island with a rainbow ring, say — either steady in one
 colour or with colours travelling round it, with a thickness, a glow and a brightness. It runs
 round the bubbles beside the island too, and under a notch it runs down from the menu bar,
-round the island and back up; at rest the island is the notch and has none. Only colours move,
-never brightness, and slowly: the quickest fill takes 3 seconds from one colour to the next and
-the quickest ring 5 seconds a lap. Core Animation moves them, so Islet itself does nothing while
-they do, and they hold still whenever nothing shows them, the screen sleeps or locks, the
-screen is shared or recorded (unless you say otherwise), and with Reduce Motion or Low Power
-Mode on. The ring never reaches under what the island shows, and never draws outside it.
+round the island and back up, unbroken: with a ring, the island beside the notch reaches a
+band lower than the camera housing, and its squash on new content never lifts its bottom edge
+into the housing, so the housing never covers it. At rest the island is the notch and has none.
+Only colours move, never brightness, and slowly: the quickest fill takes 3 seconds from one
+colour to the next and the quickest ring 5 seconds a lap. Core Animation moves them, so Islet
+itself does nothing while they do, and they hold still whenever nothing shows them, the screen
+sleeps or locks, the screen is shared or recorded (unless you say otherwise), and with Reduce
+Motion or Low Power Mode on. The ring never reaches under what the island shows, and never draws
+outside it.
 
 **Saving energy.** In Low Power Mode, or on battery if you choose (Settings › General › Save
 energy: In Low Power Mode, On battery, or Never), nothing in the island moves for long. The

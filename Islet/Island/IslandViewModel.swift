@@ -80,6 +80,10 @@ final class IslandViewModel {
     var menusRoomRight = CGFloat.infinity
     /// Which sides of the island the bubbles go on. Set by the manager from preferences.
     var bubblePlacement = BubblePlacement.bothSides
+    /// How wide the band of the ring round the island is, or 0 without a ring. Set by the
+    /// manager from preferences; under a notch the island reaches lower with a ring, so
+    /// the camera housing never covers it (`IslandLayout.make(for:)`).
+    var ringWidth: CGFloat = 0
 
     /// Something beside the island's own content that takes a click of its own: a
     /// further activity, in its bubble or folded into the island, or the bubble that
@@ -1823,6 +1827,16 @@ struct IslandLayout: Equatable {
         switch model.mode {
         case .hidden, .idle: layout.wearsColour = floating
         case .compact, .banner, .expanded: break
+        }
+
+        // A ring is drawn inside the island's edge, and the notch plate covers the island
+        // to the housing's depth: an island no deeper than that, a row beside the notch,
+        // would have its ring hidden along the bottom under the housing. With a ring it
+        // reaches one band lower, to a whole point, so the ring runs below the housing and
+        // all the way round.
+        if !floating, layout.wearsColour, model.ringWidth > 0 {
+            let band = min(model.ringWidth, layout.ringRoom.band)
+            if layout.size.height < notch.height + band { layout.size.height += band.rounded(.up) }
         }
 
         // Never ask for more than the window can hold.

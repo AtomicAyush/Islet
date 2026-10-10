@@ -702,16 +702,20 @@ private struct CompactPreview: View {
         let shape = hasNotch
             ? IslandShape(earRadius: 6, bottomRadius: 11)
             : IslandShape(earRadius: 0, bottomRadius: 11, topRadius: 11)
+        let room = IslandRingRoom(band: 2, glow: 2)
+        // Under a notch, with a ring, it reaches a band lower than the housing, as the
+        // island does, so the ring shows along its bottom.
+        let reach = hasNotch ? ring.map { min($0.thickness.width, room.band).rounded(.up) } ?? 0 : 0
         ZStack(alignment: .top) {
             Rectangle().fill(Color(white: 0.93)).frame(height: notch.height)
-            ZStack {
+            ZStack(alignment: .top) {
                 if theme.isMulticolour {
                     IslandPaint(style: theme.paintStyle)
                 } else {
                     shape.fill(theme.background)
                 }
                 if let ring {
-                    IslandRingView(ring: ring, edge: IslandEdge(shape: shape), room: IslandRingRoom(band: 2, glow: 2))
+                    IslandRingView(ring: ring, edge: IslandEdge(shape: shape), room: room)
                 }
                 HStack {
                     Image(systemName: "timer").foregroundStyle(.islandAccent(.timer))
@@ -720,8 +724,9 @@ private struct CompactPreview: View {
                 }
                 .font(.system(size: 10, weight: .semibold))
                 .padding(.horizontal, 14)
+                .frame(height: hasNotch ? notch.height : 20)
             }
-            .frame(width: 140, height: hasNotch ? notch.height : 20)
+            .frame(width: 140, height: hasNotch ? notch.height + reach : 20)
             .clipShape(shape)
             .padding(.top, hasNotch ? 0 : 1)
             if hasNotch {
