@@ -62,8 +62,9 @@ enum GeminiLayout {
         return rows + CGFloat(sessions.count - 1) * sessionSpacing
     }
 
-    static func pageHeight(for sessions: [GeminiSession], showsText: Bool) -> CGFloat {
-        min(topInset + listHeight(sessions, showsText: showsText) + bottomInset, maxPageHeight)
+    /// The page's height, the usage line's `header` above the rows where it shows.
+    static func pageHeight(for sessions: [GeminiSession], showsText: Bool, header: CGFloat = 0) -> CGFloat {
+        header + min(topInset + listHeight(sessions, showsText: showsText) + bottomInset, maxPageHeight - header)
     }
 }
 
@@ -367,23 +368,36 @@ struct GeminiTaskRing: View {
 
 // MARK: - Compact
 
-/// Left of the notch: the mark.
+/// Left of the notch: the mark, in a ring from 80% of the quota.
 struct GeminiCompactLeading: View {
     let model: GeminiModel
+    var usage: UsageCenter? = nil
 
     var body: some View {
-        GeminiMarkView(mark: model.mark, pointSize: GeminiLayout.compactSymbol)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        UsageRingMark(usage: model.isPreviewing ? CompactUsage() : usage?.compact(.gemini) ?? CompactUsage()) {
+            GeminiMarkView(mark: model.mark, pointSize: GeminiLayout.compactSymbol)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 /// Right of the notch: how long a conversation has waited on the person; or, while one
 /// works with a task list, a ring filling as it gets done; else how long the run has
-/// been going; or a word for why it stopped.
+/// been going; or a word for why it stopped. At the quota's limit, when it lifts in their
+/// place.
 struct GeminiCompactTrailing: View {
     let model: GeminiModel
+    var usage: UsageCenter? = nil
 
     var body: some View {
+        if let usage, !model.isPreviewing, usage.compact(.gemini).atLimit {
+            UsageLimitTrailing(usage: usage.compact(.gemini), now: usage.now)
+        } else {
+            usual
+        }
+    }
+
+    private var usual: some View {
         GeometryReader { proxy in
             Group {
                 if let session = model.displayed {
@@ -441,18 +455,31 @@ struct GeminiMinimal: View {
 
 // MARK: - Expanded
 
-/// Opened: a row per conversation, those waiting on the person first. Clicking one
-/// brings Antigravity forward.
+/// Opened: a row per conversation, those waiting on the person first, under a line of
+/// Gemini's quota while it shows. Clicking a row brings Antigravity forward. As it
+/// opens, the quota is asked for again where a read is due.
 struct GeminiExpanded: View {
     let model: GeminiModel
+    var usage: UsageCenter? = nil
     let open: (GeminiSession) -> Void
     @AppStorage(GeminiPrefs.showPrompt) private var showsText = true
     @AppStorage(GeminiPrefs.showBranch) private var showsBranch = true
 
     var body: some View {
+        let status = model.isPreviewing ? nil : usage?.status(.gemini)
+        VStack(spacing: 0) {
+            if let status { UsageLine(status: status) }
+            list(header: status == nil ? 0 : UsageLayout.lineHeight)
+        }
+        .onAppear { if !model.isPreviewing { usage?.willShow() } }
+    }
+
+    /// The rows below the usage line, which takes `header` of the page's height.
+    @ViewBuilder
+    private func list(header: CGFloat) -> some View {
         let sessions = model.shown
-        let height = GeminiLayout.pageHeight(for: sessions, showsText: showsText) - GeminiLayout.topInset
-            - GeminiLayout.bottomInset
+        let height = GeminiLayout.pageHeight(for: sessions, showsText: showsText, header: header) - header
+            - GeminiLayout.topInset - GeminiLayout.bottomInset
         let scrolls = GeminiLayout.listHeight(sessions, showsText: showsText) > height + 0.5
         ScrollView(.vertical) {
             VStack(spacing: GeminiLayout.sessionSpacing) {
@@ -726,6 +753,8 @@ struct GeminiSettingsView: View {
                  : "No banner when an agent finishes in the conversation Antigravity has in front. Islet tells by Antigravity's window title, which needs Accessibility for Islet in System Settings › Privacy & Security; until then every finish gets a banner.")
             Text("For Gemini CLI, none when Gemini finishes in the Terminal or iTerm tab in front. Islet asks the terminal which tab that is only once you've let it select tabs, with a click on a session's row; until then, and in any other app, every finish gets a banner.")
         }
+
+        UsageSettingsRows(agent: .gemini)
 
         LabeledContent {
             Button(copied ? "Copied" : "Copy Hooks") {

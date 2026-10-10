@@ -35,6 +35,10 @@ import SwiftUI
 /// it waits; Antigravity's list of conversations says so, and the feature puts up the
 /// banner for it itself (`GeminiWaitBanner`), while Antigravity is not in front.
 ///
+/// Gemini's quota shows atop the page, on the AI Usage tile and from 80% round the mark
+/// (`UsageCenter`), asked of Antigravity while it is open (`GeminiUsage`); a hook event
+/// from Antigravity is a moment to ask again.
+///
 /// A background activity: it never takes the island from music or a timer, and sits in
 /// the bubble beside them instead, as Claude Code and ChatGPT do. There it gives way to
 /// the Sound Mixer, but for while a conversation is waiting on the person.
@@ -45,12 +49,15 @@ final class GeminiFeature: Feature {
     let symbol = "wand.and.stars"
     let summary = "What Gemini's agents in Google Antigravity and Gemini CLI are doing, from their hooks."
     var islandActivity: IslandActivityInfo? { IslandActivityInfo(self, order: 77) }
+    var sharedHomeTile: HomeTileInfo? { UsageCenter.tileInfo }
 
     /// How long a preview's made-up conversations show.
     static let previewLength: TimeInterval = 12
 
     let model = GeminiModel()
     let monitor: GeminiSessionMonitor
+    /// Gemini's quota.
+    let usage: UsageCenter
     private let clock: () -> Date
     private let activate: @MainActor (_ bundleID: String) -> Bool
     private let look: @MainActor (_ bundleID: String) -> ChatScreenLook
@@ -61,7 +68,7 @@ final class GeminiFeature: Feature {
     private let terminalTab: @MainActor (_ bundleID: String) -> GeminiTerminalTab?
     /// The conversations whose wait has had its banner, and what they wait for.
     private var announced: [String: GeminiWaiting] = [:]
-    private lazy var activity = GeminiActivity(model: model) { [weak self] session in
+    private lazy var activity = GeminiActivity(model: model, usage: usage) { [weak self] session in
         self?.open(session)
     }
 
@@ -69,11 +76,15 @@ final class GeminiFeature: Feature {
     private var published: GeminiActivity.Published?
     private var previewWork: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
+    private var usageObserver: NSObjectProtocol?
+    /// When Antigravity's hook was last heard from, as the quota was last nudged.
+    private var nudged: Date?
 
     /// Tests give a monitor on a folder of their own, a clock, a stand-in for bringing
     /// Antigravity forward, their own look at the screen, its window's title and the
     /// conversations' titles, a stand-in for putting up a banner, and for a CLI session,
-    /// stand-ins for bringing its terminal forward and for the tab a terminal has in front.
+    /// stand-ins for bringing its terminal forward and for the tab a terminal has in front,
+    /// and their own usage.
     init(
         monitor: GeminiSessionMonitor? = nil,
         clock: @escaping () -> Date = Date.init,
@@ -85,9 +96,11 @@ final class GeminiFeature: Feature {
             FeatureRegistry.shared.feature(BannerFeature.self)?.show(banner)
         },
         openCLI: @escaping @MainActor (GeminiSessionRecord) -> Bool = GeminiCLIHost.open,
-        terminalTab: @escaping @MainActor (_ bundleID: String) -> GeminiTerminalTab? = GeminiTerminalFront.frontTab
+        terminalTab: @escaping @MainActor (_ bundleID: String) -> GeminiTerminalTab? = GeminiTerminalFront.frontTab,
+        usage: UsageCenter? = nil
     ) {
         self.monitor = monitor ?? GeminiSessionMonitor(now: clock)
+        self.usage = usage ?? .shared
         self.clock = clock
         self.activate = activate
         self.look = look
@@ -109,13 +122,24 @@ final class GeminiFeature: Feature {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.sync() }
         }
+        // The usage line and the limit change the page's height and the right side's width.
+        usageObserver = NotificationCenter.default.addObserver(
+            forName: UsageCenter.didChange, object: usage, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sync() }
+        }
         monitor.start()
+        usage.start(.gemini)
     }
 
     func stop() {
         isRunning = false
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
+        if let usageObserver { NotificationCenter.default.removeObserver(usageObserver) }
+        usageObserver = nil
+        usage.stop(.gemini)
+        nudged = nil
         monitor.stop()
         announced = [:]
         model.update([], lastHeard: model.lastHeard, lastHeardCLI: model.lastHeardCLI)
@@ -154,6 +178,11 @@ final class GeminiFeature: Feature {
     // MARK: Island
 
     private func received(_ snapshot: GeminiSessionSnapshot) {
+        // An agent at work in Antigravity uses the quota: a moment to ask again.
+        if isRunning, let heard = snapshot.lastHeard, heard != nudged {
+            nudged = heard
+            usage.geminiEvent()
+        }
         let sessions = GeminiLiveness.sessions(snapshot, now: clock())
         model.update(isRunning ? sessions : [], lastHeard: snapshot.lastHeard, lastHeardCLI: snapshot.lastHeardCLI)
         if isRunning { announceWaits(sessions) }
@@ -361,6 +390,7 @@ final class GeminiActivity: IslandActivity {
     struct Published: Equatable {
         var expanded: CGFloat
         var rank: Int
+        var atLimit = false
     }
 
     let id = "gemini"
@@ -379,27 +409,38 @@ final class GeminiActivity: IslandActivity {
     /// Its page shows each conversation's title, which is what was asked in a few words.
     var personal: PersonalContent? { .messages }
     let model: GeminiModel
+    let usage: UsageCenter?
     let open: (GeminiSession) -> Void
 
-    init(model: GeminiModel, open: @escaping (GeminiSession) -> Void) {
+    init(model: GeminiModel, usage: UsageCenter? = nil, open: @escaping (GeminiSession) -> Void) {
         self.model = model
+        self.usage = usage
         self.open = open
     }
 
     var published: Published {
-        Published(expanded: GeminiLayout.pageHeight(for: model.shown, showsText: GeminiPrefs.showsPrompt), rank: rank)
+        Published(expanded: GeminiLayout.pageHeight(for: model.shown, showsText: GeminiPrefs.showsPrompt, header: usageHeader),
+                  rank: rank, atLimit: atLimit)
     }
+
+    /// The usage line atop the page, while it shows.
+    private var usageHeader: CGFloat {
+        !model.isPreviewing && usage?.status(.gemini) != nil ? UsageLayout.lineHeight : 0
+    }
+
+    /// At the quota's limit, when it lifts takes the right of the notch.
+    private var atLimit: Bool { !model.isPreviewing && usage?.compact(.gemini).atLimit == true }
 
     /// Behind the Sound Mixer for the bubble while conversations work; ahead of it while
     /// one waits on the person, so the question shows.
     var rank: Int { model.needsYou ? 1 : -1 }
-    var compactTrailingWidth: CGFloat? { GeminiLayout.trailingWidth }
+    var compactTrailingWidth: CGFloat? { atLimit ? UsageLayout.limitTrailingWidth : GeminiLayout.trailingWidth }
     var expandedHeight: CGFloat { published.expanded }
 
-    func compactLeading() -> AnyView { AnyView(GeminiCompactLeading(model: model)) }
-    func compactTrailing() -> AnyView { AnyView(GeminiCompactTrailing(model: model)) }
+    func compactLeading() -> AnyView { AnyView(GeminiCompactLeading(model: model, usage: usage)) }
+    func compactTrailing() -> AnyView { AnyView(GeminiCompactTrailing(model: model, usage: usage)) }
     func minimal() -> AnyView { AnyView(GeminiMinimal(model: model)) }
-    func expanded() -> AnyView { AnyView(GeminiExpanded(model: model, open: open)) }
+    func expanded() -> AnyView { AnyView(GeminiExpanded(model: model, usage: usage, open: open)) }
 }
 
 /// The feature's preference keys. Unset keys read as their defaults, the same ones the

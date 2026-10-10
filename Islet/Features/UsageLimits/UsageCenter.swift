@@ -22,15 +22,42 @@ enum UsagePrefs {
 
     /// The banners already put up, each window's until it resets (`UsageAlerts`).
     static let said = "usageLimits.said"
+    /// Gemini's last figures read from Antigravity, shown dimmed while it is closed
+    /// (`GeminiUsage.Kept`).
+    static let geminiKept = "gemini.usageKept"
 }
 
-/// Claude's and ChatGPT's usage limits, for the island: read while the agent's activity
-/// is on and Settings shows its limits, from files on this Mac alone (`ClaudeUsage`,
-/// `ChatGPTUsage`), and only when they change. Nothing polls: the Claude app's folder
-/// and Codex's are watched for entries changing (`FolderWatcher`), which the Claude app
-/// writing its history and Codex updating a thread both do, and ChatGPT's hooks say when
-/// a chat has moved on. One timer is kept, for the next moment the clock alone changes
-/// what shows: a window's reset, or a Claude reading growing old.
+/// How Islet gets at Antigravity, which tests replace: which of its processes run, and
+/// a read of its quota.
+struct AntigravityAccess {
+    /// The Antigravity app's processes running now: the one at `GeminiUsage.appPath`
+    /// alone.
+    var running: @MainActor () -> [Int32]
+    /// Asks its server for the quota, off the main thread.
+    var read: @Sendable (_ apps: [Int32], _ known: GeminiUsage.Known?) -> GeminiUsage.Outcome
+
+    static let live = AntigravityAccess(
+        running: {
+            NSRunningApplication.runningApplications(withBundleIdentifier: GeminiHostApp.antigravity)
+                .filter { !$0.isTerminated && $0.bundleURL?.standardizedFileURL.path == GeminiUsage.appPath }
+                .map(\.processIdentifier)
+        },
+        read: { apps, known in GeminiUsage.read(apps: apps, known: known, system: .live) }
+    )
+}
+
+/// Claude's, ChatGPT's and Gemini's usage limits, for the island: read while the agent's
+/// activity is on and Settings shows its limits. Claude's and ChatGPT's come from files on
+/// this Mac alone (`ClaudeUsage`, `ChatGPTUsage`), and only when they change: the Claude
+/// app's folder and Codex's are watched for entries changing (`FolderWatcher`), which the
+/// Claude app writing its history and Codex updating a thread both do, and ChatGPT's hooks
+/// say when a chat has moved on. Gemini's are asked of Antigravity while it is open
+/// (`GeminiUsage`): as the tile, the Gemini page or its usage line is about to show, as
+/// an Antigravity hook event comes, as Antigravity opens, and once a limit's reset has
+/// passed; at most once a minute, every five while the island saves energy, and never
+/// while Antigravity is closed, when its last figures show dimmed. Nothing polls. One
+/// timer is kept, for the next moment the clock alone changes what shows: a window's
+/// reset, or a Claude reading growing old.
 ///
 /// It puts up the AI Usage tile while there is a reading, warns of a window filling and
 /// of the limit through Show in Islet's banners (`UsageAlerts`), and its readings are
@@ -56,6 +83,24 @@ final class UsageCenter {
     private(set) var now: Date
     /// What the Claude app's history file last said, for Settings.
     private(set) var claudeHistory: ClaudeUsage.History?
+    /// What Islet last made of asking Antigravity, for Settings.
+    private(set) var geminiSource: GeminiSource = .notRead
+    /// Whether Antigravity was open when Islet last looked.
+    private(set) var antigravityOpen = false
+
+    /// What came of asking Antigravity for Gemini's quota.
+    enum GeminiSource: Equatable {
+        case notRead
+        /// Read at this time.
+        case read(Date)
+        /// Not read at this time: no answer, a refusal or an answer Islet can't read.
+        case failed(Date)
+    }
+
+    /// The least time between two reads of Gemini's quota, and while the island saves
+    /// energy.
+    static let geminiInterval: TimeInterval = 60
+    static let geminiSavingInterval: TimeInterval = 5 * 60
 
     /// Where the settings above and the warnings said are kept.
     @ObservationIgnored let defaults: UserDefaults
@@ -78,6 +123,19 @@ final class UsageCenter {
     @ObservationIgnored private var chatGPTSignature: [String] = []
     @ObservationIgnored private var readingChatGPT = false
     @ObservationIgnored private var readChatGPTAgain = false
+    @ObservationIgnored private let antigravity: AntigravityAccess
+    @ObservationIgnored private let saving: @MainActor () -> Bool
+    /// Gemini's reading, the last kept while Antigravity is closed.
+    @ObservationIgnored private var geminiReading: UsageReading?
+    /// The server and port that last answered.
+    @ObservationIgnored private var geminiKnown: GeminiUsage.Known?
+    /// When Antigravity was last asked, for the least time between reads.
+    @ObservationIgnored private(set) var geminiAsked: Date?
+    @ObservationIgnored private var readingGemini = false
+    /// The last read gave no figures (no answer, or no server), so those shown are
+    /// dimmed once as old as Claude's are (`UsageStatus.staleAfter`).
+    @ObservationIgnored private var geminiFailing = false
+    @ObservationIgnored private var workspaceObservers: [NSObjectProtocol] = []
     /// Bumped as each agent's reading starts or stops, so a read finishing after either
     /// is let go.
     @ObservationIgnored private var generations: [UsageAgent: Int] = [:]
@@ -85,6 +143,8 @@ final class UsageCenter {
     @ObservationIgnored private var timer: DispatchWorkItem?
     @ObservationIgnored private(set) var timerDue: Date?
     @ObservationIgnored private var tileShown = false
+    /// The tile's share of the row as last put up: wider with a third column.
+    @ObservationIgnored private var tileWeight: CGFloat = 0
     /// What the activities were last told: whether each agent's line shows, and its
     /// compact island.
     @ObservationIgnored private var published = Dictionary(uniqueKeysWithValues: UsageAgent.allCases.map { ($0, CompactUsage()) })
@@ -98,6 +158,8 @@ final class UsageCenter {
         clock: @escaping () -> Date = Date.init,
         claudeFolder: URL = ClaudeUsage.folder,
         codexHome: String = ChatGPTUsage.defaultHome,
+        antigravity: AntigravityAccess = .live,
+        saving: @escaping @MainActor () -> Bool = { EnergySaver.shared.isSaving },
         publishesTile: Bool = true,
         present: @escaping @MainActor (CustomBanner) -> Void = { banner in
             _ = FeatureRegistry.shared.feature(BannerFeature.self)?.show(banner)
@@ -107,6 +169,8 @@ final class UsageCenter {
         self.clock = clock
         self.claudeFolder = claudeFolder
         self.codexHome = codexHome
+        self.antigravity = antigravity
+        self.saving = saving
         self.publishesTile = publishesTile
         self.present = present
         now = clock()
@@ -166,6 +230,22 @@ final class UsageCenter {
             }
             codexWatcher = watcher
             watcher.start()
+        case .gemini:
+            // Figures read before Show usage limits was last turned off stay, so that
+            // turning it on again doesn't wait a minute to show them as they were.
+            if geminiReading == nil { geminiReading = keptGemini() }
+            let center = NSWorkspace.shared.notificationCenter
+            for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+                workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                    let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                    guard app?.bundleIdentifier == GeminiHostApp.antigravity else { return }
+                    let launched = note.name == NSWorkspace.didLaunchApplicationNotification
+                    MainActor.assumeIsolated {
+                        if launched { self?.antigravityOpened() } else { self?.antigravityClosed() }
+                    }
+                })
+            }
+            refreshGemini()
         }
     }
 
@@ -186,6 +266,14 @@ final class UsageCenter {
             chatGPTSignature = []
             readingChatGPT = false
             readChatGPTAgain = false
+        case .gemini:
+            // The reading, what came of it and when it was asked for stay in memory, so
+            // starting again keeps to once a minute and shows them as they were; what
+            // shows is only what `active` lets through (`update`).
+            for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+            workspaceObservers = []
+            geminiKnown = nil
+            readingGemini = false
         }
     }
 
@@ -279,6 +367,127 @@ final class UsageCenter {
         }
     }
 
+    // MARK: Gemini
+
+    /// The tile, the Gemini page or its usage line is about to show: Gemini's quota is
+    /// asked for again, if a read is due.
+    func willShow() {
+        refreshGemini()
+    }
+
+    /// Antigravity's hook told of an agent at work, which uses the quota.
+    func geminiEvent() {
+        refreshGemini()
+    }
+
+    func antigravityOpened() {
+        antigravityOpen = true
+        refreshGemini()
+    }
+
+    /// Antigravity has quit: its last figures stay, dimmed, and nothing is asked until it
+    /// opens again.
+    func antigravityClosed() {
+        guard active.contains(.gemini) else { return }
+        antigravityOpen = false
+        keepGemini()
+        update()
+    }
+
+    /// Antigravity isn't open: the last figures are kept, dimmed, until it is.
+    private func keepGemini() {
+        geminiKnown = nil
+        if var reading = geminiReading, !reading.isKept {
+            reading.isKept = true
+            geminiReading = reading
+        }
+    }
+
+    /// Asks Antigravity for Gemini's quota off the main thread, while its limits show,
+    /// Antigravity is open and no read is under way, at most once a minute (every five
+    /// while the island saves energy).
+    private func refreshGemini() {
+        guard active.contains(.gemini), !readingGemini else { return }
+        let apps = antigravity.running()
+        if antigravityOpen != !apps.isEmpty { antigravityOpen = !apps.isEmpty }
+        guard !apps.isEmpty else {
+            // Quit unseen, while the limits weren't shown.
+            if geminiReading?.isKept == false {
+                keepGemini()
+                update()
+            }
+            return
+        }
+        let now = clock()
+        let interval = saving() ? Self.geminiSavingInterval : Self.geminiInterval
+        if let asked = geminiAsked, now.timeIntervalSince(asked) < interval, now >= asked { return }
+        geminiAsked = now
+        readingGemini = true
+        let generation = generations[.gemini]
+        let known = geminiKnown
+        let read = antigravity.read
+        DispatchQueue.global(qos: .utility).async {
+            let outcome = read(apps, known)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let self, self.generations[.gemini] == generation, self.active.contains(.gemini) else { return }
+                    self.readingGemini = false
+                    self.received(outcome)
+                }
+            }
+        }
+    }
+
+    /// What a read came to. Anything but a reading shows nothing new.
+    private func received(_ outcome: GeminiUsage.Outcome) {
+        switch outcome {
+        case .read(var reading, let known):
+            geminiSource = .read(reading.measured)
+            geminiFailing = false
+            if let data = try? JSONEncoder().encode(GeminiUsage.Kept(reading)) {
+                defaults.set(data, forKey: UsagePrefs.geminiKept)
+            }
+            // Antigravity quit while it was asked: what it said shows as kept.
+            if antigravity.running().isEmpty {
+                antigravityOpen = false
+                reading.isKept = true
+            } else {
+                geminiKnown = known
+            }
+            geminiReading = reading
+        case .noServer:
+            geminiKnown = nil
+            geminiFailing = true
+        case .failed:
+            geminiKnown = nil
+            geminiFailing = true
+            geminiSource = .failed(clock())
+        }
+        update()
+    }
+
+    /// The figures last read, as kept, dimmed.
+    private func keptGemini() -> UsageReading? {
+        guard let data = defaults.data(forKey: UsagePrefs.geminiKept),
+              var reading = (try? JSONDecoder().decode(GeminiUsage.Kept.self, from: data))?.reading
+        else { return nil }
+        reading.isKept = true
+        return reading
+    }
+
+    /// When the reading was last true, kept or read, for Settings.
+    var geminiMeasured: Date? { geminiReading?.measured }
+
+    /// Asks again once a limit's reset has passed since the reading, the one thing the
+    /// clock alone tells of Gemini's quota.
+    private func refreshGeminiAfterReset() {
+        guard let reading = geminiReading, !reading.isKept else { return }
+        let now = clock()
+        if reading.windows.contains(where: { $0.resets.map { $0 > reading.measured && $0 <= now } ?? false }) {
+            refreshGemini()
+        }
+    }
+
     // MARK: What shows
 
     /// The agent's reading as of now, while its limits are shown; `nil` with none.
@@ -302,6 +511,12 @@ final class UsageCenter {
                                                 now: now)
         }
         if active.contains(.chatGPT) { next[.chatGPT] = chatGPTReading }
+        if active.contains(.gemini), var reading = geminiReading {
+            // Reads failing since, figures as old as a Claude reading that is dimmed are
+            // dimmed too, and warn or ring no more.
+            if geminiFailing, now.timeIntervalSince(reading.measured) > UsageStatus.staleAfter { reading.isKept = true }
+            next[.gemini] = reading
+        }
         if next != readings { readings = next }
         warn()
         syncTile()
@@ -348,17 +563,24 @@ final class UsageCenter {
         return banner
     }
 
+    /// The tile's share of the row: three columns, Gemini's beside Claude's and
+    /// ChatGPT's, need two-thirds as much again for their names and figures to read whole
+    /// where the row is narrowest.
+    static func tileWeight(columns: Int) -> CGFloat { columns >= 3 ? 2.5 : 1.5 }
+
     private func syncTile() {
         guard publishesTile else { return }
         let wanted = !readings.isEmpty
-        if wanted, !tileShown {
+        let weight = Self.tileWeight(columns: readings.count)
+        if wanted, !tileShown || weight != tileWeight {
             ActivityCenter.shared.setHomeWidget(HomeWidget(
-                id: Self.tileID, order: Self.tileOrder, weight: 1.5, view: AnyView(UsageHomeTile(center: self))
+                id: Self.tileID, order: Self.tileOrder, weight: weight, view: AnyView(UsageHomeTile(center: self))
             ))
         } else if !wanted, tileShown {
             ActivityCenter.shared.removeHomeWidget(id: Self.tileID)
         }
         tileShown = wanted
+        tileWeight = wanted ? weight : 0
     }
 
     /// Tells the activities when what their compact islands show has changed, or a
@@ -405,6 +627,7 @@ final class UsageCenter {
                 self.timer = nil
                 self.timerDue = nil
                 self.update()
+                self.refreshGeminiAfterReset()
             }
         }
         timer = work
@@ -422,6 +645,11 @@ final class UsageCenter {
         publishedLines = []
         if agent == .claude {
             claudeHistory = reading.map { .read(ClaudeUsage.HistoryReading(measured: $0.measured, organisation: nil, windows: $0.windows, samples: 1)) }
+        }
+        if agent == .gemini {
+            geminiReading = reading
+            geminiSource = reading.map { .read($0.measured) } ?? .notRead
+            antigravityOpen = !(reading?.isKept ?? false)
         }
         announce()
     }

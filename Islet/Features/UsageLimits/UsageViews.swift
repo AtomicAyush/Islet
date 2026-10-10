@@ -12,6 +12,8 @@ enum UsageLayout {
     static let ringMark: CGFloat = 0.72
     /// A bar on the tile.
     static let barHeight: CGFloat = 4
+    /// The most windows a column of the tile has room for.
+    static let tileRows = 2
     static let barTrack = IslandBackdrop.track(0.16)
 }
 
@@ -28,6 +30,7 @@ enum UsageColours {
         switch agent {
         case .claude: .claudeCode
         case .chatGPT: .chatGPT
+        case .gemini: .gemini
         }
     }
 
@@ -47,19 +50,24 @@ enum UsageColours {
 
 /// The AI Usage tile: a column for each agent with a reading, its windows' bars, how
 /// full each is and when it resets; the plan or how old the reading is beside its name.
-/// A dimmed column is a Claude reading the app has not renewed for 20 minutes, a dimmed
-/// window an old figure beside newer ones or the limit. The window at its limit says so
-/// in red, or "Limit reached" heads the column where none can be told to be.
+/// A dimmed column is a Claude reading the app has not renewed for 20 minutes, or
+/// Gemini's last while Antigravity is closed; a dimmed window an old figure beside newer
+/// ones or the limit. The window at its limit says so in red, or "Limit reached" heads
+/// the column where none can be told to be. As it shows, Gemini's quota is asked for
+/// again where a read is due.
 struct UsageHomeTile: View {
     let center: UsageCenter
 
     var body: some View {
         let statuses = UsageAgent.allCases.compactMap { center.status($0) }
-        HStack(alignment: .top, spacing: 14) {
+        // Three columns, on a tile two-thirds as wide again (`UsageCenter.tileWeight`),
+        // sit a little closer.
+        HStack(alignment: .top, spacing: statuses.count >= 3 ? 10 : 14) {
             ForEach(statuses, id: \.agent) { status in
                 UsageColumn(status: status)
             }
         }
+        .onAppear { center.willShow() }
     }
 }
 
@@ -92,9 +100,8 @@ struct UsageColumn: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.islandHueText(.failure, on: .homeTile))
             }
-            ForEach(Array(status.windows.enumerated()), id: \.offset) { _, window in
-                UsageWindowRow(status: status, window: window,
-                               atLimit: window.window.span == status.shownLimitWindow?.window.span)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, window in
+                UsageWindowRow(status: status, window: window, atLimit: status.showsAtLimit(window))
                     .opacity(status.dimsAlone(window) ? 0.5 : 1)
             }
         }
@@ -102,6 +109,20 @@ struct UsageColumn: View {
         .opacity(status.isDimmed ? 0.5 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(status.agent.name + ": " + UsageText.line(status))
+    }
+
+    /// The windows the column has room for: all of them, or of more (Gemini's), those
+    /// at their limit and the fullest, in their order.
+    private var rows: [UsageStatus.Window] {
+        let windows = status.windows
+        guard windows.count > UsageLayout.tileRows else { return windows }
+        let ranked = windows.indices.sorted { a, b in
+            let first = status.showsAtLimit(windows[a]), second = status.showsAtLimit(windows[b])
+            if first != second { return first }
+            return windows[a].percent > windows[b].percent
+        }
+        let kept = Set(ranked.prefix(UsageLayout.tileRows))
+        return windows.indices.filter { kept.contains($0) }.map { windows[$0] }
     }
 
     /// Beside the name: how old the reading is where that is worth saying, or else the
@@ -122,14 +143,19 @@ private struct UsageWindowRow: View {
         let percent = atLimit ? 100 : window.percent
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(UsageText.shortName(window.window))
+                Text(UsageText.shortName(window.window, beside: status.agent))
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.islandText(0.55, on: .homeTile))
+                    .lineLimit(1)
+                    // A source's long name keeps its end, which tells a model's limits apart.
+                    .truncationMode(.middle)
                 Spacer(minLength: 2)
                 Text(atLimit ? "Limit" : window.isReset ? "0%" : UsageText.percent(percent))
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(UsageColours.text(percent, on: .homeTile))
+                    .fixedSize()
+                    .layoutPriority(1)
             }
             UsageBar(percent: percent, agent: status.agent)
                 .frame(height: UsageLayout.barHeight)
@@ -233,12 +259,12 @@ struct UsageLine: View {
         for (index, window) in status.windows.enumerated() {
             // An old figure beside newer ones, or beside the limit, is dimmed alone.
             let dim = status.dimsAlone(window) ? 0.5 : 1
-            let name = Text(UsageText.shortName(window.window) + " ").foregroundStyle(.islandText(0.55 * dim))
+            let name = Text(UsageText.shortName(window.window, beside: status.agent) + " ").foregroundStyle(.islandText(0.55 * dim))
             if window.isReset {
                 add(name + Text("reset").foregroundStyle(.islandText(0.75 * dim)))
                 continue
             }
-            let atLimit = window.window.span == limit?.window.span
+            let atLimit = status.showsAtLimit(window)
             let figure = atLimit
                 ? Text("limit").foregroundStyle(.islandHueText(.failure))
                 : Text(UsageText.percent(window.percent)).foregroundStyle(UsageColours.text(window.percent, dim: dim))
@@ -355,11 +381,21 @@ struct UsageSettingsRows: View {
             Text("From 80%, an orange ring round the mark beside the notch, red at the limit. At the limit, when it lifts takes the place of the turn's time either way.")
         }
         .disabled(!shows)
-        LabeledContent(agent == .claude ? "Claude app" : "ChatGPT plan") {
+        LabeledContent(Self.sourceLabel(agent)) {
             TimelineView(.everyMinute) { context in
                 Text(source(at: context.date))
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
             }
+        }
+    }
+
+    /// What the line of what was last read is labelled, as Settings' search finds it.
+    static func sourceLabel(_ agent: UsageAgent) -> String {
+        switch agent {
+        case .claude: "Claude app"
+        case .chatGPT: "ChatGPT plan"
+        case .gemini: "Gemini quota"
         }
     }
 
@@ -369,6 +405,8 @@ struct UsageSettingsRows: View {
             "Your plan's 5-hour and weekly limits on the AI Usage tile and atop the opened page, from the Claude app's own record of them, which it updates every 15 minutes while it's open, and exactly whenever Quick Ask asks Claude. No sign-in of Islet's own; dimmed once the app hasn't updated them for 20 minutes."
         case .chatGPT:
             "Your plan's limits on the AI Usage tile and atop the opened page, as Codex notes them after each reply, with their exact resets. Nothing is read of the chats themselves; a window past its reset shows as reset."
+        case .gemini:
+            "Your Gemini quota on the AI Usage tile and atop the opened page, as Antigravity's own quota screen shows it: while Antigravity is open, Islet asks Antigravity's local server, at most once a minute, with the one-time key Antigravity starts it with, which Islet never keeps. Unofficial, so an update of Antigravity may stop it; while Antigravity is closed, the last figures show dimmed."
         }
     }
 
@@ -392,6 +430,21 @@ struct UsageSettingsRows: View {
             let plan = UsageText.plan(reading.plan) ?? "Unknown plan"
             return ([plan, UsageText.credits(reading.credits), "as of " + UsageText.age(date.timeIntervalSince(reading.measured))]
                 .compactMap { $0 }).joined(separator: " · ")
+        case .gemini:
+            return Self.gemini(open: center.antigravityOpen, source: center.geminiSource, measured: center.geminiMeasured, now: date)
+        }
+    }
+
+    /// "Antigravity: read 2 min ago", "Antigravity closed: last read 3 h ago",
+    /// "Antigravity's quota couldn't be read".
+    static func gemini(open: Bool, source: UsageCenter.GeminiSource, measured: Date?, now: Date) -> String {
+        guard open else {
+            return "Antigravity closed: " + (measured.map { "last read " + UsageText.age(now.timeIntervalSince($0)) } ?? "nothing read yet")
+        }
+        switch source {
+        case .read(let at): return "Antigravity: read " + UsageText.age(now.timeIntervalSince(at))
+        case .failed: return "Antigravity's quota couldn't be read"
+        case .notRead: return "Antigravity: not read yet"
         }
     }
 }

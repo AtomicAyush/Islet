@@ -299,13 +299,14 @@ extension GeminiFeature {
         SettingsSearchTerms(
             labels: ["Show what you asked", "Show the git branch", "Skip Done when the chat is on screen",
                      "Antigravity hooks", "Copy Hooks", "Islet's hook", "Last heard from Gemini", "Gemini CLI hooks",
-                     "Islet's Gemini CLI hook", "Last heard from Gemini CLI"],
+                     "Islet's Gemini CLI hook", "Last heard from Gemini CLI", "Show usage limits", "Warn at 80% and 95%",
+                     "Usage ring in the compact island", "Gemini quota", "AI Usage"],
             keywords: ["gemini", "antigravity", "google", "agents", "agent manager", "hooks.json", "hooks",
                        "gemini cli", "cli", "settings.json", "terminal", "iterm", "tab", "sessions", "prompt",
                        "permission", "approval", "trust", "trusted folders", "plan", "question",
                        "conversations", "tasks", "task list", "progress", "quota", "limit", "error", "done",
                        "finished", "banner", "popup", "notification", "on screen", "accessibility", "coding", "git",
-                       "branch", "workspace", "repository"]
+                       "branch", "workspace", "repository", "usage", "limits", "rate limit", "model quota", "usage tile"]
         )
     }
 }

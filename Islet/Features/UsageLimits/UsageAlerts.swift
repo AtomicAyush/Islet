@@ -10,6 +10,8 @@ import Foundation
 /// is taken to run its whole length from the reading that was warned of, by which time
 /// it has surely started afresh. A window warned of at 95% has its 80% noted too, and one
 /// at its limit both, so a jump straight past a level is warned of once, at the highest.
+/// Where the source names its windows (Gemini's), each is a limit of its own: one at its
+/// limit can leave the others usable, so each has its own banner when it gets there.
 struct UsageAlerts: Equatable, Codable {
     /// The levels warned of before the limit, lowest first.
     static let levels: [Double] = [80, 95]
@@ -26,6 +28,9 @@ struct UsageAlerts: Equatable, Codable {
         var level: Int
         /// When the window starts afresh.
         var until: Date
+        /// The window's own name, where the source names its windows (`UsageWindow.name`):
+        /// two of Gemini's limits can run as long.
+        var name: String? = nil
     }
 
     /// A banner due.
@@ -40,6 +45,8 @@ struct UsageAlerts: Equatable, Codable {
         var kind: Kind
         var resets: Date?
         var resetIsEstimate: Bool
+        /// The limit's own name, of a window the source names (`UsageWindow.name`).
+        var name: String? = nil
     }
 
     var said: [Said] = []
@@ -55,27 +62,43 @@ struct UsageAlerts: Equatable, Codable {
         // A limit the source has just said was reached is news however old the windows'
         // numbers are.
         let limitSaid = status.reading.limitSince.map { status.now.timeIntervalSince($0) <= UsageStatus.staleAfter } ?? false
-        if status.atLimit, !status.isStale || limitSaid {
+        if !status.windows.isEmpty, status.windows.allSatisfy({ $0.window.name != nil }) {
+            // Named windows: each at its limit is a limit of its own, said once until it
+            // resets.
+            for window in status.windows where !window.isReset && !window.isStale && window.percent >= 100 {
+                let name = window.window.name
+                let resets = window.window.resets
+                if !isSaid(agent, Self.limitWindow, name, 100, measured: window.measured, resets: resets, span: window.window.span) {
+                    alerts.append(Alert(agent: agent, kind: .limit, resets: resets, resetIsEstimate: window.window.resetIsEstimate,
+                                        name: name))
+                }
+                note(agent, Self.limitWindow, name, 100, until: endOfWindow(measured: window.measured)(window.window),
+                     known: resets != nil, measured: window.measured)
+            }
+        } else if status.atLimit, !status.isStale || limitSaid {
             let measured = max(measured, status.reading.limitSince ?? measured)
             let window = status.limitWindow?.window
             let resets = status.limitResets
             let until = resets?.date ?? window.map(endOfWindow(measured: measured))
                 ?? measured.addingTimeInterval(UsageStatus.limitHold)
-            if !isSaid(agent, Self.limitWindow, 100, measured: measured, resets: resets?.date,
+            if !isSaid(agent, Self.limitWindow, nil, 100, measured: measured, resets: resets?.date,
                        span: window?.span ?? Int(UsageStatus.limitHold / 60)) {
                 alerts.append(Alert(agent: agent, kind: .limit, resets: resets?.date, resetIsEstimate: resets?.isEstimate ?? false))
             }
-            note(agent, Self.limitWindow, 100, until: until, known: resets != nil || window?.resets != nil, measured: measured)
+            note(agent, Self.limitWindow, nil, 100, until: until, known: resets != nil || window?.resets != nil, measured: measured)
         }
 
         for window in status.windows where !window.isReset && !window.isStale {
             let reached = Self.levels.filter { window.percent >= $0 }.map { Int($0) } + (window.percent >= 100 ? [100] : [])
             guard let highest = reached.last else { continue }
             let span = window.window.span
+            let name = window.window.name
             let measured = window.measured
-            let fresh = reached.filter { !isSaid(agent, span, $0, measured: measured, resets: window.window.resets, span: span) }
+            let fresh = reached.filter { !isSaid(agent, span, name, $0, measured: measured, resets: window.window.resets, span: span) }
             let until = endOfWindow(measured: measured)(window.window)
-            for level in reached { note(agent, span, level, until: until, known: window.window.resets != nil, measured: measured) }
+            for level in reached {
+                note(agent, span, name, level, until: until, known: window.window.resets != nil, measured: measured)
+            }
             // The limit has its own banner; under it, only the highest level not yet said.
             guard warns, highest < 100, fresh.contains(highest) else { continue }
             alerts.append(Alert(agent: agent, kind: .warning(level: highest, window: window.window),
@@ -88,10 +111,11 @@ struct UsageAlerts: Equatable, Codable {
     /// says the window resets at `resets`: said of a window that had not reset by then,
     /// and not one that resets later than that one could, give or take a fifth of its
     /// `span` in minutes, as a worked-out reset can.
-    private func isSaid(_ agent: UsageAgent, _ window: Int, _ level: Int, measured: Date, resets: Date?, span: Int) -> Bool {
+    private func isSaid(_ agent: UsageAgent, _ window: Int, _ name: String?, _ level: Int, measured: Date, resets: Date?,
+                        span: Int) -> Bool {
         let slack = TimeInterval(span) * 60 * ClaudeUsage.gapShare
         return said.contains { entry in
-            entry.agent == agent && entry.window == window && entry.level == level && measured < entry.until
+            entry.agent == agent && entry.window == window && entry.name == name && entry.level == level && measured < entry.until
                 && (resets.map { $0 <= entry.until.addingTimeInterval(slack) } ?? true)
         }
     }
@@ -100,9 +124,12 @@ struct UsageAlerts: Equatable, Codable {
     /// own reset rather than worked out from the reading. Said again of the same window,
     /// it keeps the later of the two resets, but never moves for one worked out; of a
     /// window started afresh, it takes the new one.
-    private mutating func note(_ agent: UsageAgent, _ window: Int, _ level: Int, until: Date, known: Bool, measured: Date) {
-        guard let index = said.firstIndex(where: { $0.agent == agent && $0.window == window && $0.level == level }) else {
-            said.append(Said(agent: agent, window: window, level: level, until: until))
+    private mutating func note(_ agent: UsageAgent, _ window: Int, _ name: String?, _ level: Int, until: Date, known: Bool,
+                               measured: Date) {
+        guard let index = said.firstIndex(where: {
+            $0.agent == agent && $0.window == window && $0.name == name && $0.level == level
+        }) else {
+            said.append(Said(agent: agent, window: window, level: level, until: until, name: name))
             return
         }
         if measured >= said[index].until {
@@ -118,13 +145,29 @@ struct UsageAlerts: Equatable, Codable {
 }
 
 extension UsageAlerts.Alert {
-    /// "Claude 5-hour limit at 80%", "ChatGPT limit reached".
+    /// "Claude 5-hour limit at 80%", "ChatGPT limit reached"; for a window the source
+    /// names, "Gemini weekly limit reached", "Gemini Claude/GPT 5-hour limit at 80%", with
+    /// the agent's name before one that lacks it.
     var title: String {
         switch kind {
         case .warning(let level, let window):
-            "\(agent.name) \(UsageText.longName(window)) limit at \(level)%"
+            if let name = window.name { return named(name) + " limit at \(level)%" }
+            return "\(agent.name) \(UsageText.longName(window)) limit at \(level)%"
         case .limit:
-            "\(agent.name) limit reached"
+            return (name.map(named) ?? agent.name) + " limit reached"
+        }
+    }
+
+    /// The source's name for a window, said with the agent's.
+    private func named(_ name: String) -> String {
+        name.localizedCaseInsensitiveContains(agent.name) ? name : agent.name + " " + name
+    }
+
+    /// The source's name for the window warned of, where it names it.
+    private var windowName: String? {
+        switch kind {
+        case .warning(_, let window): window.name
+        case .limit: name
         }
     }
 
@@ -144,9 +187,11 @@ extension UsageAlerts.Alert {
     }
 
     /// This one in the banner of `first`: "Weekly limit at 80%" of the same agent, the
-    /// whole title of another.
+    /// whole title of another, or of a window the source names by more than its length.
     func mention(beside first: Self) -> String {
-        guard first.agent == agent else { return title }
+        guard first.agent == agent, title.hasPrefix(agent.name + " "),
+              windowName.map({ UsageText.length($0) != nil }) ?? true
+        else { return title }
         let rest = title.dropFirst(agent.name.count + 1)
         return rest.prefix(1).uppercased() + rest.dropFirst()
     }

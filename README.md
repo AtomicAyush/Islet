@@ -452,8 +452,8 @@ doing ("Running npm", "Editing Store.swift") and for how long, the tools it has 
 list as a checklist with a bar ("2 of 4 done"), from where it has got to. Banners say when an
 agent finishes, has a question, waits for your approval or needs your input, reaches its step
 limit, stops on an error or runs out of quota ("Gemini quota reached"); a run you stop yourself
-gets none, and a subagent's only for an error or its quota. Antigravity has no measure of quota
-left that Islet could read without signing in as you, so that banner is all there is.
+gets none, and a subagent's only for an error or its quota. How much quota is left shows on the
+AI Usage tile and atop the page (see Usage limits below).
 Click a conversation, or a banner, to bring Antigravity forward: it can't be asked from outside
 to open a conversation, so you pick it there. A finish in the conversation Antigravity has in
 front, while it is in front and the screen unlocked, puts up no banner; Islet tells by
@@ -493,12 +493,13 @@ minutes (an hour while a tool runs). It tells Islet through its hooks, with the 
 `Scripts/` (see [Gemini CLI hooks](#gemini-cli-hooks)); Gemini CLI runs hooks only in folders you
 trust, so a session in a folder you haven't trusted doesn't show.
 
-**Usage limits.** How much of your Claude and ChatGPT plans' limits you have used, from files on
-this Mac alone: no second sign-in, and nothing asked of Anthropic or OpenAI. The **AI Usage**
-tile on the home page has a column for each, a bar per window (Claude's five hours and week;
-ChatGPT's as your plan has them, five hours and a week on Plus, a month on Free) with how full it
-is and when it resets, orange from 80% and red at the limit; a line atop the Claude Code and
-ChatGPT pages says the same ("5h 42% · resets 4:10 PM · Week 18%"). Claude's come from the
+**Usage limits.** How much of your Claude and ChatGPT plans' limits and your Gemini quota you
+have used, from this Mac alone: no second sign-in, nothing asked of Anthropic or OpenAI, and
+Gemini's asked of Antigravity, which asks Google as its own quota screen does. The **AI Usage** tile on the home page has a column for each, a bar per window (Claude's
+five hours and week; ChatGPT's as your plan has them, five hours and a week on Plus, a month on
+Free; Gemini's as Antigravity's quota screen lists them, five hours and a week, the three fullest
+where there are more) with how full it is and when it resets, orange from 80% and red at the limit; a line atop
+the Claude Code, ChatGPT and Gemini pages says the same ("5h 42% · resets 4:10 PM · Week 18%"). Claude's come from the
 Claude app's own record of them (`~/Library/Application Support/Claude/plan-usage-history.json`),
 which it updates every 15 minutes while it's open. That record has no reset times, so Islet
 works them out from it: a five-hour window starts with the first use after it last emptied or
@@ -515,18 +516,32 @@ Only those lines are read, never the conversation, from the chats the hooks name
 threads Codex last updated (its `state_5.sqlite`, read-only, by path and time alone, whether or
 not Codex is open), and the newest reading is the one whose reply is newest, whatever file it is
 in; it stays until a newer one comes. Codex notes nothing between replies, so a window past its
-reset shows as reset. A banner warns when a window
+reset shows as reset. Gemini's come from Google Antigravity while it's open: Islet asks
+Antigravity's own local server for the quota its quota screen shows (`RetrieveUserQuotaSummary`,
+read-only), the way Antigravity's window does, with the one-time access key Antigravity starts
+that server with. Islet finds the server only among the running Antigravity's own processes, only
+if it is the one inside `/Applications/Antigravity.app`, run by you and signed by Google; reads
+the key from its command line as each read starts, sends it to that server alone, on 127.0.0.1,
+and never keeps, logs or shows it. It asks as the tile, the Gemini page or its line is about to
+show, as Antigravity's hook tells of an agent at work, as Antigravity opens and once a limit's
+reset has passed, at most once a minute (every five while the island saves energy), and never
+while Antigravity is closed, when the last figures show dimmed. This is unofficial: an update of
+Antigravity may stop it, and an answer Islet doesn't recognise shows nothing new; while reads
+fail, the last figures dim once 20 minutes old. A banner warns when a window
 reaches 80% ("Claude 5-hour limit at 80% · resets about 4:10 PM") and again at 95%, once for
-each window until it resets, and another says when the limit is reached; several due at once
+each window until it resets, and another says when the limit is reached (for Gemini, each
+limit on its own: "Gemini weekly limit reached"); several due at once
 share one banner, and a click opens the agent's page, or the home page where it has none. They go through Show in Islet, so a Focus
 quiets the warnings (not the limit) and Presentation Mode holds them back. From 80% the
 agent's mark beside the notch sits in an orange ring as full as its fullest window, and at the
 limit the time it lifts takes the place of the turn's ("limit · 4:10"), ring or no ring. For Claude, Claude
 Code's StopFailure hook says when a turn is turned away at the limit (see [Claude Code
-hooks](#claude-code-hooks)). Settings → Activities → Claude Code and ChatGPT each have Show
+hooks](#claude-code-hooks)). Settings → Activities → Claude Code, ChatGPT and Gemini each have Show
 usage limits, Warn at 80% and 95% and Usage ring in the compact island, and say what was last
-read. Nothing polls: Islet looks again when the Claude app's folder or Codex's changes, or a
-chat moves on, and keeps one timer for the next reset.
+read ("Antigravity: read 2 min ago", "Antigravity closed: last read 3 h ago", "Antigravity's quota
+couldn't be read"). Nothing polls: Islet looks again when the Claude app's folder or Codex's
+changes, a chat moves on or Gemini's quota is about to show, and keeps one timer for the next
+reset.
 
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the

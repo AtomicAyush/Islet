@@ -4,11 +4,13 @@ import Foundation
 enum UsageAgent: String, CaseIterable, Codable, Sendable {
     case claude
     case chatGPT
+    case gemini
 
     var name: String {
         switch self {
         case .claude: "Claude"
         case .chatGPT: "ChatGPT"
+        case .gemini: "Gemini"
         }
     }
 
@@ -18,6 +20,7 @@ enum UsageAgent: String, CaseIterable, Codable, Sendable {
         switch self {
         case .claude: "claudeCode"
         case .chatGPT: "chatGPT"
+        case .gemini: "gemini"
         }
     }
 }
@@ -37,10 +40,21 @@ struct UsageWindow: Equatable, Sendable {
     /// When the figure was true, where that is later than the reading it is part of: one
     /// Quick Ask said since the Claude app's sample, of one window alone.
     var measured: Date? = nil
+    /// The source's own name for it, where each of its limits is one of its own:
+    /// Antigravity's, by length ("weekly"), with the models it covers before it where
+    /// there are several groups ("Claude/GPT 5-hour").
+    var name: String? = nil
 
     /// The length it stands for, which the source may give a minute short: Codex has
     /// said 299 minutes for five hours and 10079 for a week.
     var span: Int { UsageText.span(minutes) }
+
+    /// Whether `other` is the same limit: of the same length, and the same name where
+    /// the source names them.
+    func isSame(_ other: UsageWindow?) -> Bool {
+        guard let other else { return false }
+        return other.span == span && other.name == name
+    }
 }
 
 /// A plan's credits, as Codex reports them.
@@ -66,6 +80,9 @@ struct UsageReading: Equatable, Sendable {
     /// 100%: Codex's `rate_limit_reached_type`, Quick Ask turned away, Claude Code's
     /// StopFailure.
     var limitSince: Date? = nil
+    /// The source can't be asked again for now, and these are the last figures it gave,
+    /// shown dimmed: Gemini's while Antigravity is closed.
+    var isKept = false
 
     /// The reading as of `now`: which windows have started afresh, whether it is old,
     /// whether the limit holds.
@@ -84,7 +101,8 @@ struct UsageStatus: Equatable {
         /// nothing says when that is, it surely has once its whole length has passed
         /// since its figure was true.
         var isReset: Bool
-        /// Its figure is dimmed: a Claude figure the app has not renewed.
+        /// Its figure is dimmed: a Claude figure the app has not renewed, or one kept
+        /// from a source that can't be asked.
         var isStale: Bool
 
         /// What is used now: nothing, once it has reset.
@@ -112,8 +130,8 @@ struct UsageStatus: Equatable {
         self.now = now
         windows = reading.windows.map { window in
             let measured = max(window.measured ?? reading.measured, reading.measured)
-            var shown = Window(window: window, measured: measured, isReset: false,
-                               isStale: reading.agent == .claude && now.timeIntervalSince(measured) > Self.staleAfter)
+            let isOld = reading.agent == .claude && now.timeIntervalSince(measured) > Self.staleAfter
+            var shown = Window(window: window, measured: measured, isReset: false, isStale: isOld || reading.isKept)
             shown.isReset = shown.lapses <= now
             return shown
         }
@@ -121,10 +139,11 @@ struct UsageStatus: Equatable {
 
     var agent: UsageAgent { reading.agent }
     var age: TimeInterval { max(0, now.timeIntervalSince(reading.measured)) }
-    /// Dimmed: a Claude reading the app has not renewed, every figure of it. Codex's last
-    /// reply is exact until a window resets, which it then shows.
+    /// Dimmed: a Claude reading the app has not renewed, every figure of it, or Gemini's
+    /// last while Antigravity is closed. Codex's last reply is exact until a window
+    /// resets, which it then shows.
     var isStale: Bool {
-        guard !windows.isEmpty else { return reading.agent == .claude && age > Self.staleAfter }
+        guard !windows.isEmpty else { return reading.isKept || (reading.agent == .claude && age > Self.staleAfter) }
         return windows.allSatisfy(\.isStale)
     }
     var showsAge: Bool { age > Self.ageShownAfter }
@@ -185,10 +204,17 @@ struct UsageStatus: Equatable {
     /// is news however old they are.
     var isDimmed: Bool { isStale && !showsLimit }
 
+    /// Whether `window` shows at its limit: the window the limit is in, or where the
+    /// source names its windows (Gemini's models, each a limit of its own), any at 100%.
+    func showsAtLimit(_ window: Window) -> Bool {
+        if window.window.isSame(shownLimitWindow?.window) { return true }
+        return showsLimit && window.window.name != nil && !window.isReset && !window.isStale && window.percent >= 100
+    }
+
     /// Whether `window` is dimmed on its own: an old figure beside newer ones, or beside
     /// the limit.
     func dimsAlone(_ window: Window) -> Bool {
-        window.isStale && !isDimmed && window.window.span != shownLimitWindow?.window.span
+        window.isStale && !isDimmed && !showsAtLimit(window)
     }
 
     /// When the limit lifts, while it holds and where that is known.
@@ -207,9 +233,35 @@ enum UsageText {
         spans.first { abs($0 - minutes) <= max(2, $0 / 100) } ?? minutes
     }
 
-    /// "5h", "Week": beside a bar, in a line.
-    static func shortName(_ window: UsageWindow) -> String {
-        let minutes = window.span
+    /// "5h", "Week": beside a bar, in a line; or the source's own name for it, without
+    /// the agent's name where it shows `beside` it ("3 Pro" under Gemini, on its page),
+    /// and a length it ends in said short: "3 Pro 5h" for "Gemini 3 Pro 5-hour".
+    static func shortName(_ window: UsageWindow, beside agent: UsageAgent? = nil) -> String {
+        if var name = window.name {
+            if let agent, name.lowercased().hasPrefix(agent.name.lowercased() + " ") {
+                let rest = name.dropFirst(agent.name.count + 1).trimmingCharacters(in: .whitespaces)
+                if !rest.isEmpty { name = rest }
+            }
+            var words = name.split(separator: " ").map(String.init)
+            if let last = words.last, let minutes = length(last) {
+                words[words.count - 1] = shortLength(span(minutes))
+                name = words.joined(separator: " ")
+            }
+            return name
+        }
+        return shortLength(window.span)
+    }
+
+    /// The minutes of a word that is a length as a source's name ends in one, "5-hour",
+    /// "weekly"; `nil` for a word of a name, such as the "Hour" of Antigravity's "Five
+    /// Hour", which is not said "1h".
+    static func length(_ word: String) -> Int? {
+        guard word.first?.isNumber == true || ["daily", "weekly", "monthly"].contains(word.lowercased()) else { return nil }
+        return GeminiUsage.minutes(word)
+    }
+
+    /// "5h", "Day", "Week" for a length in minutes.
+    private static func shortLength(_ minutes: Int) -> String {
         switch minutes {
         case 1440: return "Day"
         case 10080: return "Week"
@@ -294,12 +346,12 @@ enum UsageText {
             parts.append("Limit reached")
         }
         for (index, window) in status.windows.enumerated() {
-            let name = shortName(window.window)
+            let name = shortName(window.window, beside: status.agent)
             if window.isReset {
                 parts.append(name + " reset")
                 continue
             }
-            let atLimit = window.window.span == limit?.window.span
+            let atLimit = status.showsAtLimit(window)
             parts.append(name + " " + (atLimit ? "limit" : percent(window.percent)))
             if index == 0 || atLimit || window.percent >= UsageAlerts.levels[0], let reset = reset(window, now: status.now) {
                 parts.append(reset)
