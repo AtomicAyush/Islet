@@ -279,7 +279,8 @@ enum QuickAskFallback {
 
     /// Another provider for a question `provider` couldn't answer: this Mac for a
     /// cloud one offline, limited or busy; the cloud for one this Mac refused or
-    /// couldn't hold. `seeing`, the question came with a picture, which it must see.
+    /// couldn't hold; any other that is ready, the cloud first, for one that couldn't
+    /// sign in. `seeing`, the question came with a picture, which it must see.
     @MainActor
     static func instead(of provider: AskProvider, after failure: AskFailure, seeing: Bool = false,
                         _ ask: QuickAskModel) -> AskProvider? {
@@ -293,6 +294,10 @@ enum QuickAskFallback {
             return cloud(ask, seeing: seeing)
         case .cantSee:
             return Self.seeing(besides: provider, ask)
+        case .signIn:
+            return [AskProvider.chatGPT, .claude, .onDevice].first {
+                $0 != provider && ask.status(of: $0) == .ready && (!seeing || ask.takesImages($0))
+            }
         default:
             return nil
         }

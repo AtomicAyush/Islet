@@ -12,7 +12,7 @@ import Foundation
 /// is SIGTERM to the group, then SIGKILL a second on. It is given up on and stopped
 /// when it prints nothing for `firstOutput`, or runs past `total`, or when whoever reads
 /// its output stops reading. What it prints on its standard error is thrown away,
-/// unread.
+/// unread, but for a tool that says only there why it failed (`keepsErrors`).
 ///
 /// Every run still going is known to `ChildProcesses`, so none outlives Islet.
 final class AskProcess: ChildProcess, @unchecked Sendable {
@@ -35,6 +35,11 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         /// Where the tool runs, in place of the run's own folder: Gemini's, which keeps a
         /// record of every folder it runs in, runs in one of Islet's that stays.
         var workingDirectory: URL?
+        /// How much of what the tool prints on its standard error is kept, and given back
+        /// as it exits (`Output.errors`): for Gemini CLI, which says only there why it
+        /// could not sign in. None, by default: it is thrown away unread. Kept, it stays
+        /// in memory, for the backend to look through, and is never logged or shown.
+        var keepsErrors = 0
         var firstOutput: TimeInterval = AskLimits.firstOutput
         var total: TimeInterval = AskLimits.total
         /// Where the run's folder is made. Tests give their own.
@@ -43,6 +48,9 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
 
     enum Output: Equatable {
         case line(String)
+        /// What the tool printed on its standard error, as much of it as `keepsErrors`
+        /// keeps: given once, just before it exits, where it printed any and it is kept.
+        case errors(String)
         /// The tool exited, with this status (128 and the signal, for a signal).
         case exited(Int32)
     }
@@ -81,6 +89,8 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
     private var folder: URL?
     private var isReaped = false
     private var isReadingDone = false
+    private var isErrorReadingDone = true
+    private var errorText = Data()
     private var isStopping = false
     private var hasOutput = false
     private var isOnceRead = false
@@ -107,12 +117,18 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         }
         var input: [Int32] = [-1, -1]
         var output: [Int32] = [-1, -1]
+        var errors: [Int32] = [-1, -1]
         guard pipe(&input) == 0 else { return fail(folder) }
         guard pipe(&output) == 0 else {
             input.forEach { close($0) }
             return fail(folder)
         }
-        for fd in input + output { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+        let keepsErrors = launch.keepsErrors > 0
+        if keepsErrors, pipe(&errors) != 0 {
+            (input + output).forEach { close($0) }
+            return fail(folder)
+        }
+        for fd in input + output + errors where fd >= 0 { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
         // A tool that exits before reading its input must not take Islet with it.
         _ = fcntl(input[1], F_SETNOSIGPIPE, 1)
 
@@ -121,7 +137,11 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_adddup2(&actions, input[0], 0)
         posix_spawn_file_actions_adddup2(&actions, output[1], 1)
-        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        if keepsErrors {
+            posix_spawn_file_actions_adddup2(&actions, errors[1], 2)
+        } else {
+            posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        }
         posix_spawn_file_actions_addchdir_np(&actions, (launch.workingDirectory ?? folder).path)
 
         var attributes: posix_spawnattr_t?
@@ -153,14 +173,17 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         let spawned = posix_spawn(&child, path, &actions, &attributes, argv, envp)
         close(input[0])
         close(output[1])
+        if keepsErrors { close(errors[1]) }
         guard spawned == 0 else {
             close(input[1])
             close(output[0])
+            if keepsErrors { close(errors[0]) }
             return fail(folder)
         }
 
         lock.lock()
         pid = child
+        if keepsErrors { isErrorReadingDone = false }
         lock.unlock()
         ChildProcesses.shared.insert(self)
 
@@ -172,6 +195,11 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         let reader = Thread { [self] in read(output[0]) }
         reader.qualityOfService = .userInitiated
         reader.start()
+        if keepsErrors {
+            let errorReader = Thread { [self] in readErrors(errors[0]) }
+            errorReader.qualityOfService = .utility
+            errorReader.start()
+        }
         let waiter = Thread { [self] in waitForExit(child) }
         waiter.qualityOfService = .utility
         waiter.start()
@@ -261,6 +289,27 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         finishIfDone()
     }
 
+    /// Reads the tool's standard error until every process that could write it has gone,
+    /// keeping the first `keepsErrors` bytes and reading past the rest, so the tool is
+    /// never held up writing it.
+    private func readErrors(_ fd: Int32) {
+        var kept = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { break }
+            let room = launch.keepsErrors - kept.count
+            if room > 0 { kept.append(contentsOf: buffer[0..<min(count, room)]) }
+        }
+        close(fd)
+        lock.lock()
+        errorText = kept
+        isErrorReadingDone = true
+        lock.unlock()
+        finishIfDone()
+    }
+
     /// The file the tool reads once goes as soon as a line says it was read.
     private func removeIfRead(_ line: String) {
         guard let (name, isRead) = launch.readOnce, isRead(line) else { return }
@@ -295,7 +344,7 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
 
     private func finishIfDone() {
         lock.lock()
-        guard isReaped, isReadingDone, !isFinished else {
+        guard isReaped, isReadingDone, isErrorReadingDone, !isFinished else {
             lock.unlock()
             return
         }
@@ -303,11 +352,14 @@ final class AskProcess: ChildProcess, @unchecked Sendable {
         let folder = self.folder
         let failure = self.failure
         let status = self.status
+        let errors = errorText
+        errorText = Data()
         lock.unlock()
         if let folder { try? FileManager.default.removeItem(at: folder) }
         if let failure {
             continuation.finish(throwing: failure)
         } else {
+            if !errors.isEmpty { continuation.yield(.errors(String(decoding: errors, as: UTF8.self))) }
             continuation.yield(.exited(status))
             continuation.finish()
         }

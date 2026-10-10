@@ -128,6 +128,8 @@ enum AskFailure: Error, Equatable {
     case provider(String)
     /// A picture went with the question, and this provider can't take one.
     case cantSee
+    /// Gemini CLI turned the question away at signing in, and why.
+    case signIn(GeminiSignIn)
 
     /// What went wrong, and what can be done about it: `other` is the provider offered
     /// instead, if any, and `afresh` whether the question can be asked again alone.
@@ -153,13 +155,14 @@ enum AskFailure: Error, Equatable {
         case .exited(let status): return "\(provider.title) stopped unexpectedly (exit \(status))"
         case .provider(let message): return "\(provider.title): \(message)"
         case .cantSee: return "\(provider.name) can't see pictures" + (other.map { " — ask \($0.name), which can?" } ?? "")
+        case .signIn(let problem): return problem.text(instead: other)
         }
     }
 
     /// Whether Try again could help.
     var canRetry: Bool {
         switch self {
-        case .timedOut, .noResponse, .busy, .exited, .provider, .offline: true
+        case .timedOut, .noResponse, .busy, .exited, .provider, .offline, .signIn: true
         default: false
         }
     }

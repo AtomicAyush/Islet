@@ -99,6 +99,8 @@ final class CodexAskBackend: AskBackend {
                             if let answer = try parser.take(line) { continuation.yield(answer) }
                         case .exited(let status):
                             try parser.finish(status: status)
+                        case .errors:
+                            break
                         }
                     }
                     continuation.finish()

@@ -114,6 +114,8 @@ enum ClaudeUsageRefresh {
                     if answer != nil { return .noFigures }
                 case .exited:
                     return .noFigures
+                case .errors:
+                    break
                 }
             }
             return .noFigures

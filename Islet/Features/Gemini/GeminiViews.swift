@@ -840,6 +840,13 @@ struct GeminiSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+
+        LabeledContent {
+            EmptyView()
+        } label: {
+            Text("Signing in to Gemini CLI")
+            Text("Google no longer lets personal accounts signed in with Google use Gemini CLI: it turns their questions away, and Quick Ask says so. A Gemini API key (GEMINI_API_KEY, made in Google AI Studio) still works: in Terminal, choose Use Gemini API Key in gemini's /auth. Gemini CLI keeps the key itself; Islet never reads or stores it.")
+        }
     }
 
     static func heard(_ date: Date?, now: Date, from start: String = "start an agent in Antigravity") -> String {

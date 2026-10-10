@@ -111,6 +111,8 @@ final class ClaudeAskBackend: AskBackend {
                             if let event = parser.takeLimits() { limits(event) }
                         case .exited(let status):
                             try parser.finish(status: status)
+                        case .errors:
+                            break
                         }
                     }
                     continuation.finish()

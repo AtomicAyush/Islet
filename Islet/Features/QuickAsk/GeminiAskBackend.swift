@@ -117,6 +117,8 @@ final class GeminiAskBackend: AskBackend {
                 parent: setup.parent
             )
             launch.workingDirectory = working
+            // Why Gemini CLI could not sign in it says only on its standard error.
+            launch.keepsErrors = GeminiOutput.errorsKept
             if image != nil {
                 // The question names the picture by its path, which only the run's folder gives.
                 launch.inputFor = { folder in Data(Self.input(text, folder: folder, image: true).utf8) }
@@ -136,6 +138,8 @@ final class GeminiAskBackend: AskBackend {
                         switch output {
                         case .line(let line):
                             if let answer = try parser.take(line) { continuation.yield(answer) }
+                        case .errors(let text):
+                            parser.takeErrors(text)
                         case .exited(let status):
                             try parser.finish(status: status)
                         }
@@ -231,9 +235,16 @@ final class GeminiAskBackend: AskBackend {
 }
 
 /// Gemini CLI's `stream-json` lines, as they come: the answer in pieces, then a result.
+/// And what it printed on its standard error, where alone it says why it could not sign
+/// in, which is looked through for that and never shown.
 struct GeminiOutput {
     private(set) var answer = ""
     private var error: String?
+    private var errors = ""
+
+    /// How much of Gemini CLI's standard error is kept: its reason for not signing in
+    /// comes first, before the stack of where it was thrown.
+    static let errorsKept = 16_384
 
     /// The answer so far, if this line adds to it.
     mutating func take(_ line: String) throws -> String? {
@@ -266,23 +277,66 @@ struct GeminiOutput {
         return (type == "message" && object["role"] as? String == "user") || type == "result" || type == "error"
     }
 
-    /// Exit 41 is Gemini CLI's for a sign-in it has not got.
+    /// What Gemini CLI printed on its standard error.
+    mutating func takeErrors(_ text: String) {
+        errors = text
+    }
+
+    /// Why the run ended with no answer: a sign-in turned away, as its standard error or
+    /// its last error says; signing in cut short by a quota, the network or a busy Google,
+    /// as its standard error says; exit 41, Gemini CLI's for a sign-in it has not got; its
+    /// last error; a quota its standard error names; signing in failed for no reason it
+    /// gives; or the exit status alone.
     func finish(status: Int32) throws {
         guard answer.isEmpty else { return }
-        if status == 41 { throw AskFailure.notSignedIn }
+        if let problem = GeminiSignIn.problem(in: errors) ?? error.flatMap(GeminiSignIn.problem(in:)) {
+            throw AskFailure.signIn(problem)
+        }
+        // Gemini CLI says "Error authenticating" for whatever stopped it signing in, the
+        // network and Google's own quotas and outages too: those are not the sign-in's fault.
+        let signingIn = GeminiSignIn.failed(in: errors)
+        if signingIn, let failure = Self.cutShort(errors) { throw failure }
+        if status == 41 { throw AskFailure.signIn(.notSignedIn) }
         if let error { throw Self.failure(error) }
+        if Self.isQuota(errors) { throw AskFailure.usageLimit(resets: Self.resets(errors)) }
+        if signingIn { throw AskFailure.signIn(.notSignedIn) }
         throw AskFailure.exited(status)
+    }
+
+    /// Words on the standard error saying the network failed, or Google was too busy to
+    /// answer. Without the bare "503", which its stack of line numbers could hold by chance.
+    static let networkWords = ["fetch failed", "enotfound", "getaddrinfo", "econnrefused", "econnreset", "etimedout",
+                               "eai_again", "enetunreach", "ehostunreach", "socket hang up"]
+    static let busyWords = ["unavailable", "overloaded"]
+
+    /// A quota, the network or a busy Google, as the standard error says, if it does.
+    static func cutShort(_ text: String) -> AskFailure? {
+        let lower = text.lowercased()
+        if isQuota(text) { return .usageLimit(resets: resets(text)) }
+        if networkWords.contains(where: lower.contains) { return .offline }
+        if busyWords.contains(where: lower.contains) { return .busy }
+        return nil
+    }
+
+    /// Words saying a quota or rate limit was reached. Without the bare "429", which the
+    /// standard error's stack of line numbers could hold by chance.
+    static let quotaWords = ["quota", "resource_exhausted", "resource exhausted", "rate limit", "ratelimit",
+                             "too many requests"]
+
+    static func isQuota(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return quotaWords.contains(where: lower.contains)
     }
 
     static func failure(_ message: String) -> AskFailure {
         let lower = message.lowercased()
-        if ["quota", "resource_exhausted", "resource exhausted", "rate limit", "ratelimit", "too many requests", "429"]
-            .contains(where: lower.contains) {
+        if isQuota(message) || lower.contains("429") {
             return .usageLimit(resets: resets(message))
         }
-        if ["unauthenticated", "401", "invalid_grant", "re-authenticate", "reauthenticate", "login required",
-            "not logged in", "sign in", "log in", "authentication"].contains(where: lower.contains) {
-            return .notSignedIn
+        if let problem = GeminiSignIn.problem(in: message) { return .signIn(problem) }
+        if ["401", "re-authenticate", "reauthenticate", "login required", "not logged in", "sign in", "log in",
+            "authentication"].contains(where: lower.contains) {
+            return .signIn(.notSignedIn)
         }
         if ["fetch failed", "enotfound", "getaddrinfo", "econnrefused", "econnreset", "etimedout", "eai_again",
             "network", "offline"].contains(where: lower.contains) {
@@ -304,6 +358,58 @@ struct GeminiOutput {
         let minutes = Int((seconds / 60).rounded())
         if minutes < 90 { return "in \(minutes) minutes" }
         return "in about \(Int((seconds / 3600).rounded())) hours"
+    }
+}
+
+/// Why Gemini CLI turned a question away at signing in, as it says on its standard error
+/// or in its stream: in Islet's words, which never repeat Gemini CLI's (they could hold
+/// the question, or a key).
+enum GeminiSignIn: Equatable, Sendable {
+    /// Google no longer lets a personal account signed in with Google use Gemini CLI
+    /// (`IneligibleTierError`, reason `UNSUPPORTED_CLIENT`).
+    case personalAccount
+    /// Google won't let this account use Gemini CLI, for another reason it gives
+    /// (`IneligibleTierError`): its location, its age, a work account.
+    case accountNotEligible
+    /// The Gemini API key Gemini CLI has is not a valid one.
+    case invalidKey
+    /// Gemini CLI has no sign-in, or could not use the one it has (exit 41).
+    case notSignedIn
+
+    /// The problem `text` names, if it names one.
+    static func problem(in text: String) -> GeminiSignIn? {
+        let lower = text.lowercased()
+        if lower.contains("unsupported_client") || lower.contains("this client is no longer supported") {
+            return .personalAccount
+        }
+        if lower.contains("ineligibletiererror") || lower.contains("ineligibletiers") { return .accountNotEligible }
+        if ["api key not valid", "api_key_invalid", "invalid api key", "api key expired", "api key is invalid"]
+            .contains(where: lower.contains) {
+            return .invalidKey
+        }
+        if ["please set an auth method", "manual authorization is required", "unauthenticated", "invalid_grant"]
+            .contains(where: lower.contains) {
+            return .notSignedIn
+        }
+        return nil
+    }
+
+    /// Whether `text` says signing in failed, whatever the reason: it may be no fault of
+    /// the sign-in, so this is the last thing it is taken for.
+    static func failed(in text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.contains("error authenticating") || lower.contains("fatalauthenticationerror")
+    }
+
+    /// What went wrong and what can be done: `other` is the provider offered instead, if any.
+    func text(instead other: AskProvider?) -> String {
+        let ask = other.map { "ask \($0.name) instead" } ?? "ask with another model"
+        switch self {
+        case .personalAccount: return "Google no longer lets personal accounts use Gemini CLI. Use a Gemini API key, or \(ask)."
+        case .accountNotEligible: return "Google won't let this account use Gemini CLI. Use a Gemini API key, or \(ask)."
+        case .invalidKey: return "Gemini CLI's API key isn't valid. Check it in gemini's /auth, or \(ask)."
+        case .notSignedIn: return "Gemini CLI couldn't sign in. Use a Gemini API key, or \(ask)."
+        }
     }
 }
 
