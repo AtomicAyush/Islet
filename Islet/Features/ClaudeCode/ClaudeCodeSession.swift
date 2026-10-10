@@ -127,6 +127,15 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
     /// The permissions asked and not yet seen answered, oldest first; none where the
     /// hook is not told when one is asked.
     var pending: [ClaudePermissionRequest] = []
+    /// Whether the latest Notification asking permission was for a question Claude asks
+    /// you (AskUserQuestion), as the hook read it.
+    var question = false
+
+    /// Whether what the session waits on is a question Claude asks you: every permission
+    /// pending is one (AskUserQuestion), or with none noted, the Notification said so.
+    var asksQuestion: Bool {
+        pending.isEmpty ? question : pending.allSatisfy { $0.tool == "AskUserQuestion" }
+    }
 
     /// When the turn on show began: the prompt's time, or failing that the state's.
     var turnStart: Date { turnStarted ?? since }
@@ -144,7 +153,7 @@ struct ClaudeSessionRecord: Equatable, Identifiable, Sendable {
 extension ClaudeSessionRecord: Decodable {
     private enum Keys: String, CodingKey {
         case sessionId, project, branch, cwd, transcriptPath, hostApp, hostSession, tty, pid, pidStarted, state, since
-        case turnStarted, updated, prompt, reply, workflows, tasks, pending
+        case turnStarted, updated, prompt, reply, workflows, tasks, pending, question
     }
 
     init(from decoder: Decoder) throws {
@@ -183,6 +192,7 @@ extension ClaudeSessionRecord: Decodable {
             .compactMap(\.value)
         pending = ((try? c.decodeIfPresent([Lenient<ClaudePermissionRequest>].self, forKey: .pending)) ?? [])
             .compactMap(\.value)
+        question = (try? c.decodeIfPresent(Bool.self, forKey: .question)) == true
     }
 }
 
@@ -624,6 +634,9 @@ struct ClaudeSession: Equatable, Identifiable, Sendable {
     var runningWorkflows: [ClaudeWorkflow] { record.runningWorkflows }
     var runningAgents: [ClaudeBackgroundTask] { record.runningAgents }
     var runningOthers: [ClaudeBackgroundTask] { record.runningOthers }
+    /// Whether it waits on a question Claude asks you, rather than a permission: its row
+    /// says "Asks you".
+    var asksQuestion: Bool { state == .needsPermission && record.asksQuestion }
 
     func progress(of workflow: ClaudeWorkflow) -> ClaudeWorkflowProgress? { progress[workflow.id]?.workflow }
     func progress(of task: ClaudeBackgroundTask) -> ClaudeAgentProgress? { progress[task.id]?.agent }

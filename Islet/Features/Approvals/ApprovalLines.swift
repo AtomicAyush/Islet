@@ -15,6 +15,9 @@ struct ApprovalSection: Equatable, Sendable {
         /// An edit's words taken out, and put in.
         case removed
         case added
+        /// Words drawn as written and never numbered: a question Claude asks, and its
+        /// options.
+        case plain
     }
 
     /// A caption above, or `nil`.

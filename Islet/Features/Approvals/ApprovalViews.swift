@@ -28,14 +28,24 @@ enum ApprovalLayout {
         waiting > 0 ? bodyHeight - waitingHeight - spacing : bodyHeight
     }
 
+    /// How tall the whole of the request's body is: its lines, or where the card takes
+    /// the answer to a question (`asks`, `ApprovalCenter.asksHere`), its options to choose
+    /// from (`ApprovalQuestionLayout`).
+    static func contentHeight(_ item: ApprovalItem, asks: Bool) -> CGFloat {
+        if asks, let questions = item.body.questions {
+            return ApprovalQuestionLayout.height(questions, title: item.body.title, width: bodyWidth)
+        }
+        return ApprovalLines.height(item.body.sections, width: bodyWidth)
+    }
+
     /// How tall the request's body is drawn: all of it, up to `bodyLimit`.
-    static func visibleBody(_ item: ApprovalItem, waiting: Int = 0) -> CGFloat {
-        min(ApprovalLines.height(item.body.sections, width: bodyWidth), bodyLimit(waiting: waiting))
+    static func visibleBody(_ item: ApprovalItem, waiting: Int = 0, asks: Bool) -> CGFloat {
+        min(contentHeight(item, asks: asks), bodyLimit(waiting: waiting))
     }
 
     /// Whether the request is taller than the part of it drawn, so has to be scrolled.
-    static func scrolls(_ item: ApprovalItem, waiting: Int = 0) -> Bool {
-        ApprovalLines.height(item.body.sections, width: bodyWidth) > bodyLimit(waiting: waiting)
+    static func scrolls(_ item: ApprovalItem, waiting: Int = 0, asks: Bool) -> Bool {
+        contentHeight(item, asks: asks) > bodyLimit(waiting: waiting)
     }
 
     /// Where a click on "Scroll to read it all" takes a request scrolled `offset` down, of
@@ -46,10 +56,12 @@ enum ApprovalLayout {
         return min(max(0, offset) + max(ApprovalLines.lineHeight, shown - ApprovalLines.lineHeight), end)
     }
 
-    /// The card's height, for the page it sits on, with `waiting` requests behind it.
-    static func height(for item: ApprovalItem, waiting: Int = 0, isPrivate: Bool = false) -> CGFloat {
+    /// The card's height, for the page it sits on, with `waiting` requests behind it;
+    /// `asks` where it takes the answer to a question (`ApprovalCenter.asksHere`), which
+    /// only Claude asks.
+    static func height(for item: ApprovalItem, waiting: Int = 0, isPrivate: Bool = false, asks: Bool = false) -> CGFloat {
         guard !isPrivate else { return privateHeight }
-        return headerHeight + spacing + visibleBody(item, waiting: waiting) + spacing
+        return headerHeight + spacing + visibleBody(item, waiting: waiting, asks: asks) + spacing
             + (waiting > 0 ? waitingHeight + spacing : 0) + buttonHeight
     }
 }
@@ -70,19 +82,36 @@ enum ApprovalSettingsText {
     }
 }
 
-/// The front request's arming, as the card and its Allow see it.
+/// The front request's arming, as the card and its Allow see it, and for a question
+/// Claude asks, what has been chosen.
 @MainActor
 @Observable
 final class ApprovalCardState {
     private(set) var arming: ApprovalArming
     /// A word under the buttons after a click that did not count.
     var note: String?
+    /// For a question, what is chosen for each, in memory only until Answer: kept by the
+    /// centre while the request is on show, so a card drawn again starts from it, though
+    /// its arming starts afresh.
+    var choices: [ApprovalChoice] {
+        didSet { if choices != oldValue { keep?(choices) } }
+    }
     /// What moves the request down for "Scroll to read it all".
     @ObservationIgnored weak var pager: ApprovalPagerView?
+    /// Hands what is chosen to the centre (`ApprovalCenter.keepChoices`).
+    @ObservationIgnored private var keep: (([ApprovalChoice]) -> Void)?
 
-    init(item: ApprovalItem, openedAt: TimeInterval?) {
+    init(item: ApprovalItem, openedAt: TimeInterval?, center: ApprovalCenter? = nil) {
         arming = ApprovalArming(id: item.id, digest: item.request.digest, openedByItself: openedAt != nil)
+        let count = item.body.questions?.count ?? 0
+        if let kept = center?.choices(for: item.id), kept.count == count {
+            choices = kept
+        } else {
+            choices = Array(repeating: ApprovalChoice(), count: count)
+        }
         if let openedAt { arming.finishedOpening(at: openedAt) }
+        let id = item.id
+        keep = { [weak center] choices in center?.keepChoices(choices, for: id) }
     }
 
     /// Changes the arming, telling the card only when something changed.
@@ -97,6 +126,13 @@ final class ApprovalCardState {
 /// written; the requests waiting behind it; and Answer in the app, Deny and Allow. It
 /// never takes the keyboard, and Allow has no key equivalent. While presenting, it
 /// says only that the agent asks.
+///
+/// A question Claude asks shows its options to choose from and a field for words of
+/// your own (`ApprovalQuestionForm`), the one thing on a card that takes the keyboard,
+/// and only once clicked; then Answer in the app and Answer, which arms as Allow does
+/// and has no key equivalent either. No Deny: leaving a question is Answer in the app.
+/// One the island cannot lay out, or should not answer, shows as words to read, with
+/// Answer in the app alone.
 struct ApprovalBlock: View {
     let center: ApprovalCenter
     let item: ApprovalItem
@@ -121,7 +157,7 @@ struct ApprovalBlock: View {
         self.decided = decided
         self.branch = branch
         self.openHost = openHost
-        _state = State(initialValue: ApprovalCardState(item: item, openedAt: center.openedFor[item.id]))
+        _state = State(initialValue: ApprovalCardState(item: item, openedAt: center.openedFor[item.id], center: center))
     }
 
     private var request: ApprovalRequest { item.request }
@@ -157,12 +193,17 @@ struct ApprovalBlock: View {
 
     private var card: some View {
         let waiting = center.waiting(for: request.agent)
-        let visible = ApprovalLayout.visibleBody(item, waiting: waiting.count)
+        let visible = ApprovalLayout.visibleBody(item, waiting: waiting.count, asks: center.asksHere(item))
         return VStack(alignment: .leading, spacing: ApprovalLayout.spacing) {
             header
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
-                    ApprovalBodyText(sections: item.body.sections, width: ApprovalLayout.bodyWidth)
+                    if center.asksHere(item), let questions = item.body.questions {
+                        ApprovalQuestionForm(item: item, questions: questions, state: state, width: ApprovalLayout.bodyWidth,
+                                             isEnabled: decided == nil)
+                    } else {
+                        ApprovalBodyText(sections: item.body.sections, width: ApprovalLayout.bodyWidth)
+                    }
                     // The end of the request: once inside the part drawn, it has all been
                     // seen. The part drawn is the scroll view's own height, which a body drawn
                     // taller than laid out overflows.
@@ -185,14 +226,14 @@ struct ApprovalBlock: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(ApprovalCenter.spoken(item, isPrivate: false))
-        .accessibilityValue(Self.spokenBody(item))
+        .accessibilityValue(Self.spokenBody(item, choices: center.asksHere(item) ? state.choices : []))
         .accessibilityActions { accessibilityButtons }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
-                Image(systemName: "hand.raised.fill").foregroundStyle(ClaudeCodePalette.attentionMark)
+                Image(systemName: Self.symbol(item)).foregroundStyle(ClaudeCodePalette.attentionMark)
                 Text(verbatim: item.body.headline).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     .foregroundStyle(headlineStyle)
                 Spacer(minLength: 0)
@@ -231,6 +272,12 @@ struct ApprovalBlock: View {
                 .truncationMode(.head)
                 .foregroundStyle(.islandText(0.6))
         }
+    }
+
+    /// The raised hand, or for a question Claude asks, a speech bubble with a question
+    /// mark.
+    static func symbol(_ item: ApprovalItem) -> String {
+        item.body.isQuestion ? "questionmark.bubble.fill" : "hand.raised.fill"
     }
 
     /// Running outside the sandbox says so in the attention colour.
@@ -281,7 +328,7 @@ struct ApprovalBlock: View {
         let offersAllow = center.offersAllow(item)
         return HStack(spacing: 8) {
             if let decided {
-                Label(decided == .allow ? "Allowed" : "Denied",
+                Label(decided == .allow ? (item.body.isQuestion ? "Answered" : "Allowed") : "Denied",
                       systemImage: decided == .allow ? "checkmark.circle.fill" : "xmark.circle.fill")
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(.islandText(0.85))
             } else if let note = state.note {
@@ -298,8 +345,8 @@ struct ApprovalBlock: View {
             Spacer(minLength: 0)
             Group {
                 answerInApp
-                // A Deny Islet cannot sign would do nothing.
-                if center.canSign(for: request.agent) { deny }
+                // A Deny Islet cannot sign would do nothing; a question is left in the app.
+                if !item.body.isQuestion, center.canSign(for: request.agent) { deny }
                 if offersAllow {
                     if state.arming.bodySeen { allow } else { scrollOn }
                 }
@@ -359,12 +406,15 @@ struct ApprovalBlock: View {
         return "\(agent) asks in \(host) in \(left / 60):\(String(format: "%02d", left % 60))"
     }
 
-    /// Why the card offers no Allow, in a few words.
+    /// Why the card offers no Allow (for a question, no Answer), in a few words.
     static func withheldWords(_ item: ApprovalItem, center: ApprovalCenter) -> String {
         let request = item.request
         let app = request.hostName.isEmpty ? request.agent.name : request.hostName
         let reasons = item.body.withheld
         if reasons.contains(.hiddenCharacters) { return "This holds hidden characters. Check it in \(app)." }
+        if reasons.contains(.lookAlikeAnswers) { return "Two of its answers look alike. Answer in \(app)." }
+        if reasons.contains(.hasPreview) { return "Its answers have previews to look at. Answer in \(app)." }
+        if reasons.contains(.questionNotUnderstood) { return "The island can't show this question. Answer in \(app)." }
         for reason in reasons {
             if case .sensitivePath(let place) = reason { return "It changes \(place). Answer in \(app)." }
         }
@@ -374,7 +424,7 @@ struct ApprovalBlock: View {
         }
         if reasons.contains(.patchNotUnderstood) { return "Check this change in \(app)." }
         if reasons.contains(.unclearAddress) { return "Its address could be read two ways. Check it in \(app)." }
-        if reasons.contains(.hostNotListed) { return "Allow only in \(app)." }
+        if reasons.contains(.hostNotListed) { return item.body.isQuestion ? "Answer only in \(app)." : "Allow only in \(app)." }
         switch center.signer.status(for: request.agent) {
         case .noKey: return "Keychain didn't give Islet the key. Answer in \(app)."
         case .notInstalled: return "Approvals aren't set up for \(request.agent.name). Answer in \(app)."
@@ -416,10 +466,11 @@ struct ApprovalBlock: View {
             // A request that scrolled had "Scroll to read it all" here: Allow keeps its
             // width, so neither Allow nor Deny comes under the pointer that clicked it.
             ZStack {
-                if ApprovalLayout.scrolls(item, waiting: center.waiting(for: request.agent).count) {
+                if ApprovalLayout.scrolls(item, waiting: center.waiting(for: request.agent).count,
+                                          asks: center.asksHere(item)) {
                     scrollLabel.hidden()
                 }
-                Text("Allow")
+                Text(verbatim: allowWord)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(colours.label)
                     .padding(.horizontal, 14)
@@ -437,6 +488,9 @@ struct ApprovalBlock: View {
         .accessibilityHidden(true)
     }
 
+    /// "Allow", or for a question Claude asks, "Answer": the button that arms.
+    private var allowWord: String { item.body.isQuestion ? "Answer" : "Allow" }
+
     private func take(_ click: ApprovalClickCheck.Click) {
         guard decided == nil else { return }
         let time = ProcessInfo.processInfo.systemUptime
@@ -448,7 +502,7 @@ struct ApprovalBlock: View {
             // leave it and come back.
             let arming = state.arming
             let holding = arming.onAllow && (arming.enteredAllowAt ?? 0) >= (arming.shownLongEnoughFrom() ?? .infinity)
-            state.note = holding ? "Hold on Allow for a moment" : "Move off Allow, then back onto it"
+            state.note = holding ? "Hold on \(allowWord) for a moment" : "Move off \(allowWord), then back onto it"
         case .armed:
             guard let token = state.arming.take(click, at: time) else {
                 state.note = "This click came from another app; answer in \(request.agent.name)"
@@ -459,8 +513,18 @@ struct ApprovalBlock: View {
     }
 
     private func allow(with token: ApprovalClick) {
+        // A question goes with what is chosen, all of it there and allowed to go.
+        var choices: [ApprovalChoice]?
+        if item.body.isQuestion {
+            guard let questions = item.body.questions else { return }
+            if let problem = ApprovalQuestions.problem(state.choices, for: questions) {
+                state.note = problem
+                return
+            }
+            choices = state.choices
+        }
         Haptics.tap()
-        if case .failure = center.answer(item.id, .allow, click: token) {
+        if case .failure = center.answer(item.id, .allow, click: token, choices: choices) {
             state.note = "Couldn't answer here; answer in \(request.agent.name)"
         }
     }
@@ -475,9 +539,21 @@ struct ApprovalBlock: View {
             center.answer(item.id, .pass)
             openHost(request)
         }
-        Button("Deny") { takeDeny() }
+        if !item.body.isQuestion { Button("Deny") { takeDeny() } }
+        if center.asksHere(item), let questions = item.body.questions {
+            // Each option, chosen or not as a click on it would.
+            ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
+                ForEach(Array(question.options.enumerated()), id: \.offset) { number, option in
+                    let chosen = state.choices.indices.contains(index) && state.choices[index].options.contains(number)
+                    Button("\(chosen ? "Unchoose" : "Choose") \(option.label)"
+                           + (questions.count > 1 ? ", question \(index + 1)" : "")) {
+                        state.choose(number, in: index, of: questions)
+                    }
+                }
+            }
+        }
         if center.offersAllow(item) {
-            Button("Allow") {
+            Button(allowWord) {
                 let assisted = NSWorkspace.shared.isVoiceOverEnabled || NSWorkspace.shared.isSwitchControlEnabled
                 guard decided == nil,
                       let token = state.arming.takeAssisted(at: ProcessInfo.processInfo.systemUptime, assistiveOn: assisted)
@@ -490,11 +566,20 @@ struct ApprovalBlock: View {
         }
     }
 
-    /// The whole request, read out as the card's value.
-    static func spokenBody(_ item: ApprovalItem) -> String {
-        item.body.sections.map { section in
+    /// The whole request, read out as the card's value; for a question, with what is
+    /// chosen so far.
+    static func spokenBody(_ item: ApprovalItem, choices: [ApprovalChoice] = []) -> String {
+        var lines = item.body.sections.map { section in
             (section.label.map { $0 + ": " } ?? "") + section.text
-        }.joined(separator: "\n")
+        }
+        if let questions = item.body.questions, choices.count == questions.count {
+            for (question, choice) in zip(questions, choices) where choice.isAnswered {
+                let labels = choice.options.sorted().map { question.options[$0].label }
+                    + (choice.words.isEmpty ? [] : [choice.words])
+                lines.append("Chosen for \(question.text): " + labels.joined(separator: ", "))
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: Presenting
@@ -503,8 +588,8 @@ struct ApprovalBlock: View {
     private var privateCard: some View {
         VStack(alignment: .leading, spacing: ApprovalLayout.spacing) {
             HStack(spacing: 6) {
-                Image(systemName: "hand.raised.fill").foregroundStyle(ClaudeCodePalette.attentionMark)
-                Text(verbatim: "\(request.agent.name) needs permission · Answer in \(app)")
+                Image(systemName: Self.symbol(item)).foregroundStyle(ClaudeCodePalette.attentionMark)
+                Text(verbatim: "\(request.agent.name) \(item.body.isQuestion ? "asks you a question" : "needs permission") · Answer in \(app)")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(.islandText(1)).lineLimit(1)
             }
             .frame(height: 20)
@@ -650,7 +735,8 @@ struct ApprovalCompactLeading: View {
 
     var body: some View {
         let count = center.items(for: agent).count
-        Image(systemName: "hand.raised.fill")
+        let question = center.front(for: agent)?.body.isQuestion ?? false
+        Image(systemName: question ? "questionmark.bubble.fill" : "hand.raised.fill")
             .font(.system(size: ClaudeCodeLayout.compactSymbol, weight: .semibold))
             .foregroundStyle(ClaudeCodePalette.attentionMark)
             .overlay(alignment: .bottomTrailing) {
@@ -664,12 +750,14 @@ struct ApprovalCompactLeading: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(count > 1 ? "\(agent.name) asks \(count) permissions" : "\(agent.name) asks permission")
+            .accessibilityLabel(count > 1 ? "\(agent.name) asks \(count) permissions"
+                                : question ? "\(agent.name) asks you a question" : "\(agent.name) asks permission")
     }
 }
 
 /// Right of the notch while an agent asks: "Allow?" ("Answer?" where the card offers no
-/// Allow), or for an app that asks itself once the island has waited, the seconds left.
+/// Allow, and for a question Claude asks), or for an app that asks itself once the
+/// island has waited, the seconds left.
 struct ApprovalCompactTrailing: View {
     let center: ApprovalCenter
     let agent: ApprovalAgent
@@ -684,7 +772,7 @@ struct ApprovalCompactTrailing: View {
                                 .monospacedDigit()
                         }
                     } else {
-                        Text(center.offersAllow(item) ? "Allow?" : "Answer?")
+                        Text(center.offersAllow(item) && !item.body.isQuestion ? "Allow?" : "Answer?")
                     }
                 }
             }
@@ -698,10 +786,15 @@ struct ApprovalCompactTrailing: View {
     }
 }
 
-/// In the bubble, while the agent's activity holds none of the island: the hand.
+/// In the bubble, while the agent's activity holds none of the island: the hand, or for
+/// a question Claude asks, the speech bubble, as beside the notch.
 struct ApprovalMinimal: View {
+    var center: ApprovalCenter? = nil
+    var agent = ApprovalAgent.claude
+
     var body: some View {
-        Image(systemName: "hand.raised.fill")
+        let symbol = center?.front(for: agent).map(ApprovalBlock.symbol) ?? "hand.raised.fill"
+        Image(systemName: symbol)
             .font(.system(size: ClaudeCodeLayout.minimalSymbol, weight: .semibold))
             .foregroundStyle(ClaudeCodePalette.attentionMark)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

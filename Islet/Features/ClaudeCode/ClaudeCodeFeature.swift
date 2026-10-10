@@ -299,6 +299,7 @@ final class ClaudeCodeActivity: IslandActivity {
                                                         approval: approval,
                                                         waiting: approvals?.waiting(for: .claude).count ?? 0,
                                                         isPrivate: approvals?.isPrivate ?? false,
+                                                        asks: approval.map { approvals?.asksHere($0) ?? false } ?? false,
                                                         header: usageHeader),
                   rank: rank, priority: priority, atLimit: atLimit)
     }

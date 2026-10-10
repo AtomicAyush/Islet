@@ -22,9 +22,19 @@ enum ApprovalWithheld: Equatable, Hashable, Sendable {
     case unclearAddress
     /// Islet cannot sign for this agent (`ApprovalSigner.Status`).
     case cannotSign
+    /// A question the card has no layout for: one to type or pick a number for, or
+    /// anything in it the hook's shape lacks (`ApprovalQuestions.parse`).
+    case questionNotUnderstood
+    /// A question whose options come with a preview to look at, which the island does
+    /// not draw.
+    case hasPreview
+    /// Two of a question's options that could be taken for each other
+    /// (`ApprovalQuestions.looksAlike`).
+    case lookAlikeAnswers
 }
 
-/// What a card shows of a request, and whether it may offer Allow.
+/// What a card shows of a request, and whether it may offer Allow (for a question
+/// Claude asks, Answer).
 struct ApprovalBody: Equatable, Sendable {
     var headline: String
     /// The input's keys in the order drawn: known ones in their layout's order, the rest
@@ -35,6 +45,14 @@ struct ApprovalBody: Equatable, Sendable {
     var withheld: Set<ApprovalWithheld>
     /// What the card draws, every key of the input in it (`sections(_:patchFiles:home:)`).
     var sections: [ApprovalSection] = []
+    /// Whether the request is a question Claude asks you (AskUserQuestion), answered with
+    /// a choice rather than allowed.
+    var isQuestion = false
+    /// The questions, where the card can lay them out (`ApprovalQuestions.parse`); `nil`
+    /// otherwise, and for every other tool.
+    var questions: [ApprovalQuestion]?
+    /// The title Claude gave its questions, or "".
+    var title = ""
 
     var offersAllow: Bool { withheld.isEmpty }
 
@@ -47,6 +65,7 @@ struct ApprovalBody: Equatable, Sendable {
         "NotebookEdit": ["notebook_path", "cell_id", "new_source", "cell_type", "edit_mode"],
         "WebFetch": ["url", "prompt"],
         "WebSearch": ["query", "allowed_domains", "blocked_domains"],
+        "AskUserQuestion": ["questions", "title", "metadata"],
     ]
     /// Codex hands its hook only these.
     static let codexKnownKeys: [String: [String]] = [
@@ -113,6 +132,8 @@ struct ApprovalBody: Equatable, Sendable {
 
         var headline = "Use \(tool)"
         var patchFiles: [String] = []
+        var questions: [ApprovalQuestion]?
+        var title = ""
         switch (request.agent, tool) {
         case (.claude, "Bash"):
             let command = string("command")
@@ -186,6 +207,28 @@ struct ApprovalBody: Equatable, Sendable {
                 items.compactMap(\.string).forEach { strict($0) }
             }
             headline = "Search the web"
+        case (.claude, "AskUserQuestion"):
+            // Only what the card lays out, every word of it read strictly: the answer is
+            // the option shown, so each must read as what it is.
+            if let parsed = ApprovalQuestions.parse(request.input) {
+                questions = parsed.questions
+                title = parsed.title
+                strict(parsed.title)
+                for question in parsed.questions {
+                    strict(question.text)
+                    strict(question.header)
+                    for option in question.options {
+                        strict(option.label)
+                        strict(option.description)
+                        if option.preview != nil { withheld.insert(.hasPreview) }
+                    }
+                    if ApprovalQuestions.looksAlike(question.options.map(\.label)) { withheld.insert(.lookAlikeAnswers) }
+                }
+                headline = parsed.questions.count == 1 ? "Asks you a question" : "Asks you \(parsed.questions.count) questions"
+            } else {
+                withheld.insert(.questionNotUnderstood)
+                headline = "Asks you a question"
+            }
         case (.chatgpt, "apply_patch"), (.chatgpt, "Edit"), (.chatgpt, "Write"):
             if let patch = string("command") {
                 lenient(patch)
@@ -216,7 +259,9 @@ struct ApprovalBody: Equatable, Sendable {
             }
         }
         return ApprovalBody(headline: headline, keys: keys, patchFiles: patchFiles, withheld: withheld,
-                            sections: sections(request, patchFiles: patchFiles, home: home))
+                            sections: sections(request, patchFiles: patchFiles, home: home),
+                            isQuestion: request.agent == .claude && tool == "AskUserQuestion", questions: questions,
+                            title: title)
     }
 }
 
@@ -443,6 +488,25 @@ extension ApprovalBody {
         case "WebSearch":
             code("query")
             for key in ["allowed_domains", "blocked_domains"] { field(key) }
+        case "AskUserQuestion" where request.agent == .claude:
+            // Each question and its options in order, numbered as the card offers them,
+            // with what each says of itself and any preview; a question in another shape
+            // is drawn key by key below.
+            guard let parsed = ApprovalQuestions.parse(input) else { break }
+            shown.formUnion(["questions", "title"])
+            if !parsed.title.isEmpty { sections.append(ApprovalSection(label: nil, text: parsed.title, style: .prose)) }
+            for (index, question) in parsed.questions.enumerated() {
+                sections.append(ApprovalQuestionLayout.questionSection(question, index: index, count: parsed.questions.count))
+                for (number, option) in question.options.enumerated() {
+                    sections.append(ApprovalSection(label: nil, text: "\(number + 1). \(option.label)", style: .plain))
+                    if !option.description.isEmpty {
+                        sections.append(ApprovalSection(label: nil, text: option.description, style: .prose))
+                    }
+                    if let preview = option.preview {
+                        sections.append(ApprovalSection(label: "Preview of \(number + 1)", text: preview, style: .code))
+                    }
+                }
+            }
         case "apply_patch":
             if !patchFiles.isEmpty {
                 sections.append(ApprovalSection(label: nil, text: "files = " + patchFiles.joined(separator: ", "), style: .field))

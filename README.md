@@ -371,7 +371,8 @@ you give shows as soon as Claude Code uses the tool, or starts the command you a
 denial once the agent that asked carries on; without the PermissionRequest and tool hooks, it
 shows only once the approved command or agent next writes, so for a long command the hand
 stays until it is done. A permission Claude asks can be answered in the island itself, with
-Allow and Deny on its page (see [Approving from the island](#approving-from-the-island)).
+Allow and Deny on its page, and so can a question it asks you in the Claude app, the session
+saying "Asks you" (see [Approving from the island](#approving-from-the-island)).
 
 The branch comes from each agent's hook, Claude Code's, ChatGPT's and Gemini's alike, which reads
 it at every event from the repository's own files (the nearest `.git` above the folder, a
@@ -1148,7 +1149,8 @@ the Claude app's record can tell which window it was, and the script does nothin
 (the tool, the agent that asked, and for a command a fingerprint, never the command); it prints
 nothing, so the asking stays Claude Code's, unless you answer it in the island
 ([Approving from the island](#approving-from-the-island)); the session shows "Needs permission" only once
-Claude Code's Notification says it is still waiting, a few seconds on. Claude Code says nothing
+Claude Code's Notification says it is still waiting, a few seconds on, or "Asks you" where what
+waits is a question Claude asks you (its AskUserQuestion tool, which comes as a permission). Claude Code says nothing
 when you answer, so the next word from that tool or agent does: PostToolUse or
 PostToolUseFailure once the tool has been used, the agent stopping or carrying on (all a denial
 leaves), or for the session's own, the turn ending; and Islet sees an allowed command running,
@@ -1425,8 +1427,10 @@ session's file holds.
 
 When Claude Code or ChatGPT asks permission (to run a command, write or edit a file, fetch a
 page or use a tool from an MCP server), the island can show the request on the agent's page and
-take your answer there. It shows what is asked in full: the command or the file's new content
-line by line, numbered, with `↩` where a long line wraps; every setting the tool was given; the
+take your answer there; and when Claude asks you a question in the Claude app, its options to
+choose from (see [Claude's questions](#claudes-questions) below). It shows what is asked in
+full: the command or the file's new content line by line, numbered, with `↩` where a long line
+wraps; every setting the tool was given; the
 folder, the app and any subagent asking, with the session's git branch beside the folder as on
 its row (from Islet's own record of the session, never from the request) and when the session
 started; and the agent's own words about it, never taken for Islet's. On a narrow line the app
@@ -1462,8 +1466,41 @@ holds characters you couldn't see (shown as their code, such as `‹U+202E›`),
 that could be read two ways (with a backslash, or a name and `@` before the host), carries a
 setting the island has no layout for, or comes from an app that doesn't take its prompt away
 once answered. While Presentation Mode is on or the screen is shared, the card says only that
-the agent needs permission. Questions an agent asks you, and plans to approve, are always left
-to the app.
+the agent needs permission. Plans to approve, and questions ChatGPT asks you, are always left to
+the app.
+
+#### Claude's questions
+
+A question Claude asks you (its AskUserQuestion tool: one to four questions, each with two to
+four options) comes to Claude Code's hook as a permission to use that tool, and the session's
+row and banner say **Asks you** for it rather than "Needs permission". Under the Claude app,
+where its own question card shows at the same moment and goes once the hook answers, the island
+shows it too: each question in Claude's words, its options as buttons with what each says of
+itself (one to choose, or several where the question says so), and an **Other…** field for an
+answer of your own, typed once you click it (one line, up to 300 characters; Return only stops
+typing). Emoji are fine; a character it can't send, such as one drawn as nothing or one newer than
+the hook knows, is named beside the buttons as you type. What you choose stays on the card while
+the island is closed or another request is in front, until the question is answered. Then:
+
+- **Answer in Claude** brings the app forward, where its own card is waiting; answering there
+  takes the island's away.
+- **Answer** sends what you chose, armed as Allow is: the card on screen a moment, your pointer
+  moved onto Answer from outside it and rested there, and all of the questions seen (a long one
+  says "Scroll to read it all" until you have). It has no key equivalent, and Return in the field
+  never answers. Every question needs an answer: an option, or your own words. There is no Deny;
+  to leave a question, answer it in Claude.
+
+Islet's answer names the options you chose by their numbers, never their words, with your own
+words beside them, all signed; the hook checks the signature, puts in the labels from its own
+copy of the question and hands Claude Code the question as it was asked with your answers added
+(several chosen are joined as Claude Code joins them). So an answer can only ever be one of the
+options shown, or what you typed. The island shows a question for you to read, with only Answer
+in Claude, where it holds characters you couldn't see, two of its options could pass for each
+other ("Yes" and "Yеs" with a Cyrillic е, "No" and "Νo" with a Greek Ν, "Yes" and "Yes " with a
+space after it), its options come with previews to look at, it asks for typed text or a number
+rather than a choice, it comes from an app that doesn't take its own card away once answered, or
+Islet can't sign the answer (its key changed outside Islet, or Keychain didn't give it). In a terminal, where Claude Code would wait on the hook before
+asking, questions are left to Claude Code.
 
 **Setting it up.** Copy the new script over the old one (as in
 [Claude Code hooks](#claude-code-hooks) and [ChatGPT hooks](#chatgpt-hooks)), then in Settings →

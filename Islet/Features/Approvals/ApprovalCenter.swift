@@ -20,6 +20,10 @@ struct ApprovalItem: Equatable, Identifiable, Sendable {
     /// (`ApprovalSessionLabel`), so two sessions in one folder are told apart.
     var session: String = ""
     var id: String { request.id }
+    /// Whether the request is a question Claude asks that the card lays out, with
+    /// nothing in it that withholds an answer (`ApprovalBody.withheld`). The card takes
+    /// the answer only where Islet can sign it too (`ApprovalCenter.asksHere`).
+    var asksHere: Bool { body.questions != nil && body.offersAllow }
 }
 
 /// A few words telling one session from another in the same folder: "since 10:42".
@@ -149,6 +153,9 @@ struct ApprovalSettled: Equatable, Sendable {
 final class ApprovalCenter {
     enum Refusal: Error, Equatable {
         case notFound, notArmed, allowWithheld, cannotSign, changed, late, unwritable
+        /// A question answered with choices it cannot take, or without any; or choices
+        /// for a request that is no question.
+        case choices
     }
 
     /// Islet's own, which also reads whether the island shows on the display with the
@@ -227,6 +234,10 @@ final class ApprovalCenter {
     @ObservationIgnored private var conditions = ApprovalConditions()
     /// The requests the island has been asked whether to open for, once each.
     @ObservationIgnored private var openingAsked: Set<String> = []
+    /// What is chosen on each question's card so far, by request, so a card drawn again
+    /// (the island closed and opened, another request brought forward and back) starts
+    /// from it. In memory only, and gone with the request.
+    @ObservationIgnored private var chosen: [String: [ApprovalChoice]] = [:]
 
     /// How long an answered request's id is kept.
     static let rememberFor: TimeInterval = 120
@@ -338,6 +349,7 @@ final class ApprovalCenter {
         items = []
         held = [:]
         openedFor = [:]
+        chosen = [:]
         presence.withdraw()
         watcher?.stop()
         watcher = nil
@@ -450,7 +462,10 @@ final class ApprovalCenter {
         // Only a change is assigned: the cards watch the queue.
         let kept = items.filter { present.contains($0.id + ".json") }
         let removed = kept.count != items.count
-        if removed { items = kept }
+        if removed {
+            items = kept
+            chosen = chosen.filter { id, _ in kept.contains { $0.id == id } }
+        }
         if added || removed { sortQueue() }
     }
 
@@ -463,14 +478,14 @@ final class ApprovalCenter {
                              userInfo: [.announcement: words, .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
-    /// "Claude asks to run a command in Islet".
+    /// "Claude asks to run a command in Islet"; "Claude asks you a question in Islet".
     static func spoken(_ item: ApprovalItem, isPrivate: Bool) -> String {
         let agent = item.request.agent.name
-        guard !isPrivate else { return "\(agent) needs permission" }
+        guard !isPrivate else { return item.body.isQuestion ? "\(agent) asks you a question" : "\(agent) needs permission" }
         let headline = item.body.headline
         let what = headline.prefix(1).lowercased() + headline.dropFirst()
         let project = item.request.project.isEmpty ? "" : " in \(item.request.project)"
-        return "\(agent) asks to \(what)\(project)"
+        return item.body.isQuestion ? "\(agent) \(what)\(project)" : "\(agent) asks to \(what)\(project)"
     }
 
     private func sortQueue() {
@@ -577,6 +592,22 @@ final class ApprovalCenter {
         item.body.offersAllow && canSign(for: item.request.agent)
     }
 
+    /// Whether the card takes the answer to `item`, a question Claude asks: one it lays
+    /// out, nothing in it withholding an answer, and Islet able to sign it. Anywhere else
+    /// the question shows as words to read, with Answer in the app alone.
+    func asksHere(_ item: ApprovalItem) -> Bool {
+        item.asksHere && offersAllow(item)
+    }
+
+    /// What was chosen on `id`'s card, while it is on show; `nil` for nothing yet.
+    func choices(for id: String) -> [ApprovalChoice]? { chosen[id] }
+
+    /// Keeps what is chosen on `id`'s card, while it is on show, for the card drawn again.
+    func keepChoices(_ choices: [ApprovalChoice], for id: String) {
+        guard items.contains(where: { $0.id == id }) else { return }
+        chosen[id] = choices
+    }
+
     /// Whether Islet can sign `agent`'s Allow and Deny, or has yet to read its key.
     func canSign(for agent: ApprovalAgent) -> Bool {
         let status = signer.status(for: agent)
@@ -584,18 +615,32 @@ final class ApprovalCenter {
     }
 
     /// Answers `id` from the island. Allow needs the token of an armed, real click for
-    /// this very request, and the request file as it was read.
+    /// this very request, and the request file as it was read. A question Claude asks is
+    /// answered only so, with `choices` for each of its questions, as the card shows
+    /// them; nothing else takes choices.
     @discardableResult
-    func answer(_ id: String, _ decision: ApprovalDecision, click: ApprovalClick? = nil) -> Result<Void, Refusal> {
+    func answer(_ id: String, _ decision: ApprovalDecision, click: ApprovalClick? = nil,
+                choices: [ApprovalChoice]? = nil) -> Result<Void, Refusal> {
         guard let item = items.first(where: { $0.id == id }) else { return .failure(.notFound) }
         let request = item.request
+        var chosen: [ApprovalChoice]?
         if decision == .allow {
             guard let click, click.id == id, click.digest == request.digest else { return .failure(.notArmed) }
             guard item.body.offersAllow else { return .failure(.allowWithheld) }
+            if item.body.isQuestion {
+                guard let questions = item.body.questions, let choices,
+                      ApprovalQuestions.problem(choices, for: questions) == nil
+                else { return .failure(.choices) }
+                chosen = choices
+            } else if choices != nil {
+                return .failure(.choices)
+            }
             guard ApprovalFiles.stamp(folder.request(id)) == request.stamp else { return .failure(.changed) }
+        } else if choices != nil {
+            return .failure(.choices)
         }
         guard now() < request.deadline else { return .failure(.late) }
-        if case .failure(let refusal) = write(request, decision) { return .failure(refusal) }
+        if case .failure(let refusal) = write(request, decision, choices: chosen) { return .failure(refusal) }
         forget(id, at: now())
         if decision != .pass {
             let agent = request.agent
@@ -627,19 +672,25 @@ final class ApprovalCenter {
 
     /// Writes the answer file: an Allow or Deny signed, a pass not, since the hook takes
     /// anything but a signed allow or deny as one. So only a click reads the key, and a
-    /// pass never brings up the Keychain.
+    /// pass never brings up the Keychain. A question's answer is version 2, its choices
+    /// by number (`ApprovalQuestions.wire`) and signed with them.
     @discardableResult
-    private func write(_ request: ApprovalRequest, _ decision: ApprovalDecision) -> Result<Void, Refusal> {
+    private func write(_ request: ApprovalRequest, _ decision: ApprovalDecision,
+                       choices: [ApprovalChoice]? = nil) -> Result<Void, Refusal> {
         let answered = Int64(max(min(now().timeIntervalSince1970, request.deadline.timeIntervalSince1970),
                                  request.created.timeIntervalSince1970).rounded(.down))
         var signature: String?
         if decision != .pass {
             signature = signer.sign(id: request.id, digest: request.digest, decision: decision, answered: answered,
-                                    for: request.agent)
+                                    chosen: choices.map(ApprovalQuestions.signed), for: request.agent)
             if signature == nil { return .failure(.cannotSign) }
         }
-        let object: [String: Any] = ["version": 1, "id": request.id, "digest": request.digest,
+        var object: [String: Any] = ["version": 1, "id": request.id, "digest": request.digest,
                                      "decision": decision.rawValue, "answered": answered, "sig": signature ?? ""]
+        if let choices {
+            object["version"] = 2
+            object["choices"] = ApprovalQuestions.wire(choices)
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
               ApprovalFiles.write(data, to: folder.answer(request.id), exclusive: true)
         else { return .failure(.unwritable) }
@@ -654,6 +705,7 @@ final class ApprovalCenter {
         onScreenSince[id] = nil
         lastSeen[id] = nil
         if maybeAnswered.contains(id) { maybeAnswered.remove(id) }
+        chosen[id] = nil
     }
 
     // MARK: Conditions

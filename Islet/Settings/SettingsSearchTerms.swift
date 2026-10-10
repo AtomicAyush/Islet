@@ -270,7 +270,8 @@ extension ClaudeCodeFeature {
                      "Usage ring in the compact island", "Refresh Claude usage when it's old", "Last reading",
                      "AI Usage"],
             keywords: ["hooks", "agents", "subagents", "workflows", "terminal", "sessions", "prompt", "coding",
-                       "approve", "allow", "deny", "permission", "always allow", "key", "keychain", "done", "finished",
+                       "approve", "allow", "deny", "permission", "always allow", "question", "answer", "asks you",
+                       "options", "key", "keychain", "done", "finished",
                        "banner", "popup", "notification", "on screen", "chat", "git", "branch", "folder", "repository",
                        "usage", "limits", "rate limit", "quota", "5-hour", "weekly", "plan", "usage tile",
                        "refresh", "stale", "old", "claude app"]

@@ -152,9 +152,9 @@ enum ClaudeCodeLayout {
     static let maxApprovalPageHeight: CGFloat = maxPageHeight
 
     static func pageHeight(for sessions: [ClaudeSession], showsText: Bool, approval: ApprovalItem?, waiting: Int = 0,
-                           isPrivate: Bool = false, header: CGFloat = 0) -> CGFloat {
+                           isPrivate: Bool = false, asks: Bool = false, header: CGFloat = 0) -> CGFloat {
         guard let approval else { return pageHeight(for: sessions, showsText: showsText, header: header) }
-        let block = ApprovalLayout.height(for: approval, waiting: waiting, isPrivate: isPrivate)
+        let block = ApprovalLayout.height(for: approval, waiting: waiting, isPrivate: isPrivate, asks: asks)
         let limit = listLimit(below: block, header: header)
         // No rows, or no line of them clear of the fade: the page ends with the card.
         guard showsRows(sessions, showsText: showsText, limit: limit) else { return header + topInset + block + bottomInset }
@@ -236,6 +236,11 @@ enum ClaudeCodeText {
         guard !text.isEmpty else { return nil }
         if record.isScratch, text == oneLine(record.prompt), firstWords(text) == text { return nil }
         return text
+    }
+
+    /// How the session stands, a question Claude asks you told from a permission.
+    static func status(_ session: ClaudeSession) -> String {
+        session.asksQuestion ? "Asks you" : status(session.state)
     }
 
     static func status(_ state: ClaudeSessionState) -> String {
@@ -338,6 +343,8 @@ struct ClaudeCodeMarkView: View {
             switch mark {
             case .needsPermission?:
                 glyph("hand.raised.fill", ClaudeCodePalette.attentionMark)
+            case .asksYou?:
+                glyph("questionmark.bubble.fill", ClaudeCodePalette.attentionMark)
             case .waitingForInput?:
                 glyph("questionmark.bubble.fill", ClaudeCodePalette.attentionMark)
             case .working?:
@@ -371,6 +378,7 @@ struct ClaudeCodeMarkView: View {
     private var label: String {
         switch mark {
         case .needsPermission?: "Claude Code needs permission"
+        case .asksYou?: "Claude Code asks you a question"
         case .waitingForInput?: "Claude Code needs input"
         case .working?: "Claude Code working"
         case .workflows?: "Claude Code background tasks running"
@@ -683,7 +691,7 @@ struct ClaudeCodeMinimal: View {
 
     var body: some View {
         if let approvals, !model.isPreviewing, approvals.front(for: .claude) != nil {
-            ApprovalMinimal()
+            ApprovalMinimal(center: approvals, agent: .claude)
         } else {
             usual
         }
@@ -741,7 +749,7 @@ struct ClaudeCodeExpanded: View {
         if let approvals, !model.isPreviewing, let card = approvals.card(for: .claude) {
             // The request above the rows, which get what room is left.
             let block = ApprovalLayout.height(for: card.item, waiting: approvals.waiting(for: .claude).count,
-                                              isPrivate: approvals.isPrivate)
+                                              isPrivate: approvals.isPrivate, asks: approvals.asksHere(card.item))
             // The branch beside the folder, from the asking session's own file.
             let branch = ApprovalBranch.of(card.item.request, claude: model.sessions.map(\.record), showsBranch: showsBranch)
             VStack(spacing: 0) {
@@ -921,13 +929,13 @@ private struct ClaudeSessionRow: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.islandGraphic(0.45))
         } else {
-            ClaudeCodeMarkView(mark: ClaudeCodeModel.Mark(session.state), pointSize: 12)
+            ClaudeCodeMarkView(mark: ClaudeCodeModel.Mark(session), pointSize: 12)
         }
     }
 
     private var status: some View {
         HStack(spacing: 0) {
-            Text(ClaudeCodeText.status(session.state))
+            Text(ClaudeCodeText.status(session))
                 .foregroundStyle(ClaudeCodeText.style(session.state))
             if session.state != .idle {
                 Text(" · ")
@@ -1181,7 +1189,7 @@ struct ClaudeCodeSettingsView: View {
     var body: some View {
         Toggle(isOn: $approveFromIsland) {
             Text("Approve from the island")
-            Text("When Claude Code asks permission, the island shows what it wants to do, with Allow, Deny and Answer in Claude. Claude's own prompt still works; nothing is allowed without your click.")
+            Text("When Claude Code asks permission, the island shows what it wants to do, with Allow, Deny and Answer in Claude. A question Claude asks you in the Claude app shows there too, its options to choose from and a field for your own answer, with Answer and Answer in Claude. Claude's own prompt still works; nothing is allowed or answered without your click.")
         }
 
         Toggle(isOn: $openForApproval) {

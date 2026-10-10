@@ -75,11 +75,20 @@ final class ApprovalSigner {
 
     /// The signature of an Allow or Deny, base64 DER: `nil` where Islet cannot sign for
     /// the agent (`status(for:)`). Reads the key the first time, the Keychain free to
-    /// ask, so only after a click.
-    func sign(id: String, digest: String, decision: ApprovalDecision, answered: Int64, for agent: ApprovalAgent) -> String? {
+    /// ask, so only after a click. An answer to a question Claude asks is an Allow
+    /// signed with what was chosen (`chosen`, `ApprovalQuestions.signed`), as
+    /// `v2|id|digest|allow|answered|chosen`; anything else is `v1|id|digest|decision|answered`.
+    func sign(id: String, digest: String, decision: ApprovalDecision, answered: Int64, chosen: String? = nil,
+              for agent: ApprovalAgent) -> String? {
         if key == nil, !refused { loadKey() }
         guard let key, status(for: agent) == .ready else { return nil }
-        let message = "v1|\(id)|\(digest)|\(decision.rawValue)|\(answered)"
+        let message: String
+        if let chosen {
+            guard decision == .allow else { return nil }
+            message = "v2|\(id)|\(digest)|allow|\(answered)|\(chosen)"
+        } else {
+            message = "v1|\(id)|\(digest)|\(decision.rawValue)|\(answered)"
+        }
         return try? key.signature(for: Data(message.utf8)).derRepresentation.base64EncodedString()
     }
 

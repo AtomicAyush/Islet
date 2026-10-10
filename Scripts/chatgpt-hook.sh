@@ -175,8 +175,13 @@ approval_agent=chatgpt
 # agent hands the hook. Only the harness's copy of this script reads the test settings
 # below.
 approval_test_overrides=0
+approval_question=0 approval_reply=""
 approval_allow='{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
 approval_deny='{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Islet by the person using this Mac. Don'"'"'t retry it or find another way to do it; ask them how to go on."}}}'
+# A question Claude asks (AskUserQuestion) is answered by the options chosen and any
+# words of the person's own, which the tool takes as its input with the answers added;
+# an Allow alone does nothing for it. Turned down from the island, Claude is told so.
+approval_skip='{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"The person chose not to answer this from Islet. Ask them in your reply instead, or go on without it."}}}'
 # Hosts whose own prompt runs alongside the hook and is withdrawn by its answer.
 approval_listed_hosts=" com.anthropic.claudefordesktop "
 approval_jq=""
@@ -299,10 +304,13 @@ approval_files=()
 approval_cleanup() { [ "${#approval_files[@]}" -gt 0 ] && /bin/rm -f "${approval_files[@]}" 2>/dev/null; }
 # Islet's answer in $1, if it is one this hook can take: its own, for exactly what was
 # shown, in time, and signed with the approvals key. Sets approval_decision to allow or
-# deny; anything else leaves it pass.
+# deny; anything else leaves it pass. A question's Allow is signed with what was chosen
+# (v2), and sets approval_reply to the answer to print; its Deny is signed as any other.
 approval_verify() {
-  local text id digest decision answered sig pem now
-  text="$(approval_read "$1" 1024)" || return 0
+  local text id digest decision answered sig pem now signed limit=1024
+  # An answer to a question carries what was chosen, so may be longer.
+  [ "$approval_question" = 1 ] && limit=8192
+  text="$(approval_read "$1" "$limit")" || return 0
   IFS=$'\t' read -r id digest decision answered sig <<< "$(printf '%s' "$text" | "$approval_jq" -r '
     def plain: if type == "string" and (test("[\t\n\r]") | not) and . != "" then . else "-" end;
     [(.id | plain), (.digest | plain), (.decision | plain),
@@ -315,9 +323,101 @@ approval_verify() {
   (( approval_created <= answered && answered <= approval_deadline && now <= approval_deadline )) || return 0
   [[ "$sig" =~ ^[A-Za-z0-9+/]{6,96}={0,2}$ ]] && [ "${#sig}" -ge 8 ] && [ "${#sig}" -le 96 ] || return 0
   pem="$(approval_key)" || return 0
-  printf '%s' "v1|$id|$digest|$decision|$answered" | /usr/bin/openssl dgst -sha256 -verify <(printf '%s\n' "$pem") \
+  signed="v1|$id|$digest|$decision|$answered"
+  # A question answered is signed with what was chosen (v2), which only it can be.
+  if [ "$approval_question" = 1 ] && [ "$decision" = allow ]; then
+    approval_choices "$text" || return 0
+    signed="v2|$id|$digest|allow|$answered|$approval_chosen"
+  fi
+  printf '%s' "$signed" | /usr/bin/openssl dgst -sha256 -verify <(printf '%s\n' "$pem") \
     -signature <(printf '%s' "$sig" | /usr/bin/base64 -D 2>/dev/null) >/dev/null 2>&1 || return 0
+  if [ "$approval_question" = 1 ] && [ "$decision" = allow ]; then
+    # The tool's input as this hook was given it, with the answers added and nothing
+    # else changed; never an Allow alone, which the tool ignores.
+    approval_reply="$(printf '%s' "$input" | "$approval_jq" -c --argjson answers "$approval_answers" '
+      {hookSpecificOutput: {hookEventName: "PermissionRequest",
+        decision: {behavior: "allow", updatedInput: (.tool_input + {answers: $answers})}}}' 2>/dev/null)"
+    [ -n "$approval_reply" ] || return 0
+  fi
   approval_decision="$decision"
+}
+# Whether a question Claude asks can be answered from the island: its input only the
+# questions, and a title and metadata as Claude Code adds them, no answers already in
+# it; one to four questions, each a choice of two to four options, the questions and
+# each question's labels told apart; no part longer than the island shows, a preview
+# at most 4000 characters. Anything else is left to the app.
+approval_asks() {
+  local verdict
+  verdict="$(printf '%s' "$input" | "$approval_jq" -r '
+    def text($most): type == "string" and length <= $most;
+    def word($most): text($most) and length > 0;
+    def only($allowed): type == "object" and (keys - $allowed | length) == 0;
+    def option: only(["description", "label", "preview"]) and (.label | word(200))
+      and ((has("description") | not) or (.description | text(1000)))
+      and ((has("preview") | not) or (.preview | text(4000)));
+    def question: only(["header", "kind", "multiSelect", "options", "question"]) and (.question | word(1000))
+      and ((has("header") | not) or (.header | text(100)))
+      and ((has("kind") | not) or .kind == "choice")
+      and ((has("multiSelect") | not) or (.multiSelect | type == "boolean"))
+      and (.options | type == "array" and length >= 2 and length <= 4 and all(.[]; option)
+           and (map(.label) | unique | length) == length);
+    .tool_input
+    | if only(["metadata", "questions", "title"])
+         and ((has("title") | not) or (.title | text(200)))
+         and ((has("metadata") | not) or (.metadata | only(["source"])
+              and ((has("source") | not) or (.source | text(200)))))
+         and (.questions | type == "array" and length >= 1 and length <= 4 and all(.[]; question)
+              and (map(.question) | unique | length) == length)
+      then "ok" else "no" end' 2>/dev/null)"
+  [ "$verdict" = ok ]
+}
+# What Islet's answer in $1 chose for each question, checked against this hook's own
+# copy of them: for each, in order, the options' numbers, ascending, and any words of
+# the person's own (one line of at most 300 characters, nothing a reader could not
+# see); one of them only where the question takes one. Sets approval_chosen to what the
+# signature covers, "0=1;1=0,2:<the words in base64>" for two, and approval_answers to
+# the answers as the tool takes them: each question's label, or the person's words, by
+# the question's text; a question taking several, its labels joined as Claude Code joins
+# them; a question left unanswered, out. Returns 1 for anything else.
+approval_choices() {
+  local line
+  approval_chosen="" approval_answers=""
+  line="$(printf '%s' "$input" | "$approval_jq" -r --arg answer "$1" '
+    def joined: map(if contains(", ") or contains("\"") then tojson else . end) | join(", ");
+    # The rule Islet checks by, step for step (ApprovalQuestions.wordsProblem): the
+    # joiners within an emoji let through (a keycap after a digit, # or *; the
+    # presentation selector after an emoji; the zero-width joiner between two), then
+    # nothing else hidden, no space but U+0020, nothing drawn as nothing, no more than
+    # two marks stacked.
+    def typed: type == "string" and length >= 1 and length <= 300 and test("\\S")
+      and (gsub("(?<=[0-9#*])\\x{FE0F}?\\x{20E3}"; "")
+           | gsub("(?<=\\p{Emoji})\\x{FE0F}"; "")
+           | gsub("(?<=\\p{Emoji})(?<!\\p{ASCII})\\x{200D}(?!\\p{ASCII})(?=\\p{Emoji})"; "")
+           | test("[\\p{C}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\x{115F}\\x{1160}\\x{3164}\\x{FFA0}\\x{2800}\\x{17B4}\\x{17B5}\\x{1D159}]|(?! )\\p{Zs}|\\p{M}{3}")
+           | not);
+    .tool_input.questions as $questions
+    | ($answer | fromjson) as $a
+    | if ($a | type) == "object" and $a.version == 2 and ($a.choices | type) == "array"
+         and ($a.choices | length) == ($questions | length) then . else error("shape") end
+    | [range(0; $questions | length) as $i
+       | $questions[$i] as $q | $a.choices[$i] as $c
+       | if ($c | type) == "object" and ($c | keys - ["o", "other"] | length) == 0 and ($c.o | type) == "array"
+            and all($c.o[]; type == "number" and . == floor and . >= 0 and . < ($q.options | length))
+            and $c.o == ($c.o | unique) and ((($c | has("other")) | not) or ($c.other | typed))
+         then . else error("choice") end
+       | ([$c.o[] as $o | $q.options[$o].label] + (if $c | has("other") then [$c.other] else [] end)) as $chosen
+       | if $q.multiSelect == true or ($chosen | length) <= 1 then . else error("one") end
+       | {signed: ("\($i)=" + ($c.o | map(tostring) | join(","))
+                   + (if $c | has("other") then ":" + ($c.other | @base64) else "" end)),
+          question: $q.question, chosen: $chosen, several: ($q.multiSelect == true)}]
+    | if any(.[]; .chosen | length > 0) then . else error("none") end
+    | [(map(.signed) | join(";")),
+       (map(select(.chosen | length > 0) | {key: .question, value: (if .several then .chosen | joined else .chosen[0] end)})
+        | from_entries | tojson)]
+    | join("\t")' 2>/dev/null)" || return 1
+  IFS=$'\t' read -r approval_chosen approval_answers <<< "$line"
+  [[ "$approval_chosen" =~ ^[0-3]=[0-9,]*(:[A-Za-z0-9+/=]+)?(\;[0-3]=[0-9,]*(:[A-Za-z0-9+/=]+)?){0,3}$ ]] \
+    && [ "${approval_answers:0:1}" = "{" ]
 }
 # Whether file $1 has Codex answer what it asks with its own reviewer: an
 # approvals_reviewer in it other than "user".
@@ -364,12 +464,13 @@ approval_offer() {
   # not a library jq would load from $HOME, nor a Perl or OpenSSL setting.
   local PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/empty
   unset PERL5OPT PERL5LIB PERLLIB PERL5DB OPENSSL_CONF CDPATH
-  approval_mark=""
+  approval_mark="" approval_question=0 approval_reply=""
   [ -n "$approval_jq" ] || return 1
   local home tool call bytes
   read -r tool <<< "$(printf '%s' "$input" | "$approval_jq" -r '.tool_name | strings' 2>/dev/null)"
   case "$approval_agent:$tool" in
     claude:Bash|claude:Write|claude:Edit|claude:MultiEdit|claude:NotebookEdit|claude:WebFetch|claude:WebSearch) ;;
+    claude:AskUserQuestion) approval_asks || return 1; approval_question=1 ;;
     chatgpt:Bash|chatgpt:apply_patch|chatgpt:Edit|chatgpt:Write) ;;
     claude:mcp__*|chatgpt:mcp__*) ;;
     *) return 1 ;;
@@ -378,6 +479,7 @@ approval_offer() {
   # A dry run says what would be offered, and goes no further.
   if [ -n "$ISLET_NOTIFY_DRY" ]; then
     approval_policy_of "$@"
+    [ "$approval_question" = 1 ] && [ "$approval_policy" != concurrent ] && return 1
     echo "approval: $approval_policy $tool wait=$approval_wait" >&2
     return 1
   fi
@@ -386,6 +488,9 @@ approval_offer() {
   approval_dir_ok "$approval_dir" && approval_dir_ok "$approval_dir/Requests" \
     && approval_dir_ok "$approval_dir/Answers" || return 1
   approval_policy_of "$@"
+  # A question only where the app asks it alongside the hook and takes it away once
+  # answered: a wait here would hold up a terminal's own question.
+  [ "$approval_question" = 1 ] && [ "$approval_policy" != concurrent ] && return 1
   call="$(printf '%s' "$input" | "$approval_jq" -cS '{input: .tool_input, tool: .tool_name}' 2>/dev/null)"
   bytes="$(LC_ALL=C; printf '%s' "${#call}")"
   [ -n "$call" ] && (( bytes <= 262144 )) || return 1

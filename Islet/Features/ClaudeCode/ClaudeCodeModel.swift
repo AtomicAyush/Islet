@@ -10,6 +10,9 @@ final class ClaudeCodeModel {
     enum Mark: Equatable {
         /// A session needs permission to go on.
         case needsPermission
+        /// A session asks you a question to choose an answer to (AskUserQuestion), which
+        /// comes as a permission asked.
+        case asksYou
         /// A session has asked a question.
         case waitingForInput
         /// A session is working on a reply.
@@ -25,6 +28,11 @@ final class ClaudeCodeModel {
             case .waitingForInput: self = .waitingForInput
             case .idle: self = .workflows
             }
+        }
+
+        /// A session's own mark, a question it asks you told from a permission.
+        init(_ session: ClaudeSession) {
+            self = session.asksQuestion ? .asksYou : Mark(session.state)
         }
     }
 
@@ -61,7 +69,7 @@ final class ClaudeCodeModel {
     /// The displayed session's: sessions waiting for permission come first, then those
     /// waiting for an answer, then those working, so the mark and the time beside it
     /// are the same session's.
-    var mark: Mark? { displayed.map { Mark($0.state) } }
+    var mark: Mark? { displayed.map(Mark.init) }
     /// Whether a session is waiting on the person: it is then the one displayed.
     var needsYou: Bool { displayed?.state.needsYou ?? false }
 
