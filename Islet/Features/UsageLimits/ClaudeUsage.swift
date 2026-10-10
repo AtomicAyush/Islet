@@ -14,9 +14,12 @@ import Foundation
 /// else shows nothing.
 ///
 /// Quick Ask's runs of Claude's command line tool say the exact numbers and resets as
-/// they answer (`rate_limit_event`), which win over the app's samples while newer; an
-/// exact reset still to come replaces the worked-out one. Claude Code's StopFailure hook
-/// says when a turn was turned away at the limit, though not which window's.
+/// they answer (`rate_limit_event`), and so does the tiny request Islet makes where the
+/// numbers shown have grown old (`ClaudeUsageRefresh`); the newest win over the app's
+/// samples while newer, and an exact reset still to come replaces the worked-out one.
+/// The last of them is kept in Islet's defaults, so a relaunch starts from it rather
+/// than from the app's older sample. Claude Code's StopFailure hook says when a turn
+/// was turned away at the limit, though not which window's.
 enum ClaudeUsage {
     static let fileName = "plan-usage-history.json"
 
@@ -162,6 +165,47 @@ enum ClaudeUsage {
         var windows: [UsageWindow]
         /// Turned away at the limit (`status` "rejected").
         var rejected: Bool
+        /// Whose run of Claude said it.
+        var source: Source = .quickAsk
+    }
+
+    /// The runs of Claude's command line tool that say its limits.
+    enum Source: String, Codable, Sendable {
+        /// A question to Quick Ask.
+        case quickAsk
+        /// Islet's own tiny request, stopped as the figures came (`ClaudeUsageRefresh`).
+        case refresh
+    }
+
+    /// The last limits a run said, kept in Islet's defaults across relaunches: the
+    /// figures, the resets, when and by whom, and nothing else.
+    struct Kept: Codable, Equatable {
+        struct Window: Codable, Equatable {
+            var minutes: Int
+            var percent: Double
+            var resets: Date?
+        }
+
+        var at: Date
+        var windows: [Window]
+        var rejected: Bool
+        var source: Source
+
+        init(_ event: LimitEvent) {
+            at = event.at
+            windows = event.windows.map { Window(minutes: $0.minutes, percent: $0.percent, resets: $0.resets) }
+            rejected = event.rejected
+            source = event.source
+        }
+
+        /// The event again; `nil` for one that says nothing, or whose figures are not
+        /// percentages.
+        var event: LimitEvent? {
+            let windows = windows.filter { $0.minutes > 0 && $0.percent.isFinite && (0...100).contains($0.percent) }
+                .map { UsageWindow(minutes: $0.minutes, percent: $0.percent, resets: $0.resets) }
+            guard !windows.isEmpty || rejected else { return nil }
+            return LimitEvent(at: at, windows: windows, rejected: rejected, source: source)
+        }
     }
 
     /// The windows a `rateLimitType` or `unifiedWindows` key stands for: the five hours

@@ -494,7 +494,8 @@ minutes (an hour while a tool runs). It tells Islet through its hooks, with the 
 trust, so a session in a folder you haven't trusted doesn't show.
 
 **Usage limits.** How much of your Claude and ChatGPT plans' limits and your Gemini quota you
-have used, from this Mac alone: no second sign-in, nothing asked of Anthropic or OpenAI, and
+have used, from this Mac: no second sign-in, nothing asked of OpenAI, Claude's asked of
+Anthropic only by Quick Ask's own runs and, where they've grown old, one tiny request (below), and
 Gemini's asked of Antigravity, which asks Google as its own quota screen does. The **AI Usage** tile on the home page has a column for each, a bar per window (Claude's
 five hours and week; ChatGPT's as your plan has them, five hours and a week on Plus, a month on
 Free; Gemini's as Antigravity's quota screen lists them, five hours and a week, the three fullest
@@ -508,7 +509,20 @@ can dip within one), so it resets at the latest five hours after the first sampl
 use, shown as "about 4:10 PM", and the week likewise where the record goes back far enough to
 tell. Once the app hasn't
 updated it for 20 minutes Claude's column is dimmed and says how old it is ("as of 25 min ago").
-Quick Ask's runs of Claude carry the exact numbers and resets, which win while they're newer.
+Quick Ask's runs of Claude carry the exact numbers and resets, which win while they're newer,
+and Islet keeps the last of them (the percentages, resets, when and whose, nothing else) in its
+own preferences, so a relaunch starts from them rather than from the app's older record. The
+Claude app updates its record only while it's open, so with **Refresh Claude usage when it's
+old** (on by default), when Claude's newest figures are over 20 minutes old as the AI Usage tile
+or the Claude Code page opens, Islet asks Claude for them itself: the smallest request Claude's
+command line tool can make (the cheapest model, a one-word prompt), signed in with Quick Ask's
+token and run as Quick Ask runs it, with nothing saved and no tools, settings, hooks or MCP
+servers. Claude's tool says the limits as the answer's headers arrive, and Islet stops it there
+and then, before any answer is written, or after 20 seconds at most; each uses a sliver of your
+allowance. It happens at most once every 15 minutes, even across relaunches, never while you're
+offline, without a Claude token in Quick Ask, while the island saves energy or in Low Power Mode,
+or while Quick Ask is asking Claude, and never shows in Quick Ask; what came of it is said in
+Settings alone.
 The record is the Claude app's own, private to it: only its present format is read, and
 anything else shows nothing. ChatGPT's come from what Codex notes after each reply in the
 thread's rollout file: the plan, each window's use, length and exact reset, and the credits.
@@ -538,10 +552,11 @@ limit the time it lifts takes the place of the turn's ("limit · 4:10"), ring or
 Code's StopFailure hook says when a turn is turned away at the limit (see [Claude Code
 hooks](#claude-code-hooks)). Settings → Activities → Claude Code, ChatGPT and Gemini each have Show
 usage limits, Warn at 80% and 95% and Usage ring in the compact island, and say what was last
-read ("Antigravity: read 2 min ago", "Antigravity closed: last read 3 h ago", "Antigravity's quota
+read ("Quick Ask 3 min ago", "Refreshed 2 min ago", "Claude app 38 h ago · couldn't refresh: no
+answer", "Antigravity: read 2 min ago", "Antigravity closed: last read 3 h ago", "Antigravity's quota
 couldn't be read"). Nothing polls: Islet looks again when the Claude app's folder or Codex's
-changes, a chat moves on or Gemini's quota is about to show, and keeps one timer for the next
-reset.
+changes, a chat moves on or Gemini's or Claude's figures are about to show, and keeps one timer
+for the next reset.
 
 **Sound Mixer.** Every app playing sound, each with its own volume (0–150%) and a mute, in
 the opened island and on the home page. When two apps play at once, the mixer takes the

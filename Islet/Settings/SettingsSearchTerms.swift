@@ -267,11 +267,13 @@ extension ClaudeCodeFeature {
             labels: ["Approve from the island", "Open the island for each request", "Approvals key", "Set Up",
                      "Reset Key", "Show what you asked", "Show the git branch", "Skip Done when the chat is on screen",
                      "Hooks", "Last heard from Claude Code", "Show usage limits", "Warn at 80% and 95%",
-                     "Usage ring in the compact island", "Claude app", "AI Usage"],
+                     "Usage ring in the compact island", "Refresh Claude usage when it's old", "Last reading",
+                     "AI Usage"],
             keywords: ["hooks", "agents", "subagents", "workflows", "terminal", "sessions", "prompt", "coding",
                        "approve", "allow", "deny", "permission", "always allow", "key", "keychain", "done", "finished",
                        "banner", "popup", "notification", "on screen", "chat", "git", "branch", "folder", "repository",
-                       "usage", "limits", "rate limit", "quota", "5-hour", "weekly", "plan", "usage tile"]
+                       "usage", "limits", "rate limit", "quota", "5-hour", "weekly", "plan", "usage tile",
+                       "refresh", "stale", "old", "claude app"]
         )
     }
 }

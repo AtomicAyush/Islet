@@ -91,23 +91,17 @@ final class ClaudeAskBackend: AskBackend {
             guard let binary = setup.binary() else { return continuation.finish(throwing: AskFailure.notInstalled) }
             guard let token = setup.tokens.token() else { return continuation.finish(throwing: AskFailure.notSignedIn) }
             if offline() { return continuation.finish(throwing: AskFailure.offline) }
-            let launch = AskProcess.Launch(
-                executable: binary,
-                arguments: { _ in image == nil ? Self.arguments : Self.imageArguments },
-                environment: { [environment = setup.environment] folder in
-                    // Claude's own configuration, which it writes as it starts, goes in
-                    // the run's folder and with it, not in the person's.
-                    environment.merging([
-                        "CLAUDE_CODE_OAUTH_TOKEN": token,
-                        "CLAUDE_CONFIG_DIR": folder.appendingPathComponent("config").path,
-                    ]) { $1 }
-                },
+            let launch = Self.launch(
+                binary, token: token, environment: setup.environment,
+                arguments: image == nil ? Self.arguments : Self.imageArguments,
                 input: image.map { Self.message(AskInstructions.prompt(question, showing: $0, after: earlier), image: $0) }
                     ?? Data(AskInstructions.prompt(question, after: earlier).utf8),
                 parent: setup.parent
             )
             let limits = setup.limits
+            ClaudeRuns.quickAsk.begin()
             let task = Task {
+                defer { ClaudeRuns.quickAsk.end() }
                 var parser = ClaudeOutput()
                 do {
                     for try await output in AskProcess.run(launch) {
@@ -128,6 +122,25 @@ final class ClaudeAskBackend: AskBackend {
         }
     }
 
+    /// A run of the tool signed in with `token`. Claude's own configuration, which it
+    /// writes as it starts, goes in the run's folder and with it, not in the person's.
+    nonisolated static func launch(
+        _ binary: URL, token: String, environment: [String: String], arguments: [String], input: Data, parent: URL
+    ) -> AskProcess.Launch {
+        AskProcess.Launch(
+            executable: binary,
+            arguments: { _ in arguments },
+            environment: { folder in
+                environment.merging([
+                    "CLAUDE_CODE_OAUTH_TOKEN": token,
+                    "CLAUDE_CONFIG_DIR": folder.appendingPathComponent("config").path,
+                ]) { $1 }
+            },
+            input: input,
+            parent: parent
+        )
+    }
+
     /// Print mode with no session saved; no tools; no settings from anywhere, so none of
     /// the person's hooks, and hooks off besides; no MCP servers but an empty list; no
     /// slash commands. Streamed as it is written. The empty strings are arguments of
@@ -138,6 +151,13 @@ final class ClaudeAskBackend: AskBackend {
         "--settings", #"{"disableAllHooks":true}"#, "--system-prompt", AskInstructions.text,
         "--output-format", "stream-json", "--include-partial-messages", "--verbose",
     ]
+
+    /// The same with another system prompt: Islet's tiny request for Claude's limits.
+    nonisolated static func arguments(systemPrompt: String) -> [String] {
+        var list = arguments
+        if let index = list.firstIndex(of: "--system-prompt"), index + 1 < list.count { list[index + 1] = systemPrompt }
+        return list
+    }
 
     /// The same, with the question coming as a message rather than as text, for a picture
     /// to go in it.

@@ -696,7 +696,8 @@ struct ClaudeCodeMinimal: View {
 // MARK: - Expanded
 
 /// Opened: a row per session, those waiting on you first, under a line of Claude's
-/// usage limits while they show. Clicking a row brings forward the app it runs in.
+/// usage limits while they show, refreshed as it opens where they have grown old.
+/// Clicking a row brings forward the app it runs in.
 struct ClaudeCodeExpanded: View {
     let model: ClaudeCodeModel
     var approvals: ApprovalCenter? = nil
@@ -716,6 +717,7 @@ struct ClaudeCodeExpanded: View {
             if let status { UsageLine(status: status) }
             page(header: status == nil ? 0 : UsageLayout.lineHeight)
         }
+        .onAppear { if !model.isPreviewing { usage?.claudeWillShow() } }
     }
 
     /// The page below the usage line, which takes `header` of its height.

@@ -54,7 +54,7 @@ enum UsageColours {
 /// Gemini's last while Antigravity is closed; a dimmed window an old figure beside newer
 /// ones or the limit. The window at its limit says so in red, or "Limit reached" heads
 /// the column where none can be told to be. As it shows, Gemini's quota is asked for
-/// again where a read is due.
+/// again where a read is due, and Claude's limits refreshed where they have grown old.
 struct UsageHomeTile: View {
     let center: UsageCenter
 
@@ -67,7 +67,10 @@ struct UsageHomeTile: View {
                 UsageColumn(status: status)
             }
         }
-        .onAppear { center.willShow() }
+        .onAppear {
+            center.willShow()
+            center.claudeWillShow()
+        }
     }
 }
 
@@ -349,13 +352,15 @@ struct UsageLimitTrailing: View {
 // MARK: - Settings
 
 /// The usage settings in an agent's pane: whether its limits show, warn and ring the
-/// mark, and what Islet last read of them.
+/// mark, for Claude whether they are refreshed where old, and what Islet last read of
+/// them.
 struct UsageSettingsRows: View {
     let agent: UsageAgent
     let center: UsageCenter
     @AppStorage private var shows: Bool
     @AppStorage private var warns: Bool
     @AppStorage private var ring: Bool
+    @AppStorage private var refreshes: Bool
 
     init(agent: UsageAgent, center: UsageCenter? = nil) {
         self.agent = agent
@@ -364,7 +369,11 @@ struct UsageSettingsRows: View {
         _shows = AppStorage(wrappedValue: true, UsagePrefs.showKey(agent), store: center.defaults)
         _warns = AppStorage(wrappedValue: true, UsagePrefs.warnKey(agent), store: center.defaults)
         _ring = AppStorage(wrappedValue: true, UsagePrefs.ringKey(agent), store: center.defaults)
+        _refreshes = AppStorage(wrappedValue: true, UsagePrefs.refreshClaude, store: center.defaults)
     }
+
+    /// The Claude toggle's title, as Settings' search finds it.
+    static let refreshTitle = "Refresh Claude usage when it's old"
 
     var body: some View {
         Toggle(isOn: $shows) {
@@ -381,6 +390,13 @@ struct UsageSettingsRows: View {
             Text("From 80%, an orange ring round the mark beside the notch, red at the limit. At the limit, when it lifts takes the place of the turn's time either way.")
         }
         .disabled(!shows)
+        if agent == .claude {
+            Toggle(isOn: $refreshes) {
+                Text(Self.refreshTitle)
+                Text("When the figures are over 20 minutes old as the AI Usage tile or this page opens, Islet sends Claude a tiny request with Quick Ask's token and stops it as soon as the figures arrive, at most once every 15 minutes. Each uses a sliver of your allowance.")
+            }
+            .disabled(!shows)
+        }
         LabeledContent(Self.sourceLabel(agent)) {
             TimelineView(.everyMinute) { context in
                 Text(source(at: context.date))
@@ -393,7 +409,7 @@ struct UsageSettingsRows: View {
     /// What the line of what was last read is labelled, as Settings' search finds it.
     static func sourceLabel(_ agent: UsageAgent) -> String {
         switch agent {
-        case .claude: "Claude app"
+        case .claude: "Last reading"
         case .chatGPT: "ChatGPT plan"
         case .gemini: "Gemini quota"
         }
@@ -402,7 +418,7 @@ struct UsageSettingsRows: View {
     private var summary: String {
         switch agent {
         case .claude:
-            "Your plan's 5-hour and weekly limits on the AI Usage tile and atop the opened page, from the Claude app's own record of them, which it updates every 15 minutes while it's open, and exactly whenever Quick Ask asks Claude. No sign-in of Islet's own; dimmed once the app hasn't updated them for 20 minutes."
+            "Your plan's 5-hour and weekly limits on the AI Usage tile and atop the opened page, from the Claude app's own record of them, which it updates every 15 minutes while it's open, and exactly whenever Quick Ask asks Claude or Islet refreshes them. Dimmed once they're 20 minutes old."
         case .chatGPT:
             "Your plan's limits on the AI Usage tile and atop the opened page, as Codex notes them after each reply, with their exact resets. Nothing is read of the chats themselves; a window past its reset shows as reset."
         case .gemini:
@@ -415,16 +431,8 @@ struct UsageSettingsRows: View {
         guard shows else { return "Not read while usage limits are off" }
         switch agent {
         case .claude:
-            switch center.claudeHistory {
-            case .read(let reading)?:
-                return "Last sample " + UsageText.age(date.timeIntervalSince(reading.measured))
-            case .unknownFormat?:
-                return "Its usage file is in a format Islet doesn't know"
-            case .missing?:
-                return "No usage file yet: open the Claude app"
-            case nil:
-                return "Not read yet"
-            }
+            return Self.claude(history: center.claudeHistory, event: center.claudeEvent,
+                               note: refreshes ? center.claudeRefreshNote : nil, now: date)
         case .chatGPT:
             guard let reading = center.readings[.chatGPT] else { return "Not seen yet: Codex notes it after a reply" }
             let plan = UsageText.plan(reading.plan) ?? "Unknown plan"
@@ -433,6 +441,49 @@ struct UsageSettingsRows: View {
         case .gemini:
             return Self.gemini(open: center.antigravityOpen, source: center.geminiSource, measured: center.geminiMeasured, now: date)
         }
+    }
+
+    /// Where the figures shown came from and how long ago: "Quick Ask 3 min ago",
+    /// "Refreshed 2 min ago", "Claude app 38 h ago"; then, where the last refresh since
+    /// failed or none can be made, why: "Claude app 38 h ago · couldn't refresh: no answer".
+    static func claude(history: ClaudeUsage.History?, event: ClaudeUsage.LimitEvent?, note: ClaudeUsageRefresh.Note?,
+                       now: Date) -> String {
+        let sample = history?.reading?.measured
+        var said: Date?
+        var line: String
+        if let event, sample.map({ event.at > $0 }) ?? true {
+            said = event.at
+            line = (event.source == .refresh ? "Refreshed " : "Quick Ask ") + UsageText.age(now.timeIntervalSince(event.at))
+        } else {
+            switch history {
+            case .read(let reading)?:
+                said = reading.measured
+                line = "Claude app " + UsageText.age(now.timeIntervalSince(reading.measured))
+            case .unknownFormat?:
+                line = "Its usage file is in a format Islet doesn't know"
+            case .missing?:
+                line = "No usage file yet: open the Claude app"
+            case nil:
+                line = "Not read yet"
+            }
+        }
+        let why: String?
+        switch note {
+        case .done(let at, let outcome)?:
+            guard said.map({ at > $0 }) ?? true else { return line }
+            switch outcome {
+            case .read: why = nil
+            case .notSignedIn: why = "couldn't refresh: Claude didn't accept the token"
+            case .noFigures: why = "couldn't refresh: Claude didn't say"
+            case .timedOut: why = "couldn't refresh: no answer"
+            case .failed: why = "couldn't refresh"
+            }
+        case .cannot(.noToken)?: why = "connect Claude in Quick Ask to refresh"
+        case .cannot(.notInstalled)?: why = "refreshing needs Claude Code in the Claude app"
+        default: why = nil
+        }
+        if let why { line += " · " + why }
+        return line
     }
 
     /// "Antigravity: read 2 min ago", "Antigravity closed: last read 3 h ago",

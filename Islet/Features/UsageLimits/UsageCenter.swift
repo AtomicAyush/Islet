@@ -14,9 +14,14 @@ enum UsagePrefs {
     /// limit lifts shows beside the notch either way.
     static func ringKey(_ agent: UsageAgent) -> String { agent.activityID + ".usageRing" }
 
+    /// Whether Claude's limits are refreshed where they have grown old
+    /// (`ClaudeUsageRefresh`).
+    static let refreshClaude = "claudeCode.refreshUsage"
+
     static func shows(_ agent: UsageAgent, in defaults: UserDefaults = .standard) -> Bool { flag(showKey(agent), defaults) }
     static func warns(_ agent: UsageAgent, in defaults: UserDefaults = .standard) -> Bool { flag(warnKey(agent), defaults) }
     static func ring(_ agent: UsageAgent, in defaults: UserDefaults = .standard) -> Bool { flag(ringKey(agent), defaults) }
+    static func refreshesClaude(in defaults: UserDefaults = .standard) -> Bool { flag(refreshClaude, defaults) }
 
     private static func flag(_ key: String, _ defaults: UserDefaults) -> Bool { defaults.object(forKey: key) as? Bool ?? true }
 
@@ -25,6 +30,11 @@ enum UsagePrefs {
     /// Gemini's last figures read from Antigravity, shown dimmed while it is closed
     /// (`GeminiUsage.Kept`).
     static let geminiKept = "gemini.usageKept"
+    /// The last limits Quick Ask or a refresh said of Claude, restored at launch
+    /// (`ClaudeUsage.Kept`).
+    static let claudeKept = "claudeCode.usageKept"
+    /// When Claude's limits were last refreshed, for the least time between two.
+    static let claudeRefreshed = "claudeCode.usageRefreshed"
 }
 
 /// How Islet gets at Antigravity, which tests replace: which of its processes run, and
@@ -48,10 +58,13 @@ struct AntigravityAccess {
 
 /// Claude's, ChatGPT's and Gemini's usage limits, for the island: read while the agent's
 /// activity is on and Settings shows its limits. Claude's and ChatGPT's come from files on
-/// this Mac alone (`ClaudeUsage`, `ChatGPTUsage`), and only when they change: the Claude
-/// app's folder and Codex's are watched for entries changing (`FolderWatcher`), which the
-/// Claude app writing its history and Codex updating a thread both do, and ChatGPT's hooks
-/// say when a chat has moved on. Gemini's are asked of Antigravity while it is open
+/// this Mac (`ClaudeUsage`, `ChatGPTUsage`), and only when they change: the Claude app's
+/// folder and Codex's are watched for entries changing (`FolderWatcher`), which the Claude
+/// app writing its history and Codex updating a thread both do, and ChatGPT's hooks say
+/// when a chat has moved on. Claude's runs of Quick Ask say Claude's exactly, which are
+/// kept across relaunches, and where the newest are over 20 minutes old as the tile or
+/// the Claude Code page is about to show, a tiny request of Islet's own asks for them
+/// afresh, at most once every 15 minutes (`ClaudeUsageRefresh`). Gemini's are asked of Antigravity while it is open
 /// (`GeminiUsage`): as the tile, the Gemini page or its usage line is about to show, as
 /// an Antigravity hook event comes, as Antigravity opens, and once a limit's reset has
 /// passed; at most once a minute, every five while the island saves energy, and never
@@ -87,6 +100,10 @@ final class UsageCenter {
     private(set) var geminiSource: GeminiSource = .notRead
     /// Whether Antigravity was open when Islet last looked.
     private(set) var antigravityOpen = false
+    /// What Quick Ask or a refresh last said of Claude's limits, kept across relaunches.
+    private(set) var claudeEvent: ClaudeUsage.LimitEvent?
+    /// What came of refreshing Claude's limits, for Settings.
+    private(set) var claudeRefreshNote: ClaudeUsageRefresh.Note?
 
     /// What came of asking Antigravity for Gemini's quota.
     enum GeminiSource: Equatable {
@@ -114,7 +131,6 @@ final class UsageCenter {
     @ObservationIgnored private var claudeWatcher: FolderWatcher?
     @ObservationIgnored private var codexWatcher: FolderWatcher?
     @ObservationIgnored private var claudeStamp: FileStamp?
-    @ObservationIgnored private var claudeEvent: ClaudeUsage.LimitEvent?
     @ObservationIgnored private var claudeLimitHit: Date?
     @ObservationIgnored private var chatGPTReading: UsageReading?
     @ObservationIgnored private var chatGPTCache = ChatGPTUsage.Cache()
@@ -125,6 +141,9 @@ final class UsageCenter {
     @ObservationIgnored private var readChatGPTAgain = false
     @ObservationIgnored private let antigravity: AntigravityAccess
     @ObservationIgnored private let saving: @MainActor () -> Bool
+    @ObservationIgnored private let claudeAccess: ClaudeUsageRefresh.System
+    /// The refresh of Claude's limits under way.
+    @ObservationIgnored private var claudeRefreshing: Task<Void, Never>?
     /// Gemini's reading, the last kept while Antigravity is closed.
     @ObservationIgnored private var geminiReading: UsageReading?
     /// The server and port that last answered.
@@ -159,6 +178,7 @@ final class UsageCenter {
         claudeFolder: URL = ClaudeUsage.folder,
         codexHome: String = ChatGPTUsage.defaultHome,
         antigravity: AntigravityAccess = .live,
+        claude: ClaudeUsageRefresh.System? = nil,
         saving: @escaping @MainActor () -> Bool = { EnergySaver.shared.isSaving },
         publishesTile: Bool = true,
         present: @escaping @MainActor (CustomBanner) -> Void = { banner in
@@ -170,6 +190,7 @@ final class UsageCenter {
         self.claudeFolder = claudeFolder
         self.codexHome = codexHome
         self.antigravity = antigravity
+        claudeAccess = claude ?? .live
         self.saving = saving
         self.publishesTile = publishesTile
         self.present = present
@@ -221,6 +242,7 @@ final class UsageCenter {
     private func begin(_ agent: UsageAgent) {
         switch agent {
         case .claude:
+            claudeEvent = keptClaude()
             let watcher = FolderWatcher(url: claudeFolder, debounce: 1) { [weak self] in self?.readClaude() }
             claudeWatcher = watcher
             watcher.start()
@@ -258,6 +280,8 @@ final class UsageCenter {
             claudeHistory = nil
             claudeEvent = nil
             claudeLimitHit = nil
+            claudeRefreshing?.cancel()
+            claudeRefreshing = nil
         case .chatGPT:
             codexWatcher?.stop()
             codexWatcher = nil
@@ -306,12 +330,104 @@ final class UsageCenter {
         }
     }
 
-    /// Quick Ask's run of Claude said what its limits are.
+    /// Quick Ask's run of Claude, or a refresh, said what its limits are: kept, for the
+    /// next launch to start from.
     func received(_ event: ClaudeUsage.LimitEvent) {
         guard active.contains(.claude) else { return }
+        // A run of Claude needs the tool and a token, so what stopped a refresh is gone.
+        if case .cannot? = claudeRefreshNote { claudeRefreshNote = nil }
         if let known = claudeEvent, known.at > event.at { return }
         claudeEvent = event
+        if let data = try? JSONEncoder().encode(ClaudeUsage.Kept(event)) {
+            defaults.set(data, forKey: UsagePrefs.claudeKept)
+        }
         update()
+    }
+
+    /// What Quick Ask or a refresh last said, as kept.
+    private func keptClaude() -> ClaudeUsage.LimitEvent? {
+        guard let data = defaults.data(forKey: UsagePrefs.claudeKept) else { return nil }
+        return (try? JSONDecoder().decode(ClaudeUsage.Kept.self, from: data))?.event
+    }
+
+    /// The tile or the Claude Code page is about to show Claude's limits: they are asked
+    /// for afresh if they have grown old and a refresh is allowed.
+    func claudeWillShow() {
+        refreshClaude()
+    }
+
+    /// When the newest of Claude's figures was true, the app's sample or a run's.
+    var claudeNewest: Date? {
+        [claudeHistory?.reading?.measured, claudeEvent?.at].compactMap { $0 }.max()
+    }
+
+    /// When Claude's limits were last refreshed, as kept.
+    var claudeRefreshed: Date? { defaults.object(forKey: UsagePrefs.claudeRefreshed) as? Date }
+
+    /// Why Claude's limits would not be refreshed now; `nil` where a refresh is due. The
+    /// cheap reasons first, the token's presence (but never the token) last.
+    func claudeRefreshSkip() -> ClaudeUsageRefresh.Skip? {
+        guard UsagePrefs.refreshesClaude(in: defaults) else { return .off }
+        guard active.contains(.claude) else { return .notShown }
+        guard claudeHistory != nil else { return .notReadYet }
+        guard claudeRefreshing == nil else { return .underWay }
+        let now = clock()
+        if let newest = claudeNewest, now.timeIntervalSince(newest) <= ClaudeUsageRefresh.oldAfter { return .fresh }
+        if let asked = claudeRefreshed, now >= asked, now.timeIntervalSince(asked) < ClaudeUsageRefresh.interval {
+            return .tooSoon
+        }
+        if saving() { return .saving }
+        if claudeAccess.lowPower() { return .lowPower }
+        if claudeAccess.asking() { return .asking }
+        guard claudeAccess.setup.binary() != nil else { return .notInstalled }
+        guard claudeAccess.setup.tokens.hasToken else { return .noToken }
+        return nil
+    }
+
+    /// Refreshes Claude's limits where they are due: checks the Mac is online off the
+    /// main thread, notes the time, and makes the request, whose figures are taken as
+    /// Quick Ask's are. A refresh that can't be made for want of the tool or a token is
+    /// said in Settings, until the tool or the token is there; nothing else that holds one
+    /// back is.
+    private func refreshClaude() {
+        if case .cannot(let cause)? = claudeRefreshNote, !claudeLacks(cause) { claudeRefreshNote = nil }
+        if let skip = claudeRefreshSkip() {
+            if skip == .notInstalled || skip == .noToken, claudeRefreshNote != .cannot(skip) {
+                claudeRefreshNote = .cannot(skip)
+            }
+            return
+        }
+        let generation = generations[.claude]
+        let access = claudeAccess
+        claudeRefreshing = Task { [weak self] in
+            let offline = access.offline
+            let isOffline = await Task.detached(priority: .utility) { offline() }.value
+            guard let self, self.generations[.claude] == generation else { return }
+            guard !isOffline, !access.asking(), let binary = access.setup.binary(), let token = access.setup.tokens.token() else {
+                self.claudeRefreshing = nil
+                return
+            }
+            self.defaults.set(self.clock(), forKey: UsagePrefs.claudeRefreshed)
+            let outcome = await ClaudeUsageRefresh.run(ClaudeUsageRefresh.launch(binary, token: token, system: access))
+            guard self.generations[.claude] == generation else { return }
+            self.claudeRefreshing = nil
+            let now = self.clock()
+            self.claudeRefreshNote = .done(now, outcome)
+            if case .read(var event) = outcome {
+                event.at = now
+                self.received(event)
+            }
+        }
+    }
+
+    /// Whether the tool or the token, as `cause` says, is still missing: the token's
+    /// presence alone is looked at, never the token.
+    private func claudeLacks(_ cause: ClaudeUsageRefresh.Skip) -> Bool {
+        switch cause {
+        case .notInstalled: claudeAccess.setup.binary() == nil
+        case .noToken: !claudeAccess.setup.tokens.hasToken
+        default: false
+        }
     }
 
     /// Claude Code's StopFailure hook said a turn was turned away at the limit.
@@ -635,6 +751,20 @@ final class UsageCenter {
     }
 
     #if DEBUG
+    /// For the harness: Claude's reading as the centre makes it from the app's history
+    /// and a run's figures, and what Settings says of refreshing.
+    func showClaude(history: ClaudeUsage.History?, event: ClaudeUsage.LimitEvent?, note: ClaudeUsageRefresh.Note? = nil) {
+        now = clock()
+        claudeHistory = history
+        claudeEvent = event
+        claudeRefreshNote = note
+        var next = readings
+        next[.claude] = ClaudeUsage.reading(history: history?.reading, event: event, limitHit: nil, now: now)
+        readings = next
+        publishedLines = []
+        announce()
+    }
+
     /// For the harness: a reading in place of the files', and for Claude, the history
     /// Settings says it came from.
     func show(_ reading: UsageReading?, for agent: UsageAgent) {
