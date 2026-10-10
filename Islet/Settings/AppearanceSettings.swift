@@ -88,6 +88,9 @@ struct AppearanceRows: View {
             if let clash = theme.islandClash {
                 Caption("This island colour is close to the \(clash.meaning), so on it that colour is drawn darker or lighter to stand apart from the island.")
             }
+            if theme.opened.calm > 0 {
+                Caption("Opened, under a page or a card, the colour is drawn a calmer, \(theme.opened.calmColour == .white ? "lighter" : "darker") shade so every word reads on it, even at its brightest. Closed, and in the ring, it stays as chosen.")
+            }
 
             LabeledContent("Accent") {
                 HStack(spacing: 8) {
@@ -627,8 +630,9 @@ extension SystemHue {
 ///
 /// A fill of several colours and the ring are drawn by the island's own paint, so they
 /// move as the island's do, and hold still while the Settings window is covered or
-/// closed. With either, a small compact island beside it shows the ring on the smallest
-/// shape it runs round.
+/// closed. The opened island is drawn as the island draws one, under its calmer shade.
+/// With either, or a shade, a small compact island beside it shows the colour as it is
+/// closed, and the ring on the smallest shape it runs round.
 struct IslandThemePreview: View {
     let theme: IslandTheme
     var hasNotch = true
@@ -636,7 +640,7 @@ struct IslandThemePreview: View {
     static let size = CGSize(width: 300, height: 118)
 
     var body: some View {
-        if theme.isMulticolour || ring != nil {
+        if theme.isMulticolour || ring != nil || theme.opened.calm > 0 {
             HStack(alignment: .top, spacing: 16) {
                 opened
                 CompactPreview(theme: theme, hasNotch: hasNotch, ring: ring)
@@ -659,17 +663,21 @@ struct IslandThemePreview: View {
             Rectangle().fill(Color(white: 0.93)).frame(height: notch.height)
 
             ZStack(alignment: .top) {
+                let room = IslandRingRoom(band: 3.5, glow: 6)
                 if theme.isMulticolour {
                     IslandPaint(style: theme.paintStyle)
                 } else {
                     islandShape.fill(theme.background)
                 }
+                IslandCalm(theme: theme, isOpened: true, edge: IslandEdge(shape: islandShape), ring: ring,
+                           band: ring.map { min($0.thickness.width, room.band) } ?? 0)
                 if let ring {
-                    IslandRingView(ring: ring, edge: IslandEdge(shape: islandShape), room: IslandRingRoom(band: 3.5, glow: 6))
+                    IslandRingView(ring: ring, edge: IslandEdge(shape: islandShape), room: room)
                 }
                 PreviewContent()
                     .padding(.top, hasNotch ? notch.height + 6 : 14)
                     .padding(.horizontal, 22)
+                    .environment(\.islandTheme, theme.opened)
             }
             .frame(width: 264, height: Self.size.height - gap)
             .clipShape(islandShape)

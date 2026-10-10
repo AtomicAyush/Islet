@@ -901,6 +901,21 @@ sleeps or locks, the screen is shared or recorded (unless you say otherwise), an
 Motion or Low Power Mode on. The ring never reaches under what the island shows, and never draws
 outside it.
 
+**Readable when opened.** Closed, the island wears its colours as chosen. Opened on a page, a
+card banner or Quick Ask, an island in colour (a gradient, moving colours, or one colour that
+reads as a hue rather than black, white or a grey) is drawn under a calmer shade of them: one
+shade over the whole fill, so the colours keep moving under it as they were, deep enough that
+full ink reads at 12:1 on the fill's brightest moment. It is a darker shade under white words
+or a lighter one under black words, whichever keeps more of the colour, so a red, a blue or a
+purple opens a deep red, a navy or a plum, while a yellow, an orange, a green or a Bright fill,
+which would turn olive or brown, opens lighter. On it every word, secondary and coloured ones
+included, reads at 7:1 rather than 4.5:1, words on coloured buttons and a lit drop tile too,
+and symbols keep 3:1. The shade fades in as the island opens and out as it closes. Where it
+takes the island away from the ring's colours (darker under a light ring), it leaves the
+ring's band clear, so the ring is as bright as on the closed island; anywhere else the ring is
+drawn over the shade, at its brightness over the island as when closed, so it never takes the
+island's own colour. Black, White, Graphite, Midnight and Sand open as they always have.
+
 **Saving energy.** In Low Power Mode, or on battery if you choose (Settings › General › Save
 energy: In Low Power Mode, On battery, or Never), nothing in the island moves for long. The
 Now Playing waveform stands still, as uneven bars while music plays and low ones while it is

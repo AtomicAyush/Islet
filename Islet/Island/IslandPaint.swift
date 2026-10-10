@@ -113,6 +113,42 @@ struct IslandFillPaint: NSViewRepresentable {
     }
 }
 
+/// The calmer shade over an island in colour while it is opened (`IslandTheme.opened`):
+/// one colour at one opacity over the whole fill, so a moving fill moves on under it
+/// unchanged and the shade only fades in and out. A ring is drawn over it, at its
+/// brightness over the island as it is when closed. Where the shade takes the island
+/// away from every colour of the ring (`IslandTheme.calmLeavesClear`), it leaves the
+/// ring's band clear instead, so the ring is as bright as on the closed island and stands
+/// out from it more; its glow, which is fainter, falls on the shade either way.
+struct IslandCalm<Edge: Shape>: View {
+    /// The closed island's theme.
+    let theme: IslandTheme
+    let isOpened: Bool
+    /// The island's visible edge, its ring, and the width of the ring's band along it.
+    let edge: Edge
+    var ring: IslandRing? = nil
+    var band: CGFloat = 0
+
+    var body: some View {
+        let opened = theme.opened
+        let clear = ring.map { band > 0 && theme.calmLeavesClear($0.colours(on: theme)) } ?? false
+        Rectangle()
+            .fill(opened.calmColour.color)
+            .mask {
+                ZStack {
+                    Rectangle()
+                    if clear {
+                        edge.stroke(lineWidth: 2 * band).blendMode(.destinationOut)
+                    }
+                }
+                .compositingGroup()
+            }
+            .opacity(isOpened ? opened.calm : 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 /// A ring's colours travelling round: a conic gradient Core Animation turns on the render
 /// server. The gradient is stretched to the shape it runs round, so its colours travel
 /// along a long island's straight sides about as fast as round its ends, rather than

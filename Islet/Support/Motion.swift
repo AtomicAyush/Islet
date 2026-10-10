@@ -17,6 +17,10 @@ extension Animation {
     static let islandWidth = Animation.spring(duration: 0.44, bounce: 0.26)
     /// The island's height: a touch slower and calmer than its width.
     static let islandHeight = Animation.spring(duration: 0.5, bounce: 0.14)
+    /// The calmer shade over an island in colour coming and going as it opens and
+    /// closes: in place as a page's words come out of their blur, and as unhurried
+    /// leaving, while the island shrinks. Only an opacity, so it stays with Reduce Motion.
+    static let islandCalm = Animation.easeInOut(duration: 0.3)
 }
 
 /// Content fades in from a blur and a slight shrink, and leaves faster than it came.

@@ -75,13 +75,12 @@ extension IslandTheme {
         }
         func coloured(_ source: RGB, _ minimum: Double) -> (mark: Color, wash: Color) {
             let colour = fitted(source, minimum: minimum, on: backdrop)
-            let base = self.colour(of: backdrop)
-            let alpha = readableWash(wash, of: colour, over: base, minimum: minimum)
+            let alpha = readableWash(wash, of: colour, on: backdrop, minimum: minimum)
             guard alpha >= wash / 2 else {
-                let behind = lift.composited(wash, over: base)
+                let behind = washed(lift, wash, on: backdrop)
                 return (ink.on(.fill(behind)).color(in: self), lift.color.opacity(wash))
             }
-            let behind = colour.composited(alpha, over: base)
+            let behind = washed(colour, alpha, on: backdrop)
             return (ink.on(.fill(behind)).color(in: self), colour.color.opacity(alpha))
         }
         switch ink {

@@ -9,6 +9,11 @@ import SwiftUI
 /// has shrunk back to the notch's size, then turns black again, so no frame shows the
 /// fill somewhere between the two. Everything inside reads the paint of the moment
 /// from the environment.
+///
+/// Opened, under a page, a card banner or Quick Ask, an island in colour is drawn under
+/// a calmer shade of it (`IslandCalm`), and what it shows reads the opened theme
+/// (`IslandTheme.opened`), so every word reads on the fill's brightest moment; the
+/// compact island, the bubbles and the ring keep the colour as chosen.
 struct IslandRootView: View {
     let model: IslandViewModel
     /// Told whenever the island's footprint changes, so the controller can update
@@ -143,6 +148,8 @@ private struct IslandSurface: View {
             let band = min(ring.thickness.width, layout.ringRoom.band)
             return min((layout.notch.height + band) / layout.size.height, 1)
         } ?? 0
+        // Showing a page or a card under the notch row.
+        let isOpened = layout.bodyHeight > 0
 
         ZStack(alignment: .top) {
             if isBlack {
@@ -162,6 +169,13 @@ private struct IslandSurface: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
+                // Over the fill and under the ring. Black, white and grey islands, and
+                // the black one at rest, have no shade, and draw nothing here.
+                IslandCalm(
+                    theme: paint, isOpened: isOpened, edge: IslandEdge(shape: shape), ring: ring,
+                    band: ring.map { min($0.thickness.width, layout.ringRoom.band) } ?? 0
+                )
+                .animation(.islandCalm, value: isOpened)
             }
 
             // Under the content, which never reaches into its band (`ringRoom`). It goes
@@ -198,7 +212,11 @@ private struct IslandSurface: View {
                 }
             }
 
+            // Opened, the calmer shade can be for the other ink, and controls the system
+            // draws follow it.
             content
+                .environment(\.islandTheme, isOpened ? paint.opened : paint)
+                .environment(\.colorScheme, (isOpened ? paint.opened : paint).colorScheme)
                 .id(model.contentKey)
                 .transition(.islandContent)
                 .padding(.horizontal, layout.earRadius)

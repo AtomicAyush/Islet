@@ -45,16 +45,20 @@ extension IslandTheme {
         }
     }
 
-    /// How strong a wash of `colour` over `base` can be with full ink on it still at
-    /// `minimum` (4.5:1, for words): `alpha`, or less where the wash would take the
-    /// backdrop too far toward the ink. A lit drop tile is a wash of this kind, and
-    /// `onWash` keeps a coloured button's capsule to it; on a mid-tone island, where full
-    /// ink only just reads on the island itself, even a faint one can be too much.
-    /// `alpha` itself in the default theme.
-    func readableWash(_ alpha: Double, of colour: RGB, over base: RGB, minimum: Double = Contrast.text) -> Double {
+    /// How strong a wash of `colour` laid on `backdrop` can be with full ink on it still at
+    /// `minimum` (4.5:1, for words, raised to `wordFloor` as `fitted` raises them) over
+    /// every colour the backdrop takes as the fill moves: `alpha`, or less where the wash
+    /// would take the backdrop too far toward the ink. A lit drop tile is a wash of this
+    /// kind, and `onWash` keeps a coloured button's capsule to it; on a mid-tone island,
+    /// where full ink only just reads on the island itself, even a faint one can be too
+    /// much. `alpha` itself in the default theme.
+    func readableWash(_ alpha: Double, of colour: RGB, on backdrop: IslandBackdrop = .island,
+                      minimum: Double = Contrast.text) -> Double {
         guard !isDefault else { return alpha }
+        let minimum = minimum >= Contrast.text ? max(minimum, wordFloor) : minimum
+        let bases = colours(of: backdrop)
         func reads(_ wash: Double) -> Bool {
-            RGB.contrast(ink, colour.composited(wash, over: base)) >= minimum
+            bases.allSatisfy { RGB.contrast(ink, colour.composited(wash, over: $0)) >= minimum }
         }
         if reads(alpha) { return alpha }
         guard reads(0) else { return 0 }
@@ -64,6 +68,21 @@ extension IslandTheme {
             if reads(mid) { low = mid } else { high = mid }
         }
         return low
+    }
+
+    /// A wash of `colour` at `alpha` laid on `backdrop`, as what is drawn on it is
+    /// measured against: for a fill of several colours, over the one words on it need the
+    /// most ink on. That is one of those full ink stands out least on, though not always
+    /// the very least, as a part of the ink mixes with each colour a little differently.
+    func washed(_ colour: RGB, _ alpha: Double, on backdrop: IslandBackdrop = .island) -> RGB {
+        let washes = colours(of: backdrop).map { colour.composited(alpha, over: $0) }
+        guard washes.count > 1 else { return washes.first ?? self.colour(of: backdrop) }
+        let contrasts = washes.map { RGB.contrast(ink, $0) }
+        let least = contrasts.min() ?? 1
+        let hardest = zip(washes, contrasts).filter { $0.1 <= least * 1.1 }.map(\.0)
+        return hardest.max {
+            Contrast.minAlpha(ink, on: $0, floor: wordFloor) < Contrast.minAlpha(ink, on: $1, floor: wordFloor)
+        } ?? washes[0]
     }
 }
 

@@ -33,7 +33,8 @@ extension GeneralRow {
                            "notch", "notch colour", "notch color", "colour scheme", "color scheme", "customise",
                            "customize", "rgb", "led", "leds", "light strip", "rainbow", "border", "outline", "edge",
                            "halo", "neon", "ring light", "animated", "animation", "cycle", "colour cycle",
-                           "color cycle", "fade", "rotate", "rotation", "chase", "ombre", "reduce motion"]
+                           "color cycle", "fade", "rotate", "rotation", "chase", "ombre", "reduce motion",
+                           "readable", "readability", "legible", "contrast", "hard to read", "shade", "darker"]
             )
         case .hover:
             SettingsSearchTerms(

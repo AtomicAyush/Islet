@@ -89,6 +89,21 @@ struct RGB: Hashable, Sendable {
     /// as its hue.
     var chroma: Double { max(red, green, blue) - min(red, green, blue) }
 
+    /// How coloured this looks to the eye: its chroma in Oklab, how far it lies from the
+    /// grey of its own lightness. `chroma` falls by as much whether a colour is mixed
+    /// toward black or toward white, but the eye sees more colour in a deep red than in a
+    /// pale pink, and more in a yellow than in an olive.
+    var colourfulness: Double {
+        func linear(_ c: Double) -> Double { c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+        let r = linear(red), g = linear(green), b = linear(blue)
+        let l = cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        let m = cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        let s = cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        let a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s
+        let bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+        return (a * a + bb * bb).squareRoot()
+    }
+
     /// Hue in degrees and saturation, HSV-style: for telling whether two colours look
     /// alike, as a picked accent and the camera's green do.
     var hueAndSaturation: (hue: Double, saturation: Double) {
@@ -149,14 +164,15 @@ enum Contrast {
         return hi
     }
 
-    /// The strongest wash of `ink` over `base` that still leaves full ink at 4.5:1 on
-    /// it: how far a card or chip can move toward the ink before its words suffer.
-    static func maxSurfaceAlpha(_ ink: RGB, over base: RGB) -> Double {
-        guard RGB.contrast(ink, ink.composited(0, over: base)) >= text else { return 0 }
+    /// The strongest wash of `ink` over `base` that still leaves full ink at `floor`
+    /// (4.5:1 unless said) on it: how far a card or chip can move toward the ink before
+    /// its words suffer.
+    static func maxSurfaceAlpha(_ ink: RGB, over base: RGB, floor: Double = text) -> Double {
+        guard RGB.contrast(ink, ink.composited(0, over: base)) >= floor else { return 0 }
         var lo = 0.0, hi = 1.0
         for _ in 0..<steps {
             let mid = (lo + hi) / 2
-            if RGB.contrast(ink, ink.composited(mid, over: base)) >= text { lo = mid } else { hi = mid }
+            if RGB.contrast(ink, ink.composited(mid, over: base)) >= floor { lo = mid } else { hi = mid }
         }
         return lo
     }
@@ -185,10 +201,10 @@ enum Contrast {
         return surfaces.map { minAlpha(ink, on: $0, floor: floor) }.max() ?? 1
     }
 
-    /// The strongest wash of `ink` that leaves full ink at 4.5:1 over every one of `bases`.
-    static func maxSurfaceAlpha(_ ink: RGB, over bases: [RGB]) -> Double {
-        if bases.count == 1 { return maxSurfaceAlpha(ink, over: bases[0]) }
-        return bases.map { maxSurfaceAlpha(ink, over: $0) }.min() ?? 0
+    /// The strongest wash of `ink` that leaves full ink at `floor` over every one of `bases`.
+    static func maxSurfaceAlpha(_ ink: RGB, over bases: [RGB], floor: Double = text) -> Double {
+        if bases.count == 1 { return maxSurfaceAlpha(ink, over: bases[0], floor: floor) }
+        return bases.map { maxSurfaceAlpha(ink, over: $0, floor: floor) }.min() ?? 0
     }
 
     /// `colour` moved toward `ink` only as far as it needs to reach `floor` against every
@@ -226,6 +242,24 @@ enum Contrast {
             if RGB.contrast(ink, colour.mixed(toward: away, mid)) >= target { hi = mid } else { lo = mid }
         }
         return colour.mixed(toward: away, hi)
+    }
+
+    /// How far every one of `colours` must move away from `ink`, all by the same amount,
+    /// for full ink to reach `target` on each: 0 if it already does. A shade of this
+    /// colour laid over all of them at that opacity moves them so, one as much as the
+    /// next.
+    static func shade(_ colours: [RGB], from ink: RGB, to target: Double) -> Double {
+        func passes(_ amount: Double, toward away: RGB) -> Bool {
+            colours.allSatisfy { RGB.contrast(ink, $0.mixed(toward: away, amount)) >= target }
+        }
+        let away: RGB = ink == .white ? .black : .white
+        guard !passes(0, toward: away) else { return 0 }
+        var lo = 0.0, hi = 1.0
+        for _ in 0..<steps {
+            let mid = (lo + hi) / 2
+            if passes(mid, toward: away) { hi = mid } else { lo = mid }
+        }
+        return hi
     }
 
     /// Words on a filled button or badge: black or white, whichever is clearer. If

@@ -47,12 +47,12 @@ private struct DropTile: View {
     private var accent: RGB { theme.fitted(theme.accentSource(tint)) }
 
     /// Lit, the tile is a wash of its colour, as strong as leaves its words readable.
-    private var litWash: Double { theme.readableWash(0.2, of: accent, over: theme.island) }
+    private var litWash: Double { theme.readableWash(0.2, of: accent) }
 
     /// What the tile's words and badge lie on: a wash of its colour while lit, or of the
     /// ink.
     private func backdrop(isLit: Bool) -> IslandBackdrop {
-        isLit ? .fill(accent.composited(litWash, over: theme.island)) : .surface(0.06)
+        isLit ? .fill(theme.washed(accent, litWash)) : .surface(0.06)
     }
 
     var body: some View {

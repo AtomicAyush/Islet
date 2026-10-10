@@ -100,30 +100,49 @@ enum IslandBackdrop: Hashable, Sendable {
 /// colour as it moves: every colour it draws is deepened or brightened until full ink
 /// reaches 7:1 on it (`deepContrast`), and every floor and cap is worked out against all
 /// of them, the hardest deciding.
+///
+/// Opened, under a page, a card banner or Quick Ask, an island in colour (a fill of
+/// several, or one colour that reads as a hue rather than as black, white or a grey) is
+/// drawn under a calmer shade (`opened`): black under white words, or white under black
+/// ones, whichever keeps more of the colour, laid over every colour at one opacity, so
+/// the fill keeps its look as it moves while full ink reaches 12:1 on its brightest
+/// moment, and every word, secondary and coloured ones included, reaches 7:1. Closed,
+/// and on the ring, the colours are as chosen.
 struct IslandTheme: Sendable, Equatable {
     /// The colour contrast is judged against: the island's colour, used exactly as
-    /// chosen, or for a fill of several colours the one the ink stands out least on.
+    /// chosen, or for a fill of several colours the one the ink stands out least on;
+    /// opened, under the calmer shade.
     let island: RGB
     let accent: AccentChoice
     /// Solid, a gradient, or colours fading one into the next.
     let fill: IslandFill
     /// The colours handed to the gradient or the animation: the island's colour alone
     /// for a solid fill; otherwise each chosen colour's way to the next, cut into
-    /// `piecesPerColour`, every piece fitted away from the ink.
+    /// `piecesPerColour`, every piece fitted away from the ink. Opened, under the calmer
+    /// shade, as something inside a page that wears the island's colour draws them.
     let stops: [RGB]
     /// Every colour drawn: the stops, and what is drawn between each two.
     let samples: [RGB]
+    /// The theme inside an opened island in colour (`opened`).
+    let isOpened: Bool
+    /// Opened, the opacity of `calmColour` laid over the fill: the least that brings full
+    /// ink to `openedContrast` on every colour drawn. 0 when closed, and when the fill is
+    /// already that deep.
+    let calm: Double
+    /// What every word reaches: 4.5:1, or opened, `openedWords`.
+    let wordFloor: Double
     /// White or black, whichever stands out more on the island; for a fill of several
-    /// colours, the one its tone asks for.
+    /// colours, the one its tone asks for. Opened, the one its calmer shade is for, which
+    /// can be the other.
     let ink: RGB
     /// A light island, drawn on in black.
     let isLight: Bool
     /// Black with Feature colours: every colour passes through unchanged.
     let isDefault: Bool
-    /// The strongest wash a card can be before its words drop under 4.5:1.
+    /// The strongest wash a card can be before its words drop under `wordFloor`.
     let maxSurfaceAlpha: Double
-    /// The least opacity of ink that reads as words (4.5:1) and as a symbol (3:1) on
-    /// the island itself.
+    /// The least opacity of ink that reads as words (`wordFloor`) and as a symbol (3:1)
+    /// on the island itself.
     let textFloor: Double
     let graphicFloor: Double
     private let memo = Memo()
@@ -137,35 +156,117 @@ struct IslandTheme: Sendable, Equatable {
     /// Colours judged between two neighbouring pieces, as the gradient or the animation
     /// draws them.
     static let samplesPerPiece = 4
+    /// What full ink reaches on every colour of an opened island in colour, under the
+    /// calmer shade: the brightest moment of a moving fill included.
+    static let openedContrast = 12.0
+    /// What every word reaches there, at today's opacity raised only as far as it needs:
+    /// what full ink reaches on the closed fill. Held to 4.5:1, secondary words would sit
+    /// on a moving colour at the least WCAG allows, which is where they were hard to read.
+    static let openedWords = 7.0
 
-    init(island: RGB, accent: AccentChoice, fill: IslandFill = .solid) {
+    init(island: RGB, accent: AccentChoice, fill: IslandFill = .solid, opened: Bool = false) {
         self.accent = accent
         self.fill = fill
+        var ink: RGB
+        var stops: [RGB], samples: [RGB]
         if let palette = fill.palette {
             let cyclic = fill.isRotating
             let path = Self.path(through: palette.colours, cyclic: cyclic)
-            let ink = Self.ink(for: path, tone: fill.tone ?? .auto, preset: palette.preset)
-            let stops = path.map { Contrast.fittedAway($0, from: ink, to: Self.deepContrast) }
-            let samples = Self.between(stops, cyclic: cyclic)
-            self.ink = ink
-            self.stops = stops
-            self.samples = samples
-            self.island = samples.min { RGB.contrast(ink, $0) < RGB.contrast(ink, $1) } ?? island
+            ink = Self.ink(for: path, tone: fill.tone ?? .auto, preset: palette.preset)
+            stops = path.map { Contrast.fittedAway($0, from: ink, to: Self.deepContrast) }
+            samples = Self.between(stops, cyclic: cyclic)
         } else {
-            self.island = island
             ink = Contrast.ink(on: island)
             stops = [island]
             samples = [island]
         }
+        // Every colour moved by the same amount, as the shade laid over the fill moves
+        // them, so the shade can come and go over the moving fill without touching it.
+        // Darker under white words or lighter under black ones, whichever keeps more of
+        // the colour: a red or a blue opens a deep red or a navy rather than a pastel,
+        // while a yellow, an orange or a Bright fill, which would go olive or brown, opens
+        // lighter. Where they keep as much, darker.
+        let isOpened = opened && Self.hasColour(island: island, fill: fill)
+        var calm = 0.0
+        if isOpened {
+            let ways = [RGB.white, .black].map { words -> (ink: RGB, calm: Double, colour: Double) in
+                let calm = Contrast.shade(samples, from: words, to: Self.openedContrast)
+                let away = Self.calmColour(under: words)
+                return (words, calm, samples.reduce(0) { $0 + $1.mixed(toward: away, calm).colourfulness })
+            }
+            let way = ways[0].colour >= ways[1].colour ? ways[0] : ways[1]
+            ink = way.ink
+            calm = way.calm
+        }
+        if calm > 0 {
+            let away = Self.calmColour(under: ink)
+            stops = stops.map { $0.mixed(toward: away, calm) }
+            samples = samples.map { $0.mixed(toward: away, calm) }
+        }
+        self.isOpened = isOpened
+        self.calm = calm
+        self.ink = ink
+        self.stops = stops
+        self.samples = samples
+        if fill.palette != nil {
+            self.island = samples.min { RGB.contrast(ink, $0) < RGB.contrast(ink, $1) } ?? island
+        } else {
+            self.island = samples[0]
+        }
+        let wordFloor = isOpened ? Self.openedWords : Contrast.text
+        self.wordFloor = wordFloor
         isLight = ink == .black
         isDefault = fill == .solid && island == .black && accent == .featureColours
-        maxSurfaceAlpha = Contrast.maxSurfaceAlpha(ink, over: samples)
-        textFloor = Contrast.minAlpha(ink, on: samples, floor: Contrast.text)
+        maxSurfaceAlpha = Contrast.maxSurfaceAlpha(ink, over: samples, floor: wordFloor)
+        textFloor = Contrast.minAlpha(ink, on: samples, floor: wordFloor)
         graphicFloor = Contrast.minAlpha(ink, on: samples, floor: Contrast.graphic)
     }
 
     static func == (a: IslandTheme, b: IslandTheme) -> Bool {
-        a.island == b.island && a.accent == b.accent && a.fill == b.fill
+        a.island == b.island && a.accent == b.accent && a.fill == b.fill && a.isOpened == b.isOpened
+    }
+
+    /// An island in colour: a fill of several, or one colour that reads as a hue rather
+    /// than as black, white or a grey. Only such an island is calmed when opened, so the
+    /// presets (Black, Graphite, Midnight, White, Sand) open as they always have.
+    static func hasColour(island: RGB, fill: IslandFill) -> Bool {
+        fill != .solid || island.chroma >= Contrast.leastChroma
+    }
+
+    /// The shade laid over an opened island in colour: black under white words, white
+    /// under black ones.
+    static func calmColour(under ink: RGB) -> RGB {
+        ink == .white ? .black : .white
+    }
+
+    var calmColour: RGB { Self.calmColour(under: ink) }
+
+    /// Whether the calmer shade can leave the band of a ring in `colours` clear, so the
+    /// ring is drawn over the fill it was chosen for and is as bright as on the closed
+    /// island. Only where the shade takes the island away from every one of its colours:
+    /// a black shade under a ring lighter than every colour of the fill, or a white one
+    /// under a ring darker than every colour. Anywhere else a ring at less than full
+    /// brightness could come out the shaded island's own colour, or darker than it where
+    /// it was lighter, so it is drawn over the shade as the island is. Asked of the closed
+    /// theme.
+    func calmLeavesClear(_ colours: [RGB]) -> Bool {
+        let opened = self.opened
+        guard opened.calm > 0, !colours.isEmpty else { return false }
+        return memo.value(for: .clear(colours)) {
+            let fill = Contrast.extremes(of: samples).map(\.luminance)
+            let ring = colours.map(\.luminance)
+            let clear = opened.calmColour == .black ? ring.min()! > fill[1] : ring.max()! < fill[0]
+            return clear ? 1 : 0
+        } == 1
+    }
+
+    /// The theme inside an opened island: under a page, a card banner or Quick Ask. For
+    /// an island in colour, its fill under the calmer shade (`calm`) and every word at
+    /// `openedWords`; any other island is opened in this theme itself, so it draws what
+    /// it always has.
+    var opened: IslandTheme {
+        guard !isOpened, Self.hasColour(island: island, fill: fill) else { return self }
+        return Self.cached(island: island, accent: accent, fill: fill, opened: true)
     }
 
     /// Each colour's way to the next, cut into `piecesPerColour` and mixed in sRGB, as a
@@ -297,7 +398,7 @@ struct IslandTheme: Sendable, Equatable {
     }
 
     func textAlpha(_ alpha: Double, on backdrop: IslandBackdrop = .island) -> Double {
-        isDefault ? alpha : max(alpha, leastAlpha(Contrast.text, on: backdrop))
+        isDefault ? alpha : max(alpha, leastAlpha(wordFloor, on: backdrop))
     }
 
     func graphicAlpha(_ alpha: Double, on backdrop: IslandBackdrop = .island) -> Double {
@@ -309,7 +410,7 @@ struct IslandTheme: Sendable, Equatable {
     }
 
     private func leastAlpha(_ minimum: Double, on backdrop: IslandBackdrop) -> Double {
-        if backdrop == .island { return minimum == Contrast.text ? textFloor : graphicFloor }
+        if backdrop == .island { return minimum == wordFloor ? textFloor : graphicFloor }
         let surface = colour(of: backdrop)
         return memo.value(for: .alpha(surface, minimum)) {
             Contrast.minAlpha(ink, on: colours(of: backdrop), floor: minimum)
@@ -357,9 +458,10 @@ struct IslandTheme: Sendable, Equatable {
     /// instead. That happens on a mid-tone island, such as a grey or a system blue, where
     /// the ink itself only just reads: a red or orange word would come out near black,
     /// which says nothing a plain word doesn't. The symbol or dot beside such words, held
-    /// to 3:1 rather than 4.5:1, keeps the colour.
+    /// to 3:1 rather than 4.5:1, keeps the colour. Opened, words reach `wordFloor`.
     func fitted(_ colour: RGB, minimum: Double = Contrast.graphic, on backdrop: IslandBackdrop = .island) -> RGB {
         if isDefault { return colour }
+        let minimum = minimum >= Contrast.text ? max(minimum, wordFloor) : minimum
         if case .track(let alpha) = backdrop {
             // First against the island, then on from there against the track. Moving
             // toward the ink only adds to the contrast with the island once the colour is
@@ -447,13 +549,13 @@ struct IslandTheme: Sendable, Equatable {
 
     /// Themes by preference value. A colour picker drag writes many values, so the
     /// cache is emptied when it fills up.
-    static func cached(island: RGB, accent: AccentChoice, fill: IslandFill = .solid) -> IslandTheme {
+    static func cached(island: RGB, accent: AccentChoice, fill: IslandFill = .solid, opened: Bool = false) -> IslandTheme {
         if island == .black, accent == .featureColours, fill == .solid { return .standard }
         return themes.withLock { cache in
-            let key = ThemeKey(island: island, accent: accent, fill: fill)
+            let key = ThemeKey(island: island, accent: accent, fill: fill, opened: opened)
             if let theme = cache[key] { return theme }
             if cache.count >= 16 { cache.removeAll() }
-            let theme = IslandTheme(island: island, accent: accent, fill: fill)
+            let theme = IslandTheme(island: island, accent: accent, fill: fill, opened: opened)
             cache[key] = theme
             return theme
         }
@@ -469,6 +571,7 @@ struct IslandTheme: Sendable, Equatable {
         let island: RGB
         let accent: AccentChoice
         let fill: IslandFill
+        let opened: Bool
     }
 
     private static let themes = Locked([ThemeKey: IslandTheme]())
@@ -482,6 +585,7 @@ private final class Memo: Sendable {
         case alpha(RGB, Double)
         case fit(RGB, Double, RGB)
         case glow([RGB])
+        case clear([RGB])
     }
 
     private let values = Locked([Key: Double]())
