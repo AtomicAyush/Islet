@@ -86,6 +86,7 @@ final class FeatureRegistry {
         TimerFeature(),
         PomodoroFeature(),
         KeepAwakeFeature(),
+        TeleprompterFeature(),
         BatteryFeature(),
         SystemHUDFeature(),
         CapsLockFeature(),

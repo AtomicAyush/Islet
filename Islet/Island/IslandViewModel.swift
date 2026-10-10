@@ -36,6 +36,12 @@ final class IslandViewModel {
         /// in the app being typed in is that app's. The pointer may be away for
         /// `readingIdleTimeout`.
         case reading
+        /// Reading a script under the camera, the teleprompter's: kept open by its Start,
+        /// not by a button in the header, and let go by its Stop, a click on the notch, or
+        /// the Mac sleeping or locking. Escape pressed anywhere is the call's, and the
+        /// pointer may be away for as long as the reading lasts: the teleprompter lets go
+        /// itself once a pause has gone on for long.
+        case prompting
     }
 
     static let homeFocus = "home"
@@ -180,7 +186,7 @@ final class IslandViewModel {
     /// one, until Keep Open is clicked again, Escape, a click on the notch, another
     /// page, the island closing any other way, the Mac sleeping or locking, or a long
     /// while with the pointer away (`KeepOpenPurpose`). Nothing but the button sets it,
-    /// so no link can hold the island open.
+    /// or the teleprompter's Start, so no link can hold the island open.
     private(set) var keptOpenPage: String?
     /// What the page is kept open for, while one is.
     private(set) var keptOpenPurpose = KeepOpenPurpose.dragging
@@ -800,6 +806,15 @@ final class IslandViewModel {
         keepingOpenChanged(true)
     }
 
+    /// Keeps the island open on `page`, which it is showing, for `purpose`, as Keep Open
+    /// would, leaving it be if it is kept open there already: for a page whose own control
+    /// holds the island open rather than the header's button (the teleprompter's Start).
+    func keepOpen(_ page: String, for purpose: KeepOpenPurpose) {
+        guard keptOpenPage != page || keptOpenPurpose != purpose else { return }
+        if keptOpenPage == page { stopKeepingOpen() }
+        toggleKeepingOpen(page, for: purpose)
+    }
+
     /// Lets go of the page kept open, for Escape, a click on the notch, the Mac sleeping
     /// or locking, or a long while away. An island the pointer has left closes now,
     /// after the grace it would have had.
@@ -822,6 +837,8 @@ final class IslandViewModel {
     /// nothing dragged from it and nothing typed in it.
     private func scheduleKeepOpenIdle() {
         cancelKeepOpenIdle()
+        // The teleprompter keeps its own time (`KeepOpenPurpose.prompting`).
+        if keptOpenPurpose == .prompting { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.keptOpenPage != nil, !self.isHovering, !self.isDraggingOut, !self.isTypingInKeptPage else { return }
             self.keepOpenIdleWork = nil

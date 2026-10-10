@@ -445,3 +445,17 @@ extension PomodoroFeature {
         )
     }
 }
+
+extension TeleprompterFeature {
+    var searchTerms: SettingsSearchTerms {
+        SettingsSearchTerms(
+            labels: ["Script", "New Script", "Paste as New Script", "Import…", "Moves", "Follow my voice", "Set pace",
+                     "Manual", "Language", "Words a minute", "Text size", "Lines shown", "Countdown",
+                     "Mirror the text", "Hide from screen sharing", "Keyboard shortcuts while it runs"]
+                + TeleprompterHotKey.allCases.map(\.title),
+            keywords: ["teleprompter", "autocue", "prompter", "script", "cue", "cue cards", "speech", "talk",
+                       "presentation notes", "speaker notes", "wpm", "reading speed", "scroll speed", "auto scroll",
+                       "microphone", "voice", "dictation", "video", "recording", "camera", "eye contact", "mirror"]
+        )
+    }
+}

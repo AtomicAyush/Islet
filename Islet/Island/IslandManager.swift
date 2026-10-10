@@ -122,6 +122,68 @@ final class IslandManager {
         controllers.values.contains { $0.model.isExpanded && $0.model.resolvedFocus == focus }
     }
 
+    /// The island on the display with the camera, else the one under the pointer: where
+    /// something meant to be read while looking at the camera goes.
+    var notchedController: IslandWindowController? {
+        controllers.values.first { $0.model.metrics.hasNotch } ?? focusedController
+    }
+
+    // MARK: Hidden from capture
+
+    /// The pages kept out of screenshots, recordings and screen sharing: the
+    /// teleprompter's, while Settings asks. Any island showing one of them, open on it or
+    /// shut with its activity in front, asks macOS to leave it out; every other island is
+    /// captured as usual.
+    private(set) var privatePages: Set<String> = []
+    /// Bumped as the islands are looked at again, so an older watch that fires does
+    /// nothing.
+    private var captureWatch = 0
+
+    /// Keeps `page` out of captures, or lets it be captured again.
+    func keepOutOfCapture(_ page: String, _ hidden: Bool) {
+        guard privatePages.contains(page) != hidden else { return }
+        if hidden { privatePages.insert(page) } else { privatePages.remove(page) }
+        applyCaptureHiding()
+    }
+
+    /// Shields `island` now, before it is opened onto `page`, if that page is kept out
+    /// of captures: so not a frame of it is caught on the way.
+    func shield(_ island: IslandViewModel, before page: String) {
+        guard privatePages.contains(page) else { return }
+        controllers.values.first { $0.model === island }?.setHiddenFromCapture(true)
+    }
+
+    /// Sets each island's shield from what it shows, and looks again whenever that
+    /// changes, while any page is kept out.
+    private func applyCaptureHiding() {
+        captureWatch &+= 1
+        let watch = captureWatch
+        let pages = privatePages
+        guard !pages.isEmpty else {
+            controllers.values.forEach { $0.setHiddenFromCapture(false) }
+            return
+        }
+        let hidden = withObservationTracking {
+            controllers.values.map { ($0, Self.hides($0.model, pages: pages)) }
+        } onChange: { [weak self] in
+            // Called as the change is about to happen; look again once it has, before
+            // the island is next drawn.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.captureWatch == watch else { return }
+                    self.applyCaptureHiding()
+                }
+            }
+        }
+        for (controller, hides) in hidden { controller.setHiddenFromCapture(hides) }
+    }
+
+    /// Whether `island` is kept out of captures while `pages` are: while what it shows,
+    /// or would open on, is one of them.
+    static func hides(_ island: IslandViewModel, pages: Set<String>) -> Bool {
+        pages.contains(island.resolvedFocus)
+    }
+
     /// The island on the screen the user is most likely looking at: the one under
     /// the pointer, else the first.
     var focusedController: IslandWindowController? {
@@ -188,6 +250,7 @@ final class IslandManager {
         }
         applyPreferences()
         applyFullScreen()
+        applyCaptureHiding()
     }
 
     private var lastDisplayChoice = Prefs.displays

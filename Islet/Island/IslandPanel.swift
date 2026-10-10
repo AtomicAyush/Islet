@@ -108,3 +108,18 @@ extension IslandPanel: KeyTakingWindow {
         orderFrontRegardless()
     }
 }
+
+/// Asks macOS to keep a window's contents out of screenshots, recordings and screen
+/// sharing, or lets them be captured again: the window's sharing type, read-only (the
+/// default) or none.
+///
+/// It is a request, and only as good as the app capturing honours it: Apple says the
+/// sharing type works at the level of windows, and most recorders work below that,
+/// QuickTime among them. So Settings says it may still be seen.
+@MainActor
+enum CaptureShield {
+    static func apply(_ hidden: Bool, to window: NSWindow) {
+        let wanted: NSWindow.SharingType = hidden ? .none : .readOnly
+        if window.sharingType != wanted { window.sharingType = wanted }
+    }
+}

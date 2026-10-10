@@ -118,6 +118,10 @@ struct KeyCombo: Equatable, Hashable {
 
 /// The input box's shortcut, pressed in any app. It is a system hot key: macOS gives it
 /// to Islet alone, without Accessibility access, and the app in front never sees it.
+///
+/// It also keeps the further hot keys a feature has for as long as it runs (the
+/// teleprompter's, while a reading is under way), each under an id of its own: there
+/// is one handler for all of Islet's hot keys, which tells them apart by id.
 @MainActor
 final class InputHotKey {
     static let shared = InputHotKey()
@@ -127,6 +131,11 @@ final class InputHotKey {
     private(set) var combo: KeyCombo?
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
+    /// The further hot keys, by id: what each does, and its registration.
+    private var others: [UInt32: (ref: EventHotKeyRef, action: () -> Void)] = [:]
+    /// The input box's own id; the others are numbered from `firstOtherID`.
+    private static let ownID: UInt32 = 1
+    nonisolated static let firstOtherID: UInt32 = 100
 
     private init() {}
 
@@ -138,7 +147,7 @@ final class InputHotKey {
         guard let combo else { return true }
         installHandler()
         var ref: EventHotKeyRef?
-        let id = EventHotKeyID(signature: OSType(0x49534C54), id: 1) // "ISLT"
+        let id = EventHotKeyID(signature: OSType(0x49534C54), id: Self.ownID) // "ISLT"
         let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, id, GetApplicationEventTarget(),
                                          OptionBits(kEventHotKeyExclusive), &ref)
         guard status == noErr, let ref else { return false }
@@ -153,12 +162,47 @@ final class InputHotKey {
         combo = nil
     }
 
+    /// Registers a further hot key under `id` (`firstOtherID` or above), replacing any
+    /// under that id. Returns false when another app has the combination, and then
+    /// nothing is registered under the id.
+    @discardableResult
+    func register(id: UInt32, _ combo: KeyCombo, action: @escaping () -> Void) -> Bool {
+        unregister(id: id)
+        installHandler()
+        var ref: EventHotKeyRef?
+        let hotKeyID = EventHotKeyID(signature: OSType(0x49534C54), id: id)
+        let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, hotKeyID, GetApplicationEventTarget(),
+                                         OptionBits(kEventHotKeyExclusive), &ref)
+        guard status == noErr, let ref else { return false }
+        others[id] = (ref, action)
+        return true
+    }
+
+    func unregister(id: UInt32) {
+        guard let other = others.removeValue(forKey: id) else { return }
+        UnregisterEventHotKey(other.ref)
+    }
+
+    private func dispatch(id: UInt32) {
+        if id == Self.ownID {
+            pressed()
+        } else {
+            others[id]?.action()
+        }
+    }
+
     private func installHandler() {
         guard handler == nil else { return }
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+            var hotKeyID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID
+            )
+            let id = status == noErr ? hotKeyID.id : InputHotKey.ownID
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { InputHotKey.shared.pressed() }
+                MainActor.assumeIsolated { InputHotKey.shared.dispatch(id: id) }
             }
             return noErr
         }, 1, &spec, nil, &handler)

@@ -305,6 +305,8 @@
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Islet reads the exact battery level of your AirPods and other headphones over Bluetooth.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Islet shows your next event, adds the events you type, and finds your free time.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Islet shows your next event, adds the events you type, and finds your free time.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "The teleprompter listens while you read, when you choose Follow my voice, to keep your place in the script. Your voice is recognised on this Mac and never sent anywhere.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "The teleprompter recognises your voice on this Mac, when you choose Follow my voice, to keep your place in the script. Nothing you say is sent anywhere.";
 				INFOPLIST_KEY_CFBundleDisplayName = Islet;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -340,6 +342,8 @@
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Islet reads the exact battery level of your AirPods and other headphones over Bluetooth.";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Islet shows your next event, adds the events you type, and finds your free time.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Islet shows your next event, adds the events you type, and finds your free time.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "The teleprompter listens while you read, when you choose Follow my voice, to keep your place in the script. Your voice is recognised on this Mac and never sent anywhere.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "The teleprompter recognises your voice on this Mac, when you choose Follow my voice, to keep your place in the script. Nothing you say is sent anywhere.";
 				INFOPLIST_KEY_CFBundleDisplayName = Islet;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (

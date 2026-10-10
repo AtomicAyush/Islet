@@ -255,6 +255,12 @@ final class SettingsSearch {
         show([row.id], in: "general")
     }
 
+    /// Ends any search and shows the feature's section in Activities, scrolled to and
+    /// lit for a moment.
+    func show(feature id: String) {
+        show(["feature." + id], in: "activities")
+    }
+
     private func show(_ rows: [String], in tab: String) {
         showTab(tab)
         pendingScroll = SettingsScrollTarget(tab: tab, id: rows[0])

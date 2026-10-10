@@ -114,6 +114,39 @@ at the next launch, or turned off then if not; for a focus paused, Islet turns i
 it quits, and back on when you resume. The Mac is kept awake again for a focus still running.
 Stopping the session, or turning Pomodoro off, ends it for good.
 
+**Teleprompter.** A script right under the camera, so your eyes stay near the lens while
+you read it: on a call, recording a video, giving a talk. Start it from its home tile and the
+island opens on the display with the camera onto the script, at a size you can read, with
+the line to read at an eye line just under the notch, the half of the line before it fading
+above and two more below, and under them a bar of how far you are and the time left. It stays
+open until you stop, whatever the pointer does; a short countdown (3 seconds, or 5, or none)
+comes first. It moves one of three ways. *Follow my voice* listens through the microphone and
+keeps your place as you speak: it moves on as you read, holds when you pause or say something
+of your own, goes back when you say a line again, and copes with words it mishears, numbers
+read as words, and a word or two skipped; skip a paragraph and it finds you again a few words
+on. Your voice is recognised on this Mac, never sent
+anywhere, and the microphone (and macOS's orange dot) is on only while it runs: pausing,
+stopping, closing the island, sleep and the lock all turn it off. The microphone is asked
+for the first time you start it, never before; where your Mac can only recognise the
+language by sending it to Apple, it says so and doesn't start. Headphones keep a call's
+voices from moving it. *Set pace* scrolls at a number of words a minute (60 to 260, 140 to
+start), which you can change while it runs; it moves by words, not points, so a long line
+takes longer, and a short line at the end of a paragraph, or a cue, holds a moment rather than
+racing past. *Manual* moves only when you scroll over the script or press the arrows. With
+the pointer on the page, the row under the script turns into the controls: back a line, on a
+line, slower and faster, smaller and larger text, the mode, play and pause, and stop; click
+the script and Space, ↑↓, ←→, + and − work too, Escape giving the keys back. From any app,
+while it runs, ⌃⌥Space starts and pauses, ⌃⌥↑↓ move a line, and ⌃⌥←→ change the pace
+(each can be changed or turned off in Settings; the app in front never sees them). Words in
+[square brackets] are cues: shown dimmed, never listened for. Keep as many scripts as you
+like in Settings › Activities › Teleprompter, typed, pasted, or imported from a text,
+Markdown, RTF or Word file; each carries on from where you left it. The text can be 16 to 32
+points, two to five lines, and mirrored for a prompter's glass. Whenever an island shows the
+script, before Start and after Stop too, it asks macOS to keep it out of screenshots,
+recordings and screen sharing (Hide from screen sharing, on unless you turn it off). That is a request apps may ignore, and some do,
+QuickTime among them, so check before you rely on it. With Reduce Motion, or when the island
+saves energy, it moves a line at a time. Off until you turn it on.
+
 **Battery.** The iPhone's charging flash when you plug in — "Charging" on one side, the
 level and a green battery on the other — and warnings as the battery runs low. Full charge,
 Low Power Mode and unplugging can be announced too.
@@ -257,7 +290,8 @@ the system log, which macOS only shows to administrator accounts. On any other a
 microphone apps are named, the camera and screen show as in use (screen mirroring can light the
 purple dot there), and recorded sound and location aren't shown. The Sound Mixer records what
 the Mac plays to set each app's volume, which macOS marks with its own purple dot; Islet never
-lights a dot for it.
+lights a dot for it. Nor for the teleprompter listening to you: macOS shows its orange dot,
+and Islet's list names it, greyed, beside whatever else is using the microphone.
 
 **Mic Mute.** One click mutes the microphone for every app at once — a call in Zoom, Teams or
 FaceTime, a voice note, dictation — and a red crossed-out microphone stays beside the notch for
@@ -1013,6 +1047,8 @@ Islet answers `islet://` URLs, so Shortcuts, scripts and the terminal can drive 
 | `islet://pomodoro/toggle` | Pauses a session running, or starts or resumes one |
 | `islet://pomodoro/forward?minutes=5` | Moves the phase on 5 minutes (1 to 120; with no length, one), finishing it at its end |
 | `islet://pomodoro/back?minutes=5` | Gives the phase 5 more minutes (1 to 120; with no length, one), up to its whole length |
+| `islet://teleprompter/start`, `/resume`, `/toggle` | Starts the script chosen, or carries on, at a set pace or by hand; in Follow my voice it opens the script ready, and listens only once you click Start |
+| `islet://teleprompter/pause`, `/stop` | Pauses, or stops, keeping the place for next time |
 | `islet://preview?feature=battery&index=0` | Runs a feature's preview |
 | `islet://nowPlaying/toggle`, `/next`, `/previous` | Controls the player |
 | `islet://focus/toggle` | Turns Focus on or off with the shortcut picked in Settings |

@@ -77,6 +77,12 @@ final class IslandWindowController {
         measureMenuBarRoom()
     }
 
+    /// Asks macOS to keep the island out of screenshots, recordings and screen sharing,
+    /// or lets it be captured again (`CaptureShield`).
+    func setHiddenFromCapture(_ hidden: Bool) {
+        CaptureShield.apply(hidden, to: panel)
+    }
+
     func invalidate() {
         model.endTyping(.invalidated)
         menusTimer?.invalidate()

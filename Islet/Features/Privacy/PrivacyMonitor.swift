@@ -52,6 +52,10 @@ struct PrivacyUsage: Equatable, Sendable {
     /// so it never lights anything; the home page mentions it only in its list of
     /// several sensors in use.
     var soundMixer = false
+    /// The teleprompter listening to the reader through the microphone, which macOS
+    /// marks with its orange dot. Islet's own doing and expected, like the Sound Mixer:
+    /// it lights nothing, and is mentioned only beside other sensors in use.
+    var teleprompter = false
 
     subscript(sensor: PrivacyMonitor.Sensor) -> PrivacyUse {
         get {
@@ -85,6 +89,7 @@ struct PrivacyUsage: Equatable, Sendable {
         var usage = PrivacyUsage()
         for sensor in sensors { usage[sensor] = self[sensor] }
         if sensors.contains(.systemAudio) { usage.soundMixer = soundMixer }
+        if sensors.contains(.microphone) { usage.teleprompter = teleprompter }
         return usage
     }
 }
@@ -504,6 +509,7 @@ final class PrivacyMonitor {
         if watching.contains(.camera), camera {
             usage.camera = PrivacyUse(inUse: true, apps: fallback(names.camera, .camera))
         }
+        if watching.contains(.microphone) { usage.teleprompter = microphone.ownRecording }
         if watching.contains(.microphone), microphone.inUse {
             usage.microphone = PrivacyUse(inUse: true, apps: fallback(merged(microphone.apps, names.capturedMicrophone), .microphone))
         }

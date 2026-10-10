@@ -39,6 +39,9 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
         /// The processes recording, whether or not they could be named, so that what
         /// else the audio server reports recording can be told apart from them.
         var pids: [pid_t] = []
+        /// Islet itself is recording from a microphone: the teleprompter, listening to
+        /// the reader. It never counts as in use, and lights nothing.
+        var ownRecording = false
     }
 
     /// What `reading` needs to know of a device, read afresh on every refresh.
@@ -269,7 +272,10 @@ final class PrivacyMicrophoneWatcher: @unchecked Sendable {
             }
             guard !using.isEmpty else { continue }
             matched.formUnion(using)
-            guard client.pid != ownPID else { continue }
+            guard client.pid != ownPID else {
+                reading.ownRecording = true
+                continue
+            }
             add(client)
         }
 

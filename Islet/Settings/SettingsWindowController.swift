@@ -36,6 +36,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         show()
     }
 
+    /// Opens Settings on a feature's section in Activities, scrolled to and lit for a
+    /// moment: the way in from a home tile's button.
+    func show(feature id: String) {
+        search.show(feature: id)
+        show()
+    }
+
     func windowWillClose(_ notification: Notification) {
         // Opened again, Settings shows its tabs rather than an old search.
         search.clear()

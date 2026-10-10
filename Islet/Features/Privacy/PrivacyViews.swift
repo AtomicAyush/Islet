@@ -134,7 +134,11 @@ struct PrivacyHomeTile: View {
             // Islet's own recording, beside the rest, where there is room: it explains
             // the purple dot macOS shows that Islet does not.
             if usage.soundMixer, sensors.count < 4 {
-                PrivacySoundMixerLine(full: full, backdrop: .homeTile)
+                PrivacyOwnLine(sensor: .systemAudio, name: "Sound Mixer", full: full, backdrop: .homeTile)
+                    .frame(maxHeight: 22)
+            }
+            if usage.teleprompter, sensors.count + (usage.soundMixer ? 1 : 0) < 4 {
+                PrivacyOwnLine(sensor: .microphone, name: "Teleprompter", full: full, backdrop: .homeTile)
                     .frame(maxHeight: 22)
             }
         }
@@ -221,14 +225,18 @@ struct PrivacySensorLine: View {
     }
 }
 
-/// The Sound Mixer's own recording, muted: it is expected, and lights nothing.
-struct PrivacySoundMixerLine: View {
+/// Islet's own recording, muted: the Sound Mixer's, or the teleprompter listening. It is
+/// expected, and lights nothing.
+struct PrivacyOwnLine: View {
+    let sensor: PrivacyMonitor.Sensor
+    /// What of Islet's records: "Sound Mixer", "Teleprompter".
+    let name: String
     let full: Bool
     var backdrop: IslandBackdrop = .island
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: PrivacyMonitor.Sensor.systemAudio.symbol)
+            Image(systemName: sensor.symbol)
                 .font(.system(size: 10, weight: .bold))
                 .frame(width: 16)
             Image(nsImage: NSApp?.applicationIconImage ?? NSImage())
@@ -236,7 +244,7 @@ struct PrivacySoundMixerLine: View {
                 .interpolation(.high)
                 .frame(width: 15, height: 15)
                 .accessibilityHidden(true)
-            Text(full ? "Islet — Sound Mixer" : "Sound Mixer")
+            Text(full ? "Islet — \(name)" : name)
                 .font(PrivacySensorLine.font)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -249,9 +257,10 @@ struct PrivacySoundMixerLine: View {
 // MARK: - Indicator card
 
 /// The card a privacy indicator opens in the opened island: a line for each sensor in
-/// use, as on the home tile, and the Sound Mixer's own recording, greyed. Every privacy
-/// indicator opens this same card, so it stays open while any of them is lit; once
-/// none is, it says so for the moment before it closes.
+/// use, as on the home tile, and Islet's own recording, the Sound Mixer's and the
+/// teleprompter's, greyed. Every privacy indicator opens this same card, so it stays
+/// open while any of them is lit; once none is, it says so for the moment before it
+/// closes.
 ///
 /// While Mic Mute is on, the microphone's line ends in its Mute button, or Unmute while
 /// it is muted: the app keeps the microphone, and its dot, and hears silence. A
@@ -292,7 +301,12 @@ struct PrivacyIndicatorCard: View {
                 }
                 // It explains the purple dot macOS shows and Islet does not.
                 if usage.soundMixer {
-                    PrivacySoundMixerLine(full: true, backdrop: .indicatorCard)
+                    PrivacyOwnLine(sensor: .systemAudio, name: "Sound Mixer", full: true, backdrop: .indicatorCard)
+                        .frame(height: Self.lineHeight)
+                }
+                // It explains the orange dot macOS shows beside another app's.
+                if usage.teleprompter {
+                    PrivacyOwnLine(sensor: .microphone, name: "Teleprompter", full: true, backdrop: .indicatorCard)
                         .frame(height: Self.lineHeight)
                 }
             }
