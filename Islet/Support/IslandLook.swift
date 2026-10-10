@@ -54,6 +54,13 @@ enum IslandFill: Hashable, Sendable {
         }
     }
 
+    /// The same colours holding still, for Change colour › Never: colours that move become
+    /// a gradient down the island in the same palette and tone; any other fill is kept.
+    var stilled: IslandFill {
+        guard case .rotating(let palette, let tone, _) = self else { return self }
+        return .gradient(palette, tone, .down)
+    }
+
     /// The same fill with another palette, tone, direction or speed, for Settings.
     func with(palette: IslandPalette? = nil, tone: IslandTone? = nil,
               direction: IslandGradientDirection? = nil, speed: IslandMotionSpeed? = nil) -> IslandFill {

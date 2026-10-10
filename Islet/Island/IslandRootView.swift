@@ -14,6 +14,10 @@ import SwiftUI
 /// a calmer shade of it (`IslandCalm`), and what it shows reads the opened theme
 /// (`IslandTheme.opened`), so every word reads on the fill's brightest moment; the
 /// compact island, the bubbles and the ring keep the colour as chosen.
+///
+/// While the colour changes once an hour or once a day (`IslandColourClock`), the island
+/// wears the colour of the hour or the day, and fades to the next over a few seconds when
+/// one comes while it is showing it (`IslandColourFade`).
 struct IslandRootView: View {
     let model: IslandViewModel
     /// Told whenever the island's footprint changes, so the controller can update
@@ -33,15 +37,21 @@ struct IslandRootView: View {
     /// the island can part where one buds off it or merges back.
     @State private var bubbles: [ShownBubble] = []
     @State private var drawnBeside: IslandLayout?
+    /// The colour a change the clock made fades from, while it does.
+    @State private var fadeFrom: RGB?
+    /// Counts the clock's changes; each fade animates `fades` up to it.
+    @State private var fadeTarget = 0
+    @State private var fades = 0.0
 
     var body: some View {
         let layout = model.layout
-        // Worked out here, once per change of preference; everything inside reads it
-        // from the environment rather than from UserDefaults.
-        let theme = IslandTheme.cached(islandPref: islandColour, accentPref: accentColour, fillPref: islandFill)
+        // Worked out here, once per change of preference or of the hour's colour;
+        // everything inside reads it from the environment rather than from UserDefaults.
+        let theme = IslandTheme.current(islandPref: islandColour, accentPref: accentColour, fillPref: islandFill)
         let ring = IslandRing(pref: islandRing)
         let isColoured = layout.wearsColour || !isSettled
         let paint = isColoured ? theme : theme.resting
+        let fade = currentFade(isColoured: isColoured)
 
         ZStack(alignment: .top) {
             BubbleLayer(model: model, layout: layout, bubbles: $bubbles, drawnBeside: $drawnBeside)
@@ -49,7 +59,7 @@ struct IslandRootView: View {
             IslandSurface(
                 model: model,
                 layout: layout,
-                isBlack: theme.isBlack,
+                isBlack: theme.isBlack && (fade.from ?? .black) == .black,
                 fill: theme.isMulticolour ? theme.paintStyle : nil,
                 ring: ring,
                 buds: ring == nil ? [] : BubbleLayer.buds(bubbles, model: model, layout: layout, drawnBeside: drawnBeside),
@@ -64,13 +74,28 @@ struct IslandRootView: View {
         }
         .frame(width: IslandLayout.canvas.width, height: IslandLayout.canvas.height, alignment: .top)
         .ignoresSafeArea()
-        .environment(\.islandTheme, paint)
-        .environment(\.islandRing, ring)
-        .environment(\.island, model)
         // Controls the system draws (a spinner, a text selection) follow the ink of
         // what they are drawn on; the window's own, such as a menu, the chosen colour's.
-        .environment(\.colorScheme, paint.colorScheme)
+        .modifier(IslandColourFade(paint: paint, from: fade.from, count: fade.count, target: fade.target))
+        .environment(\.islandRing, ring)
+        .environment(\.island, model)
         .preferredColorScheme(theme.colorScheme)
+        .onChange(of: IslandColourClock.shared.change) { _, change in
+            // Only a change that comes as time passes, while the island shows its colour;
+            // an edit in Settings, or one at rest, is taken at once.
+            guard let change, layout.wearsColour || !isSettled, IslandColourClock.fades else {
+                fadeFrom = nil
+                return
+            }
+            fadeFrom = change.from
+            fadeTarget += 1
+            let target = fadeTarget
+            withAnimation(.islandColourChange) {
+                fades = Double(target)
+            } completion: {
+                if fadeTarget == target { fadeFrom = nil }
+            }
+        }
         .onChange(of: layout.wearsColour, initial: true) { _, wears in
             hold?.cancel()
             guard !wears else {
@@ -84,6 +109,57 @@ struct IslandRootView: View {
             }
         }
         .onChange(of: layout, initial: true) { _, new in onLayoutChange(new) }
+    }
+}
+
+extension IslandRootView {
+    /// The fade under way, if any: from the colour it fades from, as far as the count.
+    private func currentFade(isColoured: Bool) -> (from: RGB?, count: Double, target: Int) {
+        #if DEBUG
+        if let posed = IslandColourClock.shared.posedFade {
+            return (posed.from, posed.progress, 1)
+        }
+        #endif
+        return (isColoured ? fadeFrom : nil, fades, fadeTarget)
+    }
+}
+
+/// The island's colours through a change of the hour's or the day's colour: at every
+/// moment of the fade, the theme of the colour drawn then, as if it had been chosen to
+/// stay, so the ink is always the one that stands out more on it, and every word and
+/// symbol keeps its contrast all the way. Opened, the fill moves straight from the one
+/// colour's calmer shade to the other's, its ink changing once (`IslandTheme.openedFade`),
+/// rather than each colour between being opened afresh. It is worked out in whole 8-bit
+/// steps of the colour, so a fade of a few seconds works out a few dozen themes, and none
+/// once it has ended. With no fade, `paint` itself.
+private struct IslandColourFade: ViewModifier, Animatable {
+    /// The theme of the colour faded to, or of black at rest.
+    let paint: IslandTheme
+    let from: RGB?
+    /// Runs from `target - 1` to `target` as the fade does.
+    var count: Double
+    let target: Int
+
+    var animatableData: Double {
+        get { count }
+        set { count = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let (theme, opened) = drawn
+        content
+            .environment(\.islandTheme, theme)
+            .environment(\.islandOpenedFade, opened)
+            .environment(\.colorScheme, theme.colorScheme)
+    }
+
+    private var drawn: (IslandTheme, IslandOpenedFade?) {
+        let progress = 1 - min(max(Double(target) - count, 0), 1)
+        guard let from, progress < 1, paint.fill == .solid else { return (paint, nil) }
+        let colour = from.mixed(toward: paint.island, progress)
+        let start = IslandTheme.cached(island: from, accent: paint.accent)
+        return (IslandTheme.cached(island: RGB(hex: colour.hex) ?? colour, accent: paint.accent),
+                IslandTheme.openedFade(from: start, to: paint, progress: progress))
     }
 }
 
@@ -131,6 +207,8 @@ private struct IslandSurface: View {
     /// springs, which would take it through every shade between black and the colour.
     let paintAnimation: Animation?
     @Environment(\.islandTheme) private var paint
+    /// While the colour of the hour or the day changes, what the island draws opened.
+    @Environment(\.islandOpenedFade) private var fade
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -150,6 +228,7 @@ private struct IslandSurface: View {
         } ?? 0
         // Showing a page or a card under the notch row.
         let isOpened = layout.bodyHeight > 0
+        let opened = fade?.theme ?? paint.opened
 
         ZStack(alignment: .top) {
             if isBlack {
@@ -172,7 +251,7 @@ private struct IslandSurface: View {
                 // Over the fill and under the ring. Black, white and grey islands, and
                 // the black one at rest, have no shade, and draw nothing here.
                 IslandCalm(
-                    theme: paint, isOpened: isOpened, edge: IslandEdge(shape: shape), ring: ring,
+                    theme: paint, fade: fade, isOpened: isOpened, edge: IslandEdge(shape: shape), ring: ring,
                     band: ring.map { min($0.thickness.width, layout.ringRoom.band) } ?? 0
                 )
                 .animation(.islandCalm, value: isOpened)
@@ -215,8 +294,8 @@ private struct IslandSurface: View {
             // Opened, the calmer shade can be for the other ink, and controls the system
             // draws follow it.
             content
-                .environment(\.islandTheme, isOpened ? paint.opened : paint)
-                .environment(\.colorScheme, (isOpened ? paint.opened : paint).colorScheme)
+                .environment(\.islandTheme, isOpened ? opened : paint)
+                .environment(\.colorScheme, (isOpened ? opened : paint).colorScheme)
                 .id(model.contentKey)
                 .transition(.islandContent)
                 .padding(.horizontal, layout.earRadius)

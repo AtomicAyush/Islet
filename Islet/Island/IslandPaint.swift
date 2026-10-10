@@ -120,9 +120,14 @@ struct IslandFillPaint: NSViewRepresentable {
 /// away from every colour of the ring (`IslandTheme.calmLeavesClear`), it leaves the
 /// ring's band clear instead, so the ring is as bright as on the closed island and stands
 /// out from it more; its glow, which is fainter, falls on the shade either way.
+///
+/// While the hour's or the day's colour changes (`fade`), it is the colour the opened
+/// island draws then, laid over the fill whole, and the band is left clear as the end the
+/// fade is on would leave it.
 struct IslandCalm<Edge: Shape>: View {
     /// The closed island's theme.
     let theme: IslandTheme
+    var fade: IslandOpenedFade? = nil
     let isOpened: Bool
     /// The island's visible edge, its ring, and the width of the ring's band along it.
     let edge: Edge
@@ -131,9 +136,10 @@ struct IslandCalm<Edge: Shape>: View {
 
     var body: some View {
         let opened = theme.opened
-        let clear = ring.map { band > 0 && theme.calmLeavesClear($0.colours(on: theme)) } ?? false
+        let side = fade?.side ?? theme
+        let clear = ring.map { band > 0 && side.calmLeavesClear($0.colours(on: side)) } ?? false
         Rectangle()
-            .fill(opened.calmColour.color)
+            .fill(fade?.theme.island.color ?? opened.calmColour.color)
             .mask {
                 ZStack {
                     Rectangle()
@@ -143,7 +149,7 @@ struct IslandCalm<Edge: Shape>: View {
                 }
                 .compositingGroup()
             }
-            .opacity(isOpened ? opened.calm : 0)
+            .opacity(isOpened ? (fade == nil ? opened.calm : 1) : 0)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

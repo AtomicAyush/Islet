@@ -21,6 +21,9 @@ extension Animation {
     /// closes: in place as a page's words come out of their blur, and as unhurried
     /// leaving, while the island shrinks. Only an opacity, so it stays with Reduce Motion.
     static let islandCalm = Animation.easeInOut(duration: 0.3)
+    /// The island fading to the colour of the next hour or day (`IslandColourClock`):
+    /// slow enough to read as a change of light rather than a signal.
+    static let islandColourChange = Animation.easeInOut(duration: 3)
 }
 
 /// Content fades in from a blur and a slight shrink, and leaves faster than it came.

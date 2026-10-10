@@ -222,8 +222,28 @@ struct IslandTheme: Sendable, Equatable {
         graphicFloor = Contrast.minAlpha(ink, on: samples, floor: Contrast.graphic)
     }
 
+    /// The opened theme part way through a change of colour (`openedFade`): `island`
+    /// drawn as it is, with no shade over it, under `ink`, every word at `wordFloor`.
+    private init(fading island: RGB, ink: RGB, wordFloor: Double, accent: AccentChoice) {
+        self.accent = accent
+        fill = .solid
+        stops = [island]
+        samples = [island]
+        isOpened = true
+        calm = 0
+        self.ink = ink
+        self.island = island
+        self.wordFloor = wordFloor
+        isLight = ink == .black
+        isDefault = false
+        maxSurfaceAlpha = Contrast.maxSurfaceAlpha(ink, over: samples, floor: wordFloor)
+        textFloor = Contrast.minAlpha(ink, on: samples, floor: wordFloor)
+        graphicFloor = Contrast.minAlpha(ink, on: samples, floor: Contrast.graphic)
+    }
+
     static func == (a: IslandTheme, b: IslandTheme) -> Bool {
         a.island == b.island && a.accent == b.accent && a.fill == b.fill && a.isOpened == b.isOpened
+            && a.ink == b.ink && a.wordFloor == b.wordFloor
     }
 
     /// An island in colour: a fill of several, or one colour that reads as a hue rather
@@ -267,6 +287,44 @@ struct IslandTheme: Sendable, Equatable {
     var opened: IslandTheme {
         guard !isOpened, Self.hasColour(island: island, fill: fill) else { return self }
         return Self.cached(island: island, accent: accent, fill: fill, opened: true)
+    }
+
+    /// An opened island part way through a change from the colour of `from` to that of
+    /// `to`, both solid, `progress` of the way. What is drawn moves straight from the one
+    /// opened fill to the other, each under its own calmer shade or none, rather than
+    /// being opened afresh from each colour between, which would flip from a dark shade to
+    /// a light one and back as the colours between crossed over. The ink, the floor its
+    /// words reach and the shade's band round a ring each change once, together: where
+    /// the destination's ink first stands out more on what is drawn, or halfway when both
+    /// ends are drawn on in the same ink. Worked out in whole 8-bit steps of the colour.
+    static func openedFade(from: IslandTheme, to: IslandTheme, progress: Double) -> IslandOpenedFade {
+        let start = from.opened, end = to.opened
+        func drawn(_ progress: Double) -> RGB { start.island.mixed(toward: end.island, progress) }
+        var turn = 0.5
+        if start.ink != end.ink {
+            func turned(_ progress: Double) -> Bool {
+                RGB.contrast(end.ink, drawn(progress)) >= RGB.contrast(start.ink, drawn(progress))
+            }
+            var lo = 0.0, hi = 1.0
+            for _ in 0..<Contrast.steps {
+                let mid = (lo + hi) / 2
+                if turned(mid) { hi = mid } else { lo = mid }
+            }
+            turn = hi
+        }
+        let colour = drawn(progress)
+        let near = progress < turn ? start : end
+        let theme = themes.withLock { cache in
+            let island = RGB(hex: colour.hex) ?? colour
+            let key = ThemeKey(island: island, accent: to.accent, fill: .solid, opened: true,
+                               ink: near.ink, wordFloor: near.wordFloor)
+            if let theme = cache[key] { return theme }
+            if cache.count >= 16 { cache.removeAll() }
+            let theme = IslandTheme(fading: island, ink: near.ink, wordFloor: near.wordFloor, accent: to.accent)
+            cache[key] = theme
+            return theme
+        }
+        return IslandOpenedFade(theme: theme, side: progress < turn ? from : to)
     }
 
     /// Each colour's way to the next, cut into `piecesPerColour` and mixed in sRGB, as a
@@ -572,6 +630,9 @@ struct IslandTheme: Sendable, Equatable {
         let accent: AccentChoice
         let fill: IslandFill
         let opened: Bool
+        /// Set only for an opened fade's theme (`openedFade`).
+        var ink: RGB? = nil
+        var wordFloor: Double? = nil
     }
 
     private static let themes = Locked([ThemeKey: IslandTheme]())
@@ -628,6 +689,16 @@ final class Locked<Value>: @unchecked Sendable {
     }
 }
 
+/// An opened island part way through a change of the hour's or the day's colour
+/// (`IslandTheme.openedFade`).
+struct IslandOpenedFade: Equatable {
+    /// The theme drawn inside, its island the colour drawn then, with no shade over it.
+    let theme: IslandTheme
+    /// The closed theme of the end the fade is on, by the one moment it changes over:
+    /// whether the shade leaves a ring's band clear is asked of it.
+    let side: IslandTheme
+}
+
 private struct IslandThemeKey: EnvironmentKey {
     static let defaultValue = IslandTheme.standard
 }
@@ -638,6 +709,10 @@ extension EnvironmentValues {
         get { self[IslandThemeKey.self] }
         set { self[IslandThemeKey.self] = newValue }
     }
+
+    /// While the hour's or the day's colour changes, what an opened island draws
+    /// (`IslandTheme.openedFade`); nil at any other time.
+    @Entry var islandOpenedFade: IslandOpenedFade? = nil
 }
 
 /// How an island, a bubble or a count's ring is painted.

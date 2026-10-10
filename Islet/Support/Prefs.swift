@@ -84,6 +84,8 @@ enum Prefs {
         static let islandFill = "islandFill"
         /// Appearance › Ring (`IslandRing`): "off" or the ring.
         static let islandRing = "islandRing"
+        /// Appearance › Change colour, once an hour or once a day (`IslandColourSchedule`).
+        static let islandColourSchedule = "islandColourSchedule"
         /// Appearance › Motion: colours hold still while the screen is shared or recorded.
         static let holdMotionWhenCaptured = "holdMotionWhenCaptured"
         /// General › Save energy (`SaveEnergy`).
@@ -109,6 +111,7 @@ enum Prefs {
             Key.accentColour: IslandTheme.standardAccentPref,
             Key.islandFill: IslandFill.standardPref,
             Key.islandRing: IslandRing.offPref,
+            Key.islandColourSchedule: IslandColourSchedule.standardPref,
             Key.holdMotionWhenCaptured: true,
             Key.saveEnergy: SaveEnergy.inLowPowerMode.rawValue,
         ]
@@ -140,8 +143,9 @@ enum Prefs {
 
     /// The island's colours, for AppKit code outside a SwiftUI body. Views read
     /// `\.islandTheme` from the environment instead.
+    @MainActor
     static var islandTheme: IslandTheme {
-        IslandTheme.cached(
+        IslandTheme.current(
             islandPref: store.string(forKey: Key.islandColour) ?? IslandTheme.standardIslandPref,
             accentPref: store.string(forKey: Key.accentColour) ?? IslandTheme.standardAccentPref,
             fillPref: store.string(forKey: Key.islandFill) ?? IslandFill.standardPref

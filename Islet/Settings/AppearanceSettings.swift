@@ -19,6 +19,7 @@ struct AppearanceRows: View {
     @AppStorage(Prefs.Key.accentColour) private var accentColour = IslandTheme.standardAccentPref
     @AppStorage(Prefs.Key.islandFill) private var islandFill = IslandFill.standardPref
     @AppStorage(Prefs.Key.islandRing) private var islandRing = IslandRing.offPref
+    @AppStorage(Prefs.Key.islandColourSchedule) private var islandSchedule = IslandColourSchedule.standardPref
     @AppStorage(Prefs.Key.holdMotionWhenCaptured) private var holdMotionWhenCaptured = true
     /// Shown in a custom well while a swatch is chosen instead: a grey that is none of
     /// the swatches, so the well never looks like a second choice of the same colour,
@@ -26,9 +27,13 @@ struct AppearanceRows: View {
     private static let customStart = RGB(hex: 0x8E8E93)
 
     var body: some View {
-        let theme = IslandTheme.cached(islandPref: islandColour, accentPref: accentColour, fillPref: islandFill)
+        let theme = IslandTheme.current(islandPref: islandColour, accentPref: accentColour, fillPref: islandFill)
         let island = RGB(hex: islandColour) ?? .black
-        let fill = IslandFill(pref: islandFill)
+        let schedule = IslandColourSchedule(pref: islandSchedule)
+        let storedFill = IslandFill(pref: islandFill)
+        // On a schedule the island is one colour at a time, whatever the fill.
+        let fill = schedule.every == nil ? storedFill : .solid
+        let change = ChangeKind(schedule: schedule, fill: storedFill)
         let ring = IslandRing(pref: islandRing)
         let hasNotch = NSScreen.screens.contains(where: \.hasNotch)
         let isCustomIsland = !IslandColourPreset.allCases.contains { $0.colour == island }
@@ -44,20 +49,52 @@ struct AppearanceRows: View {
                 .padding(.vertical, 4)
                 .settingsSearchTarget(id)
 
-            LabeledContent("Fill") {
-                Picker("Fill", selection: Binding(
-                    get: { FillKind(fill) },
-                    set: { kind in islandFill = kind.fill(keeping: fill).prefValue }
-                )) {
-                    ForEach(FillKind.allCases, id: \.self) { Text($0.title).tag($0) }
+            LabeledContent("Change colour") {
+                Picker("Change colour", selection: Binding(get: { change }, set: { kind in
+                    switch kind {
+                    case .never, .continuously:
+                        var off = schedule
+                        off.every = nil
+                        islandSchedule = off.prefValue
+                        if kind == .continuously {
+                            islandFill = IslandFill.rotating(storedFill.palette ?? IslandPalette(preset: .rainbow),
+                                                             storedFill.tone ?? .auto, .slow).prefValue
+                        } else if storedFill.isRotating {
+                            // The colours stop where they are, so a palette of the
+                            // person's own is kept for the Fill control's Gradient.
+                            islandFill = storedFill.stilled.prefValue
+                        }
+                    case .hourly, .daily:
+                        var on = schedule
+                        on.every = kind == .hourly ? .hour : .day
+                        islandSchedule = IslandColourClock.shared.keeping(on).prefValue
+                    }
+                })) {
+                    ForEach(ChangeKind.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
             }
             .settingsSearchHighlight(id)
 
-            if let palette = fill.palette {
+            if change == .never {
+                LabeledContent("Fill") {
+                    Picker("Fill", selection: Binding(
+                        get: { FillKind(fill) },
+                        set: { kind in islandFill = kind.fill(keeping: fill).prefValue }
+                    )) {
+                        ForEach(FillKind.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .settingsSearchHighlight(id)
+            }
+
+            if schedule.every != nil {
+                ScheduleRows(id: id, schedule: schedule) { islandSchedule = IslandColourClock.shared.keeping($0).prefValue }
+            } else if let palette = fill.palette {
                 FillRows(id: id, theme: theme, fill: fill, palette: palette) { islandFill = $0.prefValue }
             } else {
                 LabeledContent("Island colour") {
@@ -151,43 +188,191 @@ struct AppearanceRows: View {
                     accentColour = IslandTheme.standardAccentPref
                     islandFill = IslandFill.standardPref
                     islandRing = IslandRing.offPref
+                    var off = schedule
+                    off.every = nil
+                    islandSchedule = off.prefValue
                 }
-                .disabled(theme.isDefault && ring == nil)
+                .disabled(theme.isDefault && ring == nil && schedule.every == nil)
             }
             .settingsSearchHighlight(id)
         }
     }
 }
 
-/// Appearance › Fill, as the segmented control offers it.
+/// Appearance › Change colour: never, so the island keeps its colour or gradient;
+/// continuously, the Rotating fill's colours fading one into the next; or once an hour or
+/// once a day, through a list of colours (`IslandColourSchedule`).
+private enum ChangeKind: CaseIterable {
+    case never, continuously, hourly, daily
+
+    init(schedule: IslandColourSchedule, fill: IslandFill) {
+        switch schedule.every {
+        case .hour: self = .hourly
+        case .day: self = .daily
+        case nil: self = fill.isRotating ? .continuously : .never
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .never: "Never"
+        case .continuously: "Continuously"
+        case .hourly: "Once an hour"
+        case .daily: "Once a day"
+        }
+    }
+}
+
+/// Appearance › Fill, as the segmented control offers it while the colour never changes;
+/// colours that move are Change colour › Continuously.
 private enum FillKind: CaseIterable {
-    case solid, gradient, rotating
+    case solid, gradient
 
     init(_ fill: IslandFill) {
-        switch fill {
-        case .solid: self = .solid
-        case .gradient: self = .gradient
-        case .rotating: self = .rotating
-        }
+        self = fill == .solid ? .solid : .gradient
     }
 
     var title: String {
         switch self {
         case .solid: "Solid"
         case .gradient: "Gradient"
-        case .rotating: "Rotating"
         }
     }
 
     /// This kind of fill, keeping the palette and tone already chosen, if any.
     func fill(keeping current: IslandFill) -> IslandFill {
-        let palette = current.palette ?? IslandPalette(preset: .rainbow)
-        let tone = current.tone ?? .auto
         switch self {
-        case .solid: return .solid
-        case .gradient: return .gradient(palette, tone, .down)
-        case .rotating: return .rotating(palette, tone, .slow)
+        case .solid: .solid
+        case .gradient: .gradient(current.palette ?? IslandPalette(preset: .rainbow), current.tone ?? .auto, .down)
         }
+    }
+}
+
+/// The rows for a colour that changes once an hour or once a day: the list, each colour
+/// with a well to change it and buttons to move it or take it away, a well to add one,
+/// and whether they are taken in turn or shuffled.
+private struct ScheduleRows: View {
+    let id: String
+    let schedule: IslandColourSchedule
+    let set: (IslandColourSchedule) -> Void
+    @State private var adding = RGB(hex: 0x8E8E93)
+
+    var body: some View {
+        let clock = IslandColourClock.shared
+        // Read so the rows follow the clock's changes as well as edits.
+        let _ = clock.colour
+        let showing = clock.showing()
+        let colours = schedule.colours
+        LabeledContent("Colours") {
+            VStack(alignment: .trailing, spacing: 4) {
+                ForEach(Array(colours.enumerated()), id: \.offset) { index, colour in
+                    HStack(spacing: 6) {
+                        if index == showing.index {
+                            Text("Now").font(.caption).foregroundStyle(.secondary)
+                        }
+                        ColorPicker("Colour \(index + 1)", selection: Binding(
+                            get: { colour.color },
+                            set: { picked in
+                                guard let picked = RGB(NSColor(picked)) else { return }
+                                set(with(colours.replacing(at: index, with: picked)))
+                            }
+                        ), supportsOpacity: false)
+                        .labelsHidden()
+                        Button {
+                            set(with(colours.moving(index, by: -1)))
+                        } label: {
+                            Image(systemName: "chevron.up")
+                        }
+                        .disabled(index == 0)
+                        .help("Move earlier")
+                        .accessibilityLabel("Move colour \(index + 1) earlier")
+                        Button {
+                            set(with(colours.moving(index, by: 1)))
+                        } label: {
+                            Image(systemName: "chevron.down")
+                        }
+                        .disabled(index == colours.count - 1)
+                        .help("Move later")
+                        .accessibilityLabel("Move colour \(index + 1) later")
+                        Button {
+                            var fewer = colours
+                            fewer.remove(at: index)
+                            set(with(fewer))
+                        } label: {
+                            Image(systemName: "minus")
+                        }
+                        .disabled(colours.count <= IslandColourSchedule.colourRange.lowerBound)
+                        .help("Take this colour away")
+                        .accessibilityLabel("Take colour \(index + 1) away")
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+        }
+        .settingsSearchHighlight(id)
+
+        LabeledContent("Add a colour") {
+            HStack(spacing: 8) {
+                ColorPicker("New colour", selection: Binding(
+                    get: { adding.color },
+                    set: { if let picked = RGB(NSColor($0)) { adding = picked } }
+                ), supportsOpacity: false)
+                .labelsHidden()
+                Button("Add") { set(with(colours + [adding])) }
+                    .disabled(colours.count >= IslandColourSchedule.colourRange.upperBound)
+            }
+        }
+        .settingsSearchHighlight(id)
+
+        LabeledContent("Order") {
+            Picker("Order", selection: Binding(get: { schedule.order }, set: { order in
+                var next = schedule
+                next.order = order
+                set(next)
+            })) {
+                ForEach(IslandColourSchedule.Order.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+        }
+        .settingsSearchHighlight(id)
+
+        Caption(Self.caption(schedule: schedule, next: showing.next))
+    }
+
+    private func with(_ colours: [RGB]) -> IslandColourSchedule {
+        var next = schedule
+        next.colours = colours
+        return next
+    }
+
+    static func caption(schedule: IslandColourSchedule, next: Date?) -> String {
+        let when: String
+        if schedule.every == .day {
+            when = "Each day at midnight"
+        } else {
+            let time = next.map { " (next at \($0.formatted(date: .omitted, time: .shortened)))" } ?? ""
+            when = "On the hour\(time)"
+        }
+        let order = schedule.order == .shuffled
+            ? "a colour of the list, shuffled so each shows once before any comes round again"
+            : "the next colour of the list, in turn"
+        return "\(when) the island fades to \(order). The colour marked Now is the one it wears; with Reduce Motion or while saving energy it changes without the fade."
+    }
+}
+
+private extension Array where Element == RGB {
+    func replacing(at index: Int, with colour: RGB) -> [RGB] {
+        var copy = self
+        copy[index] = colour
+        return copy
+    }
+
+    func moving(_ index: Int, by offset: Int) -> [RGB] {
+        var copy = self
+        copy.swapAt(index, index + offset)
+        return copy
     }
 }
 

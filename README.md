@@ -881,7 +881,8 @@ file's icon lies on a faint plate there, so a white page still shows. Black with
 looks exactly as the island always has.
 
 **Colours that move.** The island's fill can also be a gradient, down from the camera housing,
-across or corner to corner, or colours fading slowly one into the next, round and round. Both
+across or corner to corner, or, with Change colour set to Continuously, colours fading slowly
+one into the next, round and round. Both
 take a palette (Rainbow, Sunset, Ocean, Aurora, Ember, Night, Pastel, or two to six colours of
 your own) and a tone: Deep, under white words, or Bright, under black ones. The words never
 change colour as the fill moves, so every colour the fill passes through is darkened or
@@ -900,6 +901,27 @@ itself does nothing while they do, and they hold still whenever nothing shows th
 sleeps or locks, the screen is shared or recorded (unless you say otherwise), and with Reduce
 Motion or Low Power Mode on. The ring never reaches under what the island shows, and never draws
 outside it.
+
+**A colour for the day, or the hour.** Appearance › Change colour says when the island's
+colour changes: Never (it keeps its colour or gradient, and colours that were moving hold
+still as a gradient of the same palette), Continuously (colours fading slowly one
+into the next, as above), Once an hour or Once a day. Hourly or daily, it takes the colours of a
+list you make, two to twelve of them (add one with its colour well, change any, move them up and
+down, take them away), in turn or shuffled; shuffled, every colour shows once before any comes
+round again, and never the same one twice running. On the hour, or at midnight, the island fades
+to the next over three seconds, its words turning from white to black, or back, at the moment
+the other reads better, so they read at every moment of the fade; with Reduce Motion, in Low
+Power Mode or while saving energy it changes without the fade, and at rest under the notch,
+where it is black, it simply wears the new colour next time it opens. Which colour shows is
+worked out from the clock, not remembered, so it is right after a relaunch, after the Mac has
+slept for days, and after the clock or the time zone changes: days are the dates where you are,
+so a 23- or 25-hour day keeps one colour, and hours are counted as they pass, so the night the
+clocks change none is skipped or shown twice, each change still on the hour. Islet keeps one
+timer, to the next change, and none at all without a schedule. Editing the list keeps the colour
+showing now until the next change (a shuffle starts a fresh round from it), and Settings marks
+which colour is showing. The ring and the calmer shade when opened work with it as with any
+colour; opened through a fade, the island moves straight from the one colour's calmer shade to
+the other's, so it never flickers between a dark shade and a light one on the way.
 
 **Readable when opened.** Closed, the island wears its colours as chosen. Opened on a page, a
 card banner or Quick Ask, an island in colour (a gradient, moving colours, or one colour that
@@ -1469,7 +1491,8 @@ approvals key is unexpected: deny it and reset the key.
   Shortcuts action.
 - `Islet/Support/` — views and helpers shared by every feature, and the island's colours:
   `IslandTheme`, the `.island…` styles, `SystemHue` and `FeatureTint`; the fills and ring in
-  `IslandLook`, and the one clock their motion keeps time by in `IslandMotion`.
+  `IslandLook`, the one clock their motion keeps time by in `IslandMotion`, and the colour of
+  the hour or the day in `IslandColourSchedule`.
 - `Islet/Settings/` — the Settings window and its search. The search finds a feature by its
   title and summary with nothing more; the other words it goes by, its settings' labels and
   other names for it, are in `SettingsSearchTerms.swift` beside every other feature's. A

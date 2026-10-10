@@ -22,8 +22,9 @@ struct SettingsView: View {
 }
 
 /// The island's colours, for anything in the Settings window drawn as the island draws
-/// it (the feature badges, the preview), in the tabs and the search results alike; the
-/// window itself keeps following macOS.
+/// it (the feature badges, the preview), in the tabs and the search results alike, in the
+/// hour's or the day's colour while it changes on a schedule; the window itself keeps
+/// following macOS.
 struct SettingsIslandTheme: ViewModifier {
     @AppStorage(Prefs.Key.islandColour) private var islandColour = IslandTheme.standardIslandPref
     @AppStorage(Prefs.Key.accentColour) private var accentColour = IslandTheme.standardAccentPref
@@ -31,7 +32,7 @@ struct SettingsIslandTheme: ViewModifier {
 
     func body(content: Content) -> some View {
         content.environment(
-            \.islandTheme, IslandTheme.cached(islandPref: islandColour, accentPref: accentColour, fillPref: islandFill)
+            \.islandTheme, IslandTheme.current(islandPref: islandColour, accentPref: accentColour, fillPref: islandFill)
         )
     }
 }

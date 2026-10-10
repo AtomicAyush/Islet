@@ -25,7 +25,9 @@ extension GeneralRow {
                          "Back to black and feature colours", "Reset", "Fill", "Solid", "Gradient", "Rotating", "Palette",
                          "Tone", "Deep", "Bright", "Direction", "Down", "Across", "Diagonal", "Speed", "Slow", "Medium",
                          "Fast", "Drawn as", "Ring", "Steady", "Ring colour", "Island's colours", "Thickness", "Thin",
-                         "Regular", "Bold", "Glow", "Brightness", "Hold still while the screen is shared or recorded"]
+                         "Regular", "Bold", "Glow", "Brightness", "Hold still while the screen is shared or recorded",
+                         "Change colour", "Never", "Continuously", "Once an hour", "Once a day", "Colours",
+                         "Add a colour", "Add", "Order", "In turn", "Shuffled"]
                     + IslandColourPreset.allCases.map(\.name) + AccentChoice.presets.map(\.name)
                     + IslandPalettePreset.allCases.map(\.name),
                 keywords: ["appearance", "colour", "color", "colours", "colors", "theme", "tint", "accent colour",
@@ -34,7 +36,10 @@ extension GeneralRow {
                            "customize", "rgb", "led", "leds", "light strip", "rainbow", "border", "outline", "edge",
                            "halo", "neon", "ring light", "animated", "animation", "cycle", "colour cycle",
                            "color cycle", "fade", "rotate", "rotation", "chase", "ombre", "reduce motion",
-                           "readable", "readability", "legible", "contrast", "hard to read", "shade", "darker"]
+                           "readable", "readability", "legible", "contrast", "hard to read", "shade", "darker",
+                           "change color", "every day", "each day", "daily", "every hour", "hourly", "schedule",
+                           "scheduled", "midnight", "colour of the day", "color of the day", "shuffle", "random",
+                           "rotate between", "list of colours", "list of colors", "playlist"]
             )
         case .hover:
             SettingsSearchTerms(
