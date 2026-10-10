@@ -118,24 +118,42 @@ esac
 input="$(head -c 1048576; cat >/dev/null)"
 
 [[ "$HOME" == /* ]] || exit 0
-if ! session="$(printf '%s' "$input" | jq -r '.conversationId // empty | strings' 2>/dev/null)"; then
+# The id, and the workspace: the first full path given, without a step up in it. Both in
+# one go, as jq takes a while to read a megabyte. More than one JSON value is no event.
+# Either one longer than bash keeps below is dropped here already, as bash takes seconds
+# to read back a long one full of quotes; the paths are looked through only as far as
+# the first that will do; and its last slashes are looked for only just after something
+# else, as a search from every slash of a long run takes seconds.
+session="" workspace=""
+if fields="$(printf '%s' "$input" | jq -nr '
+  [inputs] | select(length == 1) | .[0]
+  | (.conversationId // empty | strings | if length > 128 then "" else . end) as $id
+  | (first(.workspacePaths // [] | if type == "array" then .[] else empty end | strings
+     | select(startswith("/") and (test("[[:cntrl:]]") | not) and (test("(^|/)\\.\\.(/|$)") | not))
+     | if test("[^/]") then sub("(?<=[^/])/+$"; "") else "/" end) // ""
+     | if length > 1024 then "" else . end) as $path
+  | @sh "session=\($id) workspace=\($path)"' 2>/dev/null)"; then
+  eval "$fields"
+else
   # An event cut short is not JSON: its id, and a tool's name, are looked for as text,
-  # and stand in for it. Only where nothing before them opens an object of its own, so
-  # a key of the same name inside a tool's arguments is never taken for the event's;
-  # an id that comes after the arguments is lost with the rest, and the step with it.
-  session="" tool=""
-  if [[ "$input" =~ \"conversationId\"[[:space:]]*:[[:space:]]*\"([^\"\\]*)\" ]]; then
-    found="${BASH_REMATCH[1]}" before="${input%%\"conversationId\"*}"
-    opens="${before//[^\{]/}"
-    [ "${#opens}" -le 1 ] && session="$found"
-  fi
-  if [[ "$input" =~ \"toolCall\"[[:space:]]*:[[:space:]]*\{[[:space:]]*\"name\"[[:space:]]*:[[:space:]]*\"([A-Za-z0-9_.:-]{1,80})\" ]]; then
-    found="${BASH_REMATCH[1]}" before="${input%%\"toolCall\"*}"
-    opens="${before//[^\{]/}"
-    [ "${#opens}" -le 1 ] && tool="$found"
-  fi
-  input="$(jq -nc --arg id "$session" --arg tool "$tool" \
-    '{conversationId: $id} + (if $tool == "" then {} else {toolCall: {name: $tool}} end)' 2>/dev/null)"
+  # and stand in for it. Only where nothing before the one found opens an object of
+  # its own, so a key of the same name inside a tool's arguments is never taken for the
+  # event's; an id that comes after the arguments is lost with the rest, and the step
+  # with it.
+  # Antigravity sends the id second, after only the artifact folder's path, so only the
+  # first 64 KB are looked in, and by jq: bash takes seconds to cut up and count through
+  # a few kilobytes this way, minutes for more, and the watchdog's signal waits until it
+  # is done.
+  input="$(printf '%s' "$input" 2>/dev/null | head -c 65536 | jq -Rsc '
+    def top($key; $value):
+      (first(match("\"" + $key + "\"[[:space:]]*:[[:space:]]*" + $value)) as $m
+       | if (.[0:$m.offset] | split("{") | length) <= 2 then $m.captures[0].string else "" end)
+      // "";
+    top("conversationId"; "\"([^\"\\\\]*)\"") as $id
+    | top("toolCall"; "\\{[[:space:]]*\"name\"[[:space:]]*:[[:space:]]*\"([A-Za-z0-9_.:-]{1,80})\"") as $tool
+    | {conversationId: $id} + (if $tool == "" then {} else {toolCall: {name: $tool}} end)' 2>/dev/null)"
+  # An id with a line break in it is no id, though $( ) would drop one at its end.
+  session="$(printf '%s' "$input" | jq -r '.conversationId // empty | strings | select(test("\n") | not)' 2>/dev/null)"
 fi
 [[ "$session" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$ ]] || exit 0
 dir="${ISLET_GEMINI_STATE_DIR:-$HOME/Library/Application Support/Islet/Gemini/Sessions}"
@@ -236,13 +254,8 @@ git_branch() {
   [ "${#branch}" -gt 20 ] && branch_short="${branch:0:10}…${branch: -9}"
   return 0
 }
-# The workspace: the first full path given, without a step up in it; and the project,
-# the git repository it is in, found by looking for .git rather than by running git, or
-# else the folder itself.
-workspace="$(printf '%s' "$input" | jq -r '
-  [.workspacePaths // [] | if type == "array" then .[] else empty end | strings
-   | select(startswith("/") and (test("[[:cntrl:]]") | not) and (test("(^|/)\\.\\.(/|$)") | not))
-   | sub("(?<=.)/+$"; "")] | first // empty' 2>/dev/null)"
+# The project: the git repository the workspace is in, found by looking for .git rather
+# than by running git, or else the folder itself.
 [ "${#workspace}" -le 1024 ] || workspace=""
 project=""
 case "$workspace" in
@@ -288,7 +301,9 @@ program='
   def plain($n):
     .[0:$n * 4 + 1000] | gsub("[[:cntrl:]]+"; " ") | gsub("\\*\\*|__|`"; "")
     | gsub("[[:space:]]+"; " ") | sub("^ +"; "") | sub(" +$"; "") | clip($n);
-  def base: sub("/+$"; "") | sub("^.*/"; "");
+  # The last part of a path. Its last slashes are looked for only just after something
+  # else, as for the workspace above.
+  def base: sub("(?<=[^/])/+$"; "") | sub("^.*/"; "");
   # The program a command line mostly runs, as a plain word, as in chatgpt-hook.sh.
   def program:
     def setup: IN("cd", "export", "set", "unset", "source", ".", "true", "false", ":", "pushd", "popd", "local",
@@ -336,8 +351,9 @@ program='
   def args: (.toolCall.args // .toolCall.arguments // null)
     | if type == "string" then (. as $s | (try fromjson catch $s)) else . end
     | if type == "object" then . else {} end;
-  def toolname: (.toolCall.name // .toolName // .tool.name // "") | text | ascii_downcase
-    | if test("^[a-z0-9_.:-]{1,80}$") then . else "" end;
+  # A name too long to keep is not lowered first, which takes jq a while on a long one.
+  def toolname: (.toolCall.name // .toolName // .tool.name // "") | text
+    | if length > 80 then "" else ascii_downcase end | if test("^[a-z0-9_.:-]{1,80}$") then . else "" end;
   def filename: [.TargetFile, .AbsolutePath, .File, .FilePath, .Path, .file_path, .path, .DirectoryPath]
     | map(strings | select(length > 0)) | first // "" | base | plain(60);
   # The step a call is, as kept: its kind and a short name, never what it was given.
