@@ -160,8 +160,9 @@ enum ChatGPTLayout {
                            isPrivate: Bool = false, header: CGFloat = 0) -> CGFloat {
         guard let approval else { return pageHeight(for: sessions, showsText: showsText, header: header) }
         let block = ApprovalLayout.height(for: approval, waiting: waiting, isPrivate: isPrivate)
-        guard !sessions.isEmpty else { return header + topInset + block + bottomInset }
         let limit = listLimit(below: block, header: header)
+        // No rows, or no line of them clear of the fade: the page ends with the card.
+        guard showsRows(sessions, showsText: showsText, limit: limit) else { return header + topInset + block + bottomInset }
         let list = listHeight(sessions, showsText: showsText)
         let rows = list > limit ? visibleHeight(sessions, showsText: showsText, limit: limit) : list + bottomInset
         return min(header + topInset + block + topInset + rows, maxApprovalPageHeight)
@@ -173,6 +174,20 @@ enum ChatGPTLayout {
     /// never over them.
     static func listLimit(below block: CGFloat, header: CGFloat = 0) -> CGFloat {
         max(0, maxApprovalPageHeight - header - topInset - block - topInset)
+    }
+
+    /// Whether the rows show at all in `limit` under an approval card: where they all fit,
+    /// or where at least one line of them lies whole above the line the fade lies across
+    /// (which the fade reaches only `scrollFade - scrollPeek` above, under that line's
+    /// words). Under a tall card, with the usage line above it, there may be room for no
+    /// more than the top of the first line, all of it in the fade: a sliver of a row with
+    /// nothing to read, which the card would seem to sit over. Then no rows show, and
+    /// the page ends with the card.
+    static func showsRows(_ sessions: [ChatGPTSession], showsText: Bool, limit: CGFloat) -> Bool {
+        guard !sessions.isEmpty else { return false }
+        guard listHeight(sessions, showsText: showsText) > limit else { return true }
+        let shown = visibleHeight(sessions, showsText: showsText, limit: limit)
+        return lineTops(sessions, showsText: showsText).contains { $0 + scrollPeek < shown }
     }
 
     /// The page's height, the usage line atop it where it shows (`header` tall).
@@ -685,7 +700,8 @@ struct ChatGPTExpanded: View {
                 .id(card.item.id)
                 .frame(height: block, alignment: .top)
                 .padding(.top, ChatGPTLayout.topInset)
-                if !model.shown.isEmpty { list(limit: ChatGPTLayout.listLimit(below: block, header: header)) }
+                let limit = ChatGPTLayout.listLimit(below: block, header: header)
+                if ChatGPTLayout.showsRows(model.shown, showsText: showsText, limit: limit) { list(limit: limit) }
             }
             .frame(maxHeight: .infinity, alignment: .top)
         } else {
