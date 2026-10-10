@@ -6,11 +6,11 @@ import os
 /// request Claude's command line tool can make, signed in with Quick Ask's token and run
 /// as Quick Ask runs it (`ClaudeAskBackend`: no session saved, no tools, none of the
 /// person's settings, hooks or MCP servers, its configuration in the run's own folder),
-/// with the cheapest model, a one-word prompt and a one-line system prompt. Claude's tool
-/// says the limits (`rate_limit_event`) as the answer's headers come, before any of the
-/// answer, and the run is stopped there and then, SIGTERM and SIGKILL a second on, so
-/// that next to nothing is generated. A run that starts its answer without them is
-/// stopped as the first words come, and any run at `timeout`.
+/// with the cheapest model, a one-word prompt and a one-line system prompt. The run is
+/// stopped, SIGTERM and SIGKILL a second on, the moment Claude's tool says the limits
+/// (`rate_limit_event`). It may say them only after the answer, so the one-word answer is
+/// let finish rather than cut short; a run that ends without them read nothing, and any
+/// run is stopped at `timeout`.
 ///
 /// It is made only as the AI Usage tile or the Claude Code page is about to show, where
 /// the newest figures are over 20 minutes old, at most once every 15 minutes (kept across
@@ -96,8 +96,8 @@ enum ClaudeUsageRefresh {
         case cannot(Skip)
     }
 
-    /// The run of `launch`, until the limits come, the answer starts without them, the
-    /// tool exits or `launch` gives up on it. Leaving the loop over its output stops the
+    /// The run of `launch`, until the limits come, the tool exits or `launch` gives up
+    /// on it. Leaving the loop over its output stops the
     /// tool at once.
     @MainActor
     static func run(_ launch: AskProcess.Launch) async -> Outcome {
@@ -106,12 +106,11 @@ enum ClaudeUsageRefresh {
             for try await output in AskProcess.run(launch) {
                 switch output {
                 case .line(let line):
-                    let answer = try parser.take(line)
+                    _ = try parser.take(line)
                     if var event = parser.takeLimits() {
                         event.source = .refresh
                         return .read(event)
                     }
-                    if answer != nil { return .noFigures }
                 case .exited:
                     return .noFigures
                 case .errors:

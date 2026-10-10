@@ -517,9 +517,8 @@ old** (on by default), when Claude's newest figures are over 20 minutes old as t
 or the Claude Code page opens, Islet asks Claude for them itself: the smallest request Claude's
 command line tool can make (the cheapest model, a one-word prompt), signed in with Quick Ask's
 token and run as Quick Ask runs it, with nothing saved and no tools, settings, hooks or MCP
-servers. Claude's tool says the limits as the answer's headers arrive, and Islet stops it there
-and then, before any answer is written, or after 20 seconds at most; each uses a sliver of your
-allowance. It happens at most once every 15 minutes, even across relaunches, never while you're
+servers. Islet stops it the moment Claude's tool says the limits, which may be only after its
+one-word answer, or after 20 seconds at most; each uses a sliver of your allowance. It happens at most once every 15 minutes, even across relaunches, never while you're
 offline, without a Claude token in Quick Ask, while the island saves energy or in Low Power Mode,
 or while Quick Ask is asking Claude, and never shows in Quick Ask; what came of it is said in
 Settings alone.
