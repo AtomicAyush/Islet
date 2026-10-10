@@ -5,7 +5,8 @@ import SwiftUI
 /// The sizes of the approval card.
 enum ApprovalLayout {
     /// The most of the request shown before it scrolls: what the page leaves once the
-    /// header, the buttons and a line of the session rows have their room.
+    /// header, the buttons and a line of the session rows have their room. The row of
+    /// requests waiting behind it takes its room from here (`bodyLimit`).
     static let bodyHeight: CGFloat = 120
     static let buttonHeight: CGFloat = 26
     static let spacing: CGFloat = 6
@@ -20,15 +21,35 @@ enum ApprovalLayout {
         IslandLayout.expandedWidth - IslandLayout.expandedInset.leading - IslandLayout.expandedInset.trailing
     }
 
-    /// How tall the request's body is drawn: all of it, up to `bodyHeight`.
-    static func visibleBody(_ item: ApprovalItem) -> CGFloat {
-        min(ApprovalLines.height(item.body.sections, width: bodyWidth), bodyHeight)
+    /// The most of the request shown with `waiting` requests behind it: the row saying so
+    /// takes its room from the request, so the session rows below keep a line clear of
+    /// their fade.
+    static func bodyLimit(waiting: Int) -> CGFloat {
+        waiting > 0 ? bodyHeight - waitingHeight - spacing : bodyHeight
+    }
+
+    /// How tall the request's body is drawn: all of it, up to `bodyLimit`.
+    static func visibleBody(_ item: ApprovalItem, waiting: Int = 0) -> CGFloat {
+        min(ApprovalLines.height(item.body.sections, width: bodyWidth), bodyLimit(waiting: waiting))
+    }
+
+    /// Whether the request is taller than the part of it drawn, so has to be scrolled.
+    static func scrolls(_ item: ApprovalItem, waiting: Int = 0) -> Bool {
+        ApprovalLines.height(item.body.sections, width: bodyWidth) > bodyLimit(waiting: waiting)
+    }
+
+    /// Where a click on "Scroll to read it all" takes a request scrolled `offset` down, of
+    /// `content` with `shown` of it in view: a page further, less a line kept from the
+    /// page before so none is passed over unseen, and no further than its end.
+    static func pageDown(from offset: CGFloat, shown: CGFloat, content: CGFloat) -> CGFloat {
+        let end = max(0, content - shown)
+        return min(max(0, offset) + max(ApprovalLines.lineHeight, shown - ApprovalLines.lineHeight), end)
     }
 
     /// The card's height, for the page it sits on, with `waiting` requests behind it.
     static func height(for item: ApprovalItem, waiting: Int = 0, isPrivate: Bool = false) -> CGFloat {
         guard !isPrivate else { return privateHeight }
-        return headerHeight + spacing + visibleBody(item) + spacing
+        return headerHeight + spacing + visibleBody(item, waiting: waiting) + spacing
             + (waiting > 0 ? waitingHeight + spacing : 0) + buttonHeight
     }
 }
@@ -56,6 +77,8 @@ final class ApprovalCardState {
     private(set) var arming: ApprovalArming
     /// A word under the buttons after a click that did not count.
     var note: String?
+    /// What moves the request down for "Scroll to read it all".
+    @ObservationIgnored weak var pager: ApprovalPagerView?
 
     init(item: ApprovalItem, openedAt: TimeInterval?) {
         arming = ApprovalArming(id: item.id, digest: item.request.digest, openedByItself: openedAt != nil)
@@ -129,7 +152,9 @@ struct ApprovalBlock: View {
     // MARK: Card
 
     private var card: some View {
-        VStack(alignment: .leading, spacing: ApprovalLayout.spacing) {
+        let waiting = center.waiting(for: request.agent)
+        let visible = ApprovalLayout.visibleBody(item, waiting: waiting.count)
+        return VStack(alignment: .leading, spacing: ApprovalLayout.spacing) {
             header
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -139,18 +164,18 @@ struct ApprovalBlock: View {
                     // taller than laid out overflows.
                     Color.clear.frame(height: 1)
                         .onGeometryChange(for: Bool.self) { proxy in
-                            proxy.frame(in: .named(Self.bodySpace)).maxY <= ApprovalLayout.visibleBody(item) + 0.5
+                            proxy.frame(in: .named(Self.bodySpace)).maxY <= visible + 0.5
                         } action: { seen in
                             if seen { state.update { $0.seen(true) } }
                         }
                 }
                 .padding(ApprovalLines.padding)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background { ApprovalPager(state: state).accessibilityHidden(true) }
             }
             .coordinateSpace(.named(Self.bodySpace))
-            .frame(height: ApprovalLayout.visibleBody(item))
+            .frame(height: visible)
             .background(RoundedRectangle(cornerRadius: 10).fill(.islandSurface(0.08)))
-            let waiting = center.waiting(for: request.agent)
             if !waiting.isEmpty { waitingRow(waiting) }
             buttons
         }
@@ -164,7 +189,7 @@ struct ApprovalBlock: View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 Image(systemName: "hand.raised.fill").foregroundStyle(ClaudeCodePalette.attentionMark)
-                Text(verbatim: item.body.headline).font(.system(size: 13, weight: .semibold))
+                Text(verbatim: item.body.headline).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     .foregroundStyle(headlineStyle)
                 Spacer(minLength: 0)
                 let mine = center.items(for: request.agent)
@@ -227,10 +252,11 @@ struct ApprovalBlock: View {
                       systemImage: decided == .allow ? "checkmark.circle.fill" : "xmark.circle.fill")
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(.islandText(0.85))
             } else if let note = state.note {
-                Text(verbatim: note).font(.system(size: 11)).foregroundStyle(.islandText(0.7)).lineLimit(2)
+                Text(verbatim: note).font(.system(size: 11)).foregroundStyle(.islandText(0.7)).lineLimit(1)
+                    .truncationMode(.middle)
             } else if !offersAllow {
                 Text(verbatim: Self.withheldWords(item, center: center)).font(.system(size: 11))
-                    .foregroundStyle(.islandText(0.7)).lineLimit(2)
+                    .foregroundStyle(.islandText(0.7)).lineLimit(1).truncationMode(.middle)
             } else if center.maybeAnswered.contains(item.id), request.agent == .claude {
                 Text("Claude may have answered already").font(.system(size: 11)).foregroundStyle(.islandText(0.6))
             } else if request.isBlocking {
@@ -241,7 +267,9 @@ struct ApprovalBlock: View {
                 answerInApp
                 // A Deny Islet cannot sign would do nothing.
                 if center.canSign(for: request.agent) { deny }
-                if offersAllow { allow }
+                if offersAllow {
+                    if state.arming.bodySeen { allow } else { scrollOn }
+                }
             }
             .disabled(decided != nil)
             .opacity(decided != nil ? 0.4 : 1)
@@ -284,12 +312,13 @@ struct ApprovalBlock: View {
     private var countdown: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             Text(verbatim: Self.countdownWords(request, now: context.date)).font(.system(size: 11))
-                .foregroundStyle(.islandText(0.6)).lineLimit(2).monospacedDigit()
+                .foregroundStyle(.islandText(0.6)).lineLimit(1).truncationMode(.middle).monospacedDigit()
         }
     }
 
     /// "Claude asks in Terminal in 0:30": the agent, and where it asks, short enough to
-    /// sit beside the buttons whole.
+    /// sit beside the buttons whole. Beside them, a host's name too long for the room is
+    /// cut in its middle, so the time stays.
     static func countdownWords(_ request: ApprovalRequest, now: Date) -> String {
         let agent = request.agent.name
         let host = request.hostName.isEmpty || request.hostName == agent ? "the app" : request.hostName
@@ -320,18 +349,51 @@ struct ApprovalBlock: View {
         }
     }
 
+    /// In Allow's place until the end of the request has been seen: each click takes it
+    /// a page further down, the last to its end. It allows nothing. Allow comes in its
+    /// place, at its width, once the end is in view: a new view under a pointer that has
+    /// not come onto it, so that pointer has to leave Allow for a moment and come back
+    /// before Allow arms (`ApprovalAllowView`). Neither the click that scrolled nor a
+    /// second click of a double-click can take it, and nothing else moves under them.
+    private var scrollOn: some View {
+        Button {
+            state.pager?.pageDown()
+        } label: {
+            scrollLabel.foregroundStyle(.islandText(1))
+                .islandWashed(.text(1), wash: 0.2, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
+    }
+
+    /// As wide as the words alone, so the countdown and notes beside the buttons keep
+    /// their room.
+    private var scrollLabel: some View {
+        Text("Scroll to read it all")
+            .font(.system(size: 12, weight: .semibold))
+            .padding(.horizontal, 14).frame(height: ApprovalLayout.buttonHeight)
+    }
+
     /// Allow: filled with the agent's colour once armed, dimmed until then. The click is
     /// taken by an AppKit view, which sees the events themselves (`ApprovalClickCheck`).
     private var allow: some View {
         let colours = theme.filledButton(request.agent == .claude ? .claudeCode : .chatGPT)
         return TimelineView(.periodic(from: .now, by: 0.1)) { _ in
             let readiness = state.arming.readiness(at: ProcessInfo.processInfo.systemUptime)
-            Text(readiness == .unseen ? "Scroll to read it all" : "Allow")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(colours.label)
-                .padding(.horizontal, 14).frame(height: ApprovalLayout.buttonHeight)
-                .background(Capsule().fill(colours.fill))
-                .opacity(readiness == .armed ? 1 : 0.45)
+            // A request that scrolled had "Scroll to read it all" here: Allow keeps its
+            // width, so neither Allow nor Deny comes under the pointer that clicked it.
+            ZStack {
+                if ApprovalLayout.scrolls(item, waiting: center.waiting(for: request.agent).count) {
+                    scrollLabel.hidden()
+                }
+                Text("Allow")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(colours.label)
+                    .padding(.horizontal, 14)
+            }
+            .frame(height: ApprovalLayout.buttonHeight)
+            .background(Capsule().fill(colours.fill))
+            .opacity(readiness == .armed ? 1 : 0.45)
         }
         .overlay {
             ApprovalAllowTarget(
@@ -347,7 +409,13 @@ struct ApprovalBlock: View {
         let time = ProcessInfo.processInfo.systemUptime
         switch state.arming.readiness(at: time) {
         case .unseen: state.note = "Scroll to read it all"
-        case .early: state.note = "Hold on Allow for a moment"
+        case .early:
+            // Holding arms Allow only for a pointer that came onto it once the card had
+            // been on screen long enough; any other, such as one Allow came under, has to
+            // leave it and come back.
+            let arming = state.arming
+            let holding = arming.onAllow && (arming.enteredAllowAt ?? 0) >= (arming.shownLongEnoughFrom() ?? .infinity)
+            state.note = holding ? "Hold on Allow for a moment" : "Move off Allow, then back onto it"
         case .armed:
             guard let token = state.arming.take(click, at: time) else {
                 state.note = "This click came from another app; answer in \(request.agent.name)"
@@ -578,6 +646,74 @@ enum ApprovalOpening {
     }
 }
 
+/// Laid behind the request in its scroll view, as tall as it, for "Scroll to read it all"
+/// to move it: SwiftUI's ScrollView is an NSScrollView underneath, the one this view is
+/// inside. It takes no clicks or scrolling, which go to the request as before.
+private struct ApprovalPager: NSViewRepresentable {
+    let state: ApprovalCardState
+
+    func makeNSView(context: Context) -> ApprovalPagerView { ApprovalPagerView() }
+
+    func updateNSView(_ view: ApprovalPagerView, context: Context) { state.pager = view }
+}
+
+final class ApprovalPagerView: NSView {
+    /// The scroll view's clip view, followed for its height.
+    private var watched: NSClipView?
+
+    override func isAccessibilityElement() -> Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Takes the request a page down (`ApprovalLayout.pageDown`), the last click to its
+    /// end, at once, as Page Down does. It only scrolls: the end coming into view is what
+    /// brings Allow. The scroll view's document is SwiftUI's and has no height of its
+    /// own, so the request's is this view's.
+    func pageDown() {
+        guard let scroll = enclosingScrollView else { return }
+        let clip = scroll.contentView
+        let y = ApprovalLayout.pageDown(from: clip.bounds.origin.y, shown: clip.bounds.height, content: bounds.height)
+        guard y > clip.bounds.origin.y + 0.5 else { return }
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        scroll.reflectScrolledClipView(clip)
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        watch()
+    }
+
+    override func setFrameSize(_ size: NSSize) {
+        super.setFrameSize(size)
+        watch()
+    }
+
+    /// Follows the scroll view this view is in, once it is in one.
+    private func watch() {
+        let clip = enclosingScrollView?.contentView
+        guard clip !== watched else { return }
+        if let watched { NotificationCenter.default.removeObserver(self, name: NSView.frameDidChangeNotification, object: watched) }
+        watched = clip
+        guard let clip else { return }
+        clip.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(clipResized), name: NSView.frameDidChangeNotification,
+                                               object: clip)
+    }
+
+    /// A request coming behind this one, or going, changes how much of it is drawn, and
+    /// SwiftUI then puts the scroll view back to its top: this keeps the line the person
+    /// had read down to at the top instead.
+    @objc private func clipResized() {
+        guard let clip = watched else { return }
+        let y = clip.bounds.origin.y
+        guard y > 0.5 else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let scroll = self.enclosingScrollView, scroll.contentView === clip else { return }
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(y, max(0, self.bounds.height - clip.bounds.height))))
+            scroll.reflectScrolledClipView(clip)
+        }
+    }
+}
+
 /// The view that takes clicks on Allow: it tells where the pointer is from mouse
 /// movement, and hands on each release with the press before it. Hidden from
 /// accessibility, so only a person's click reaches it.
@@ -595,12 +731,20 @@ private struct ApprovalAllowTarget: NSViewRepresentable {
     }
 }
 
+/// The pointer counts as coming onto Allow only once it has been off Allow for half a
+/// second; back sooner, it is told as under Allow, as when Allow came beneath it. Allow
+/// takes the place of "Scroll to read it all" under a hand clicking it, and a drift over
+/// Allow's edge between those clicks is not a person moving to Allow.
 final class ApprovalAllowView: NSView {
     var pointer: (Bool, TimeInterval) -> Void = { _, _ in }
     /// Allow was laid out where the pointer already is.
     var under: () -> Void = {}
     var click: (ApprovalClickCheck.Click) -> Void = { _ in }
     private var down: ApprovalClickCheck.Event?
+    /// How long the pointer has to be off Allow before coming back onto it counts.
+    static let away: TimeInterval = 0.5
+    /// Since when the pointer has been off Allow; `nil` while it is on it or not yet known.
+    private var offSince: TimeInterval?
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -611,9 +755,24 @@ final class ApprovalAllowView: NSView {
         // where it was, not where it went.
         guard let window else { return }
         if bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+            offSince = nil
             under()
         } else {
-            pointer(false, ProcessInfo.processInfo.systemUptime)
+            moved(onAllow: false, at: ProcessInfo.processInfo.systemUptime)
+        }
+    }
+
+    /// Where mouse movement puts the pointer, told on with `away` applied.
+    private func moved(onAllow now: Bool, at time: TimeInterval) {
+        if !now {
+            if offSince == nil { offSince = time }
+            pointer(false, time)
+        } else if let off = offSince, time - off >= Self.away {
+            offSince = nil
+            pointer(true, time)
+        } else {
+            offSince = nil
+            under()
         }
     }
 
@@ -623,11 +782,11 @@ final class ApprovalAllowView: NSView {
     /// Movement onto Allow counts; a card appearing under a still pointer does not.
     override func mouseMoved(with event: NSEvent) {
         guard event.deltaX != 0 || event.deltaY != 0 else { return }
-        pointer(bounds.contains(convert(event.locationInWindow, from: nil)), event.timestamp)
+        moved(onAllow: bounds.contains(convert(event.locationInWindow, from: nil)), at: event.timestamp)
     }
 
     override func mouseExited(with event: NSEvent) {
-        pointer(false, event.timestamp)
+        moved(onAllow: false, at: event.timestamp)
     }
 
     override func mouseDown(with event: NSEvent) {

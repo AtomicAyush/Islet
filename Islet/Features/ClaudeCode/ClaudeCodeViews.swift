@@ -133,13 +133,18 @@ enum ClaudeCodeLayout {
         return tops
     }
 
-    /// How much of the rows the page shows: all of them where they fit; otherwise as
-    /// much as fits that ends `scrollPeek` into a line, so the fade lies across its words.
+    /// How much of the rows the page shows below the usage line where it shows (`header`
+    /// tall): all of them where they fit; otherwise as much as fits that ends `scrollPeek`
+    /// into a line, so the fade lies across its words.
     static func visibleHeight(_ sessions: [ClaudeSession], showsText: Bool, header: CGFloat = 0) -> CGFloat {
+        visibleHeight(sessions, showsText: showsText, limit: listLimit(header: header))
+    }
+
+    /// How much of the rows the page shows in `limit`, as above.
+    static func visibleHeight(_ sessions: [ClaudeSession], showsText: Bool, limit: CGFloat) -> CGFloat {
         let list = listHeight(sessions, showsText: showsText)
-        let limit = listLimit(header: header)
         guard list > limit else { return list }
-        return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= limit } ?? limit
+        return lineTops(sessions, showsText: showsText).map { $0 + scrollPeek }.last { $0 <= limit } ?? max(0, limit)
     }
 
     /// The page's height with an approval card above the rows, the rows given what is
@@ -151,7 +156,18 @@ enum ClaudeCodeLayout {
         guard let approval else { return pageHeight(for: sessions, showsText: showsText, header: header) }
         let block = ApprovalLayout.height(for: approval, waiting: waiting, isPrivate: isPrivate)
         guard !sessions.isEmpty else { return header + topInset + block + bottomInset }
-        return min(header + topInset + block + pageHeight(for: sessions, showsText: showsText), maxApprovalPageHeight)
+        let limit = listLimit(below: block, header: header)
+        let list = listHeight(sessions, showsText: showsText)
+        let rows = list > limit ? visibleHeight(sessions, showsText: showsText, limit: limit) : list + bottomInset
+        return min(header + topInset + block + topInset + rows, maxApprovalPageHeight)
+    }
+
+    /// The most the rows take below an approval card `block` tall, itself below the usage
+    /// line where it shows (`header` tall): what the page leaves under them. The rows are
+    /// laid out to it and scroll past it, so they always begin below the card's buttons,
+    /// never over them.
+    static func listLimit(below block: CGFloat, header: CGFloat = 0) -> CGFloat {
+        max(0, maxApprovalPageHeight - header - topInset - block - topInset)
     }
 
     /// The page's height, the usage line atop it where it shows (`header` tall).
@@ -721,22 +737,19 @@ struct ClaudeCodeExpanded: View {
                 .id(card.item.id)
                 .frame(height: block, alignment: .top)
                 .padding(.top, ClaudeCodeLayout.topInset)
-                if !model.shown.isEmpty {
-                    list(header: header)
-                        .frame(maxHeight: max(0, ClaudeCodeLayout.maxApprovalPageHeight - header - block
-                                                 - ClaudeCodeLayout.topInset * 2))
-                }
+                if !model.shown.isEmpty { list(limit: ClaudeCodeLayout.listLimit(below: block, header: header)) }
             }
             .frame(maxHeight: .infinity, alignment: .top)
         } else {
-            list(header: header)
+            list(limit: ClaudeCodeLayout.listLimit(header: header))
         }
     }
 
+    /// The rows, as much of them as `limit` holds, scrolling for the rest.
     @ViewBuilder
-    private func list(header: CGFloat) -> some View {
+    private func list(limit: CGFloat) -> some View {
         let sessions = model.shown
-        let height = ClaudeCodeLayout.visibleHeight(sessions, showsText: showsText, header: header)
+        let height = ClaudeCodeLayout.visibleHeight(sessions, showsText: showsText, limit: limit)
         // The rows' heights are worked out line by line, each line a fixed height, so
         // the sum says whether they overflow. Were it ever short, the rows would still
         // scroll, being in a scroll view at their own heights; only the fade would be
