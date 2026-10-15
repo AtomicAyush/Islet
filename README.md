@@ -1,5 +1,28 @@
 # Islet
 
+<p>
+  <img alt="macOS" src="https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white">
+  <img alt="Swift" src="https://img.shields.io/badge/Swift-SwiftUI%20%C2%B7%20AppKit-F05138?logo=swift&logoColor=white">
+  <img alt="Size" src="https://img.shields.io/badge/Size-349%20files%20%C2%B7%20~109k%20lines-8E8E93">
+</p>
+
+> **A Dynamic Island for the MacBook notch: it rests as the notch, widens when something is happening, and opens into a card on hover.**
+
+### Highlights
+- **20+ live activities:** Now Playing (Music, Spotify, browsers), timers and Pomodoro, AirPods and device batteries, calendar countdowns, downloads, file copies, screenshots, and a file drop zone.
+- **AI agent status:** shows when Claude Code, ChatGPT/Codex, or Gemini agents are working, plus plan usage limits.
+- **System integration:** per-app volume mixer and one-click mic mute (CoreAudio), Focus and screen-sharing awareness, Shortcuts actions (AppIntents), and a URL scheme for custom banners.
+- **Large native codebase:** 349 Swift files, about 109k lines, organized as one feature module per activity.
+
+```mermaid
+flowchart LR
+  S[System sources: media, audio, Bluetooth, calendar, files, AI agents] --> F[Feature modules]
+  F --> VM[Island view model: priority + layout]
+  VM --> N[Notch window: rest · widen · open]
+```
+
+---
+
 A Dynamic Island for the Mac notch.
 
 On the iPhone, the island is the one piece of the screen that is always about what is
