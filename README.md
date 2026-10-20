@@ -9,7 +9,7 @@
 > **A Dynamic Island for the MacBook notch: it rests as the notch, widens when something is happening, and opens into a card on hover.**
 
 ### Highlights
-- **20+ live activities:** Now Playing (Music, Spotify, browsers), timers and Pomodoro, AirPods and device batteries, calendar countdowns, downloads, file copies, screenshots, and a file drop zone.
+- **31 features**, including Now Playing (Music, Spotify, browsers), timers and Pomodoro, AirPods and device batteries, calendar countdowns, downloads, file copies, screenshots, and a file drop zone.
 - **AI agent status:** shows when Claude Code, ChatGPT/Codex, or Gemini agents are working, plus plan usage limits.
 - **System integration:** per-app volume mixer and one-click mic mute (CoreAudio), Focus and screen-sharing awareness, Shortcuts actions (AppIntents), and a URL scheme for custom banners.
 - **Large native codebase:** 349 Swift files, about 109k lines, organized as one feature module per activity.
